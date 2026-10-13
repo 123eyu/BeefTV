@@ -109,6 +109,8 @@ test("ongoing save and native install failures never offer forced installation",
         expect(controller.getSnapshot().state.error).toBe("native failure");
         expect(controller.getSnapshot().canForceInstall).toBe(false);
     } finally {controller.dispose();}
+});
+
 test("native preparation phases survive polling and expose file progress", () => {
     const parsed = parseDesktopUpdateState({ status: "installing", phase: "extracting", completedFiles: 128, totalFiles: 512 });
     expect(parsed.phase).toBe("extracting");
