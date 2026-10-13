@@ -19,6 +19,15 @@ Var CleanDir
 Var InstallParent
 Var PreviousInstallDir
 Var RegisteredInstallDir
+Var InstallerMutex
+Var InstallLog
+Var InstallPhase
+Var LogLine
+Var MoveFrom
+Var MoveTo
+Var MoveError
+Var MoveAttempt
+Var OldMoved
 VIProductVersion "${VERSION}.0"
 VIAddVersionKey "ProductName" "BeefTV"
 VIAddVersionKey "FileVersion" "${VERSION}"
@@ -41,6 +50,74 @@ LangString BEEFTV_DIR_FOREIGN ${LANG_ENGLISH} "This folder already holds other f
 LangString BEEFTV_DIR_FOREIGN ${LANG_SIMPCHINESE} "这个文件夹里已有其他文件，不是 BeefTV 安装位置。请选择一个空文件夹，或当前的 BeefTV 安装位置。"
 LangString BEEFTV_DIR_WRITE ${LANG_ENGLISH} "BeefTV cannot write here. Administrator rights are required, so choose another folder."
 LangString BEEFTV_DIR_WRITE ${LANG_SIMPCHINESE} "需要管理员权限，请选择其他文件夹。"
+LangString BEEFTV_BUSY ${LANG_ENGLISH} "Another BeefTV installer or uninstaller is running. Close it and try again."
+LangString BEEFTV_BUSY ${LANG_SIMPCHINESE} "另一个 BeefTV 安装或卸载程序正在运行。请先关闭它，再试一次。"
+LangString BEEFTV_CLOSE ${LANG_ENGLISH} "Please close BeefTV and its CLI, then choose Retry."
+LangString BEEFTV_CLOSE ${LANG_SIMPCHINESE} "请退出 BeefTV 及其命令行程序，然后点击“重试”。"
+LangString BEEFTV_RETRY ${LANG_ENGLISH} "Windows could not move this application folder (error $MoveError):$\r$\n$MoveFrom$\r$\n$\r$\nClose programs or terminal windows using it, then choose Retry. Cancel stops this installation.$\r$\nLog: $InstallLog"
+LangString BEEFTV_RETRY ${LANG_SIMPCHINESE} "Windows 无法移动以下程序文件夹（错误 $MoveError）：$\r$\n$MoveFrom$\r$\n$\r$\n请关闭正在使用它的程序或终端窗口，然后点击“重试”。点击“取消”将停止安装。$\r$\n安装日志：$InstallLog"
+LangString BEEFTV_PRESERVED ${LANG_ENGLISH} "Installation stopped. The previous application is still at $INSTDIR. Your projects are preserved.$\r$\nLog: $InstallLog"
+LangString BEEFTV_PRESERVED ${LANG_SIMPCHINESE} "安装已停止，原程序仍保留在 $INSTDIR，项目不会被删除。$\r$\n安装日志：$InstallLog"
+LangString BEEFTV_STOPPED ${LANG_ENGLISH} "Installation stopped. Your projects are preserved.$\r$\nLog: $InstallLog"
+LangString BEEFTV_STOPPED ${LANG_SIMPCHINESE} "安装已停止，项目不会被删除。$\r$\n安装日志：$InstallLog"
+LangString BEEFTV_RESTORE_FAILED ${LANG_ENGLISH} "Windows could not restore the previous application. It is preserved at:$\r$\n$BackupDir$\r$\nDo not delete this folder. Contact support with this log:$\r$\n$InstallLog"
+LangString BEEFTV_RESTORE_FAILED ${LANG_SIMPCHINESE} "Windows 未能恢复原程序，原文件保留在：$\r$\n$BackupDir$\r$\n请不要删除此文件夹，并将安装日志发给客服：$\r$\n$InstallLog"
+
+# Keep the handle until process exit. Installation and uninstallation must not
+# race while moving folders or updating the per-user registration.
+!macro InstallerLock PREFIX
+Function ${PREFIX}AcquireInstallerLock
+  System::Call 'kernel32::CreateMutexW(p 0, i 0, w "Local\BeefTV.Installation") p .r0 ?e'
+  Pop $1
+  StrCpy $InstallerMutex $0
+  ${If} $0 == 0
+  ${OrIf} $1 == 183
+    MessageBox MB_OK|MB_ICONEXCLAMATION "$(BEEFTV_BUSY)" /SD IDOK
+    SetErrorLevel 2
+    Abort
+  ${EndIf}
+FunctionEnd
+!macroend
+!insertmacro InstallerLock ""
+!insertmacro InstallerLock "un."
+
+Function WriteInstallLog
+  Push $0
+  FileOpen $0 "$InstallLog" a
+  FileSeek $0 0 END
+  FileWrite $0 "$InstallPhase: $LogLine$\r$\n"
+  FileClose $0
+  Pop $0
+FunctionEnd
+
+# MoveFileW exposes the actual Windows error; NSIS Rename only exposes a flag.
+# Brief file scanner/shutdown locks get a bounded automatic retry. The user can
+# release a persistent lock without unpacking the entire payload again.
+Function MoveInstallFolder
+  move_retry:
+  StrCpy $MoveAttempt 0
+  move_attempt:
+  System::Call 'kernel32::MoveFileW(w "$MoveFrom", w "$MoveTo") i .r0 ?e'
+  Pop $MoveError
+  ${If} $0 != 0
+    StrCpy $LogLine 'moved "$MoveFrom" -> "$MoveTo"'
+    Call WriteInstallLog
+    Return
+  ${EndIf}
+  StrCpy $LogLine 'error=$MoveError moving "$MoveFrom" -> "$MoveTo"'
+  Call WriteInstallLog
+  IntOp $MoveAttempt $MoveAttempt + 1
+  ${If} $MoveAttempt < 5
+    ${If} $MoveError == 5
+    ${OrIf} $MoveError == 32
+    ${OrIf} $MoveError == 33
+      Sleep 500
+      Goto move_attempt
+    ${EndIf}
+  ${EndIf}
+  MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(BEEFTV_RETRY)" /SD IDCANCEL IDRETRY move_retry
+  StrCpy $0 0
+FunctionEnd
 
 # Appends a dedicated BeefTV subfolder to the chosen location, then validates
 # that final folder. Choosing D:\Apps therefore installs to D:\Apps\BeefTV and
@@ -142,6 +219,7 @@ FunctionEnd
 
 !macro RequireClosed PREFIX
 Function ${PREFIX}RequireClosed
+  retry_closed_${PREFIX}:
   nsExec::ExecToStack '"$SYSDIR\tasklist.exe" /FI "IMAGENAME eq BeefTV.exe" /NH'
   Pop $0
   Pop $1
@@ -159,7 +237,7 @@ Function ${PREFIX}RequireClosed
   ${EndIf}
   ${If} $0 != 0
   ${OrIf} $2 != ""
-    MessageBox MB_OK|MB_ICONEXCLAMATION "Please close BeefTV and its CLI before installing or uninstalling." /SD IDOK
+    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(BEEFTV_CLOSE)" /SD IDCANCEL IDRETRY retry_closed_${PREFIX}
     SetErrorLevel 2
     Abort
   ${EndIf}
@@ -214,6 +292,24 @@ FunctionEnd
 
 Function .onInit
   SetShellVarContext current
+  Call AcquireInstallerLock
+  ClearErrors
+  CreateDirectory "$LOCALAPPDATA\BeefTV\Installer"
+  GetTempFileName $InstallLog "$LOCALAPPDATA\BeefTV\Installer"
+  ${If} ${Errors}
+    ClearErrors
+    GetTempFileName $InstallLog "$TEMP"
+    ${If} ${Errors}
+      MessageBox MB_OK|MB_ICONSTOP "$(BEEFTV_DIR_WRITE)" /SD IDOK
+      SetErrorLevel 1
+      Abort
+    ${EndIf}
+  ${EndIf}
+  Delete "$InstallLog"
+  StrCpy $InstallLog "$InstallLog.log"
+  StrCpy $InstallPhase "startup"
+  StrCpy $LogLine 'version=${VERSION} destination="$INSTDIR"'
+  Call WriteInstallLog
   ReadRegStr $PreviousInstallDir HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\BeefTV" "InstallLocation"
   Call RequireClosed
   # Interactive runs validate on the directory page; /D= needs the same checks here.
@@ -229,11 +325,18 @@ FunctionEnd
 
 Function un.onInit
   SetShellVarContext current
+  Call un.AcquireInstallerLock
   Call un.RequireClosed
+FunctionEnd
+
+Function .onInstFailed
+  StrCpy $LogLine "installation failed or was cancelled"
+  Call WriteInstallLog
 FunctionEnd
 
 Section "BeefTV (required)" SEC_APP
   SectionIn RO
+  StrCpy $InstallPhase "prepare"
   # Stage and backup must live on the same volume as $INSTDIR for Rename to work.
   ${GetParent} "$INSTDIR" $InstallParent
   StrCpy $0 "$InstallParent" 1 -1
@@ -252,10 +355,15 @@ Section "BeefTV (required)" SEC_APP
   IfErrors prepare_failed
   Goto stage_ready
   prepare_failed:
-  MessageBox MB_OK|MB_ICONSTOP "Cannot prepare the installation. Check available disk space and try again. Your existing installation is unchanged." /SD IDOK
+  StrCpy $LogLine 'could not prepare staging folders beside "$INSTDIR"'
+  Call WriteInstallLog
+  MessageBox MB_OK|MB_ICONSTOP "$(BEEFTV_STOPPED)" /SD IDOK
   SetErrorLevel 1
   Abort
   stage_ready:
+  StrCpy $InstallPhase "extract"
+  StrCpy $LogLine 'stage="$StageDir" backup="$BackupDir" destination="$INSTDIR"'
+  Call WriteInstallLog
   ClearErrors
   SetOutPath "$StageDir"
   IfErrors prepare_failed
@@ -263,30 +371,59 @@ Section "BeefTV (required)" SEC_APP
   File /oname=.installed-root-files.txt "${ROOTFILES}"
   WriteUninstaller "$StageDir\Uninstall.exe"
   ${If} ${Errors}
+    StrCpy $LogLine 'payload extraction or uninstaller write failed in "$StageDir"'
+    Call WriteInstallLog
     SetOutPath "$InstallParent"
     RMDir /r "$StageDir"
-    MessageBox MB_OK|MB_ICONSTOP "Installation failed. Please run the installer again. Your projects have been preserved." /SD IDOK
+    MessageBox MB_OK|MB_ICONSTOP "$(BEEFTV_STOPPED)" /SD IDOK
     SetErrorLevel 1
     Abort
   ${EndIf}
   # Directory renames stay on the same volume. No old payload is removed until
   # all new files have been extracted successfully.
   SetOutPath "$InstallParent"
-  ClearErrors
+  StrCpy $OldMoved 0
   IfFileExists "$INSTDIR\*.*" 0 install_new
-  Rename "$INSTDIR" "$BackupDir"
-  IfErrors install_failed
+  StrCpy $InstallPhase "backup"
+  StrCpy $MoveFrom "$INSTDIR"
+  StrCpy $MoveTo "$BackupDir"
+  Call MoveInstallFolder
+  ${If} $0 == 0
+    Goto install_failed
+  ${EndIf}
+  StrCpy $OldMoved 1
   install_new:
-  Rename "$StageDir" "$INSTDIR"
-  IfErrors install_restore
+  StrCpy $InstallPhase "activate"
+  StrCpy $MoveFrom "$StageDir"
+  StrCpy $MoveTo "$INSTDIR"
+  Call MoveInstallFolder
+  ${If} $0 == 0
+    Goto install_restore
+  ${EndIf}
   StrCpy $CleanDir "$BackupDir"
   Call RemovePayload
   Goto install_registered
   install_restore:
-  Rename "$BackupDir" "$INSTDIR"
+  ${If} $OldMoved == 1
+    StrCpy $InstallPhase "restore"
+    StrCpy $MoveFrom "$BackupDir"
+    StrCpy $MoveTo "$INSTDIR"
+    Call MoveInstallFolder
+    ${If} $0 == 0
+      # Preserve BOTH trees when rollback is blocked; never delete the only
+      # working old application or obscure its exact recovery location.
+      MessageBox MB_OK|MB_ICONSTOP "$(BEEFTV_RESTORE_FAILED)" /SD IDOK
+      SetErrorLevel 1
+      Abort
+    ${EndIf}
+  ${EndIf}
   install_failed:
   RMDir /r "$StageDir"
-  MessageBox MB_OK|MB_ICONSTOP "Installation could not replace the application. Close programs using BeefTV and try again. The previous application is kept at $INSTDIR or $BackupDir." /SD IDOK
+  ${If} ${FileExists} "$INSTDIR\*.*"
+    MessageBox MB_OK|MB_ICONSTOP "$(BEEFTV_PRESERVED)" /SD IDOK
+  ${Else}
+    MessageBox MB_OK|MB_ICONSTOP "$(BEEFTV_STOPPED)" /SD IDOK
+  ${EndIf}
   SetErrorLevel 1
   Abort
   install_registered:
@@ -309,6 +446,9 @@ Section "BeefTV (required)" SEC_APP
     StrCpy $CleanDir "$PreviousInstallDir"
     Call RemovePayload
   ${EndIf}
+  StrCpy $InstallPhase "registered"
+  StrCpy $LogLine 'installed="$INSTDIR"'
+  Call WriteInstallLog
 SectionEnd
 
 Section /o "Desktop shortcut" SEC_DESKTOP

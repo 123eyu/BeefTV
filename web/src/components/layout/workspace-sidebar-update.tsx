@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Popover } from "antd";
+import { Button, Popover } from "antd";
 import { useReducedMotion } from "motion/react";
 import { Download, LoaderCircle, RotateCcw } from "lucide-react";
+import { AppModal } from "@/components/ui/product/app-modal";
 
 import { AppChangelogButton, APP_VERSION } from "@/components/layout/app-changelog-modal";
 import { cn } from "@/lib/utils";
@@ -46,6 +47,10 @@ export function WorkspaceSidebarUpdate({ collapsed }: { collapsed: boolean }) {
     const reducedMotion = useReducedMotion();
     const updater = useDesktopUpdate();
     const { state, persistBusy, actionBusy, runtime } = updater;
+    const [saveWarningOpen, setSaveWarningOpen] = useState(false);
+    useEffect(() => {
+        if (updater.canForceInstall) setSaveWarningOpen(true);
+    }, [updater.canForceInstall]);
     const installed = formatDesktopVersionLabel(state.currentVersion || APP_VERSION);
     const latest = formatDesktopVersionLabel(state.latestVersion);
     const showControls = shouldShowDesktopUpdaterControls(updater.snapshot);
@@ -55,7 +60,7 @@ export function WorkspaceSidebarUpdate({ collapsed }: { collapsed: boolean }) {
     const enabled = runtime === "desktop" && state.status !== "disabled";
     const actionLabel = !enabled ? (state.error || "当前环境不支持自动更新") : persistBusy ? "正在保存" : state.status === "available" ? "下载并安装更新" : showControls ? desktopUpdateActionLabel(state.status) : state.status === "checking" ? "正在检查更新" : state.status === "error" ? "重试检查更新" : "检查更新";
     const errorText = state.status === "error" ? userFacingDesktopUpdateError(state.error) : "";
-    const updateLabel = state.status === "error" ? `${errorText}，${resumable ? "点击继续下载" : "点击重试"}` : latest ? `${actionLabel} ${latest}` : actionLabel;
+    const updateLabel = updater.canForceInstall ? "保存未完成，点击查看处理方式" : state.status === "error" ? `${errorText.replace(/[。！，]$/, "")}，${resumable ? "点击继续下载" : "点击重试"}` : latest ? `${actionLabel} ${latest}` : actionLabel;
     const line = showControls ? statusLine(state, persistBusy, latest, percent) : null;
     const elapsed = usePhaseElapsed(busy, persistBusy ? "saving" : `${state.status}:${state.phase ?? ""}`);
     const slow = elapsed >= 30 && (persistBusy || state.status === "installing" || state.phase === "verifying");
@@ -64,6 +69,10 @@ export function WorkspaceSidebarUpdate({ collapsed }: { collapsed: boolean }) {
     const showBar = !persistBusy && ((state.status === "downloading" && state.phase !== "verifying") || (state.status === "installing" && state.phase === "extracting") || (line?.tone === "paused" && line.percent !== null));
     const barPercent = state.phase === "extracting" ? line?.percent ?? null : percent;
     const handleUpdate = () => {
+        if (updater.canForceInstall) {
+            setSaveWarningOpen(true);
+            return;
+        }
         if (state.status === "error") return showControls ? updater.downloadAndInstall() : updater.retry();
         return showControls ? updater.downloadAndInstall() : updater.check();
     };
@@ -86,6 +95,21 @@ export function WorkspaceSidebarUpdate({ collapsed }: { collapsed: boolean }) {
                 </div>
                 </Popover>
                 {!collapsed ? statusContent : null}
+            <AppModal
+                open={saveWarningOpen && updater.canForceInstall}
+                title="保存未完成，是否仍然更新？"
+                onCancel={() => setSaveWarningOpen(false)}
+                width={480}
+                footer={[
+                    <Button key="cancel" onClick={() => setSaveWarningOpen(false)}>返回处理</Button>,
+                    <Button key="retry" type="primary" onClick={() => { setSaveWarningOpen(false); void updater.install(); }}>重试保存</Button>,
+                    <Button key="force" danger onClick={() => { setSaveWarningOpen(false); void updater.forceInstall(); }}>仍然更新</Button>,
+                ]}
+            >
+                <p>{errorText}</p>
+                <p className="mt-3">更新会关闭并重启应用，尚未保存的修改可能丢失。</p>
+                <p className="mt-3">你可以先返回处理，或重试保存。</p>
+            </AppModal>
         </div>
     );
 }

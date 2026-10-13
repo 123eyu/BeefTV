@@ -228,7 +228,11 @@ function scheduleAssetStoreDraftPersist(userScope: string, captured = captureUse
             throw error;
         }
     });
-    assetDraftWriteChains.set(userScope, run.then(() => undefined, () => undefined));
+    const tail = run.then(() => undefined, () => undefined);
+    assetDraftWriteChains.set(userScope, tail);
+    void tail.then(() => {
+        if (assetDraftWriteChains.get(userScope) === tail) assetDraftWriteChains.delete(userScope);
+    });
     if (captured.userScope === userScope) return trackAssetOperation(run, captured);
     void run.then(undefined, () => undefined);
     return run;
@@ -613,6 +617,12 @@ export async function flushAssetStorePersistence(expectedScope?: CapturedUserSco
 
     const failure = generationFailureFor(expected);
     if (failure !== undefined) throw failure;
+}
+
+export function hasActiveAssetStorePersistence() {
+    // queuedAssetPersists can retain a failed save for explicit retry. Active
+    // operations cover running and lock-waiting writes, including draft IO.
+    return assetOperations.size > 0 || assetDraftWriteChains.size > 0;
 }
 
 const assetStorage: PersistStorage<AssetStore> = {
