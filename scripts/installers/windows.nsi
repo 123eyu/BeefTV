@@ -84,6 +84,7 @@ FunctionEnd
 Function WriteInstallLog
   Push $0
   FileOpen $0 "$InstallLog" a
+  FileSeek $0 0 END
   FileWrite $0 "$InstallPhase: $LogLine$\r$\n"
   FileClose $0
   Pop $0

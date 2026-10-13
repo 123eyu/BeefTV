@@ -56,7 +56,7 @@ export function WorkspaceSidebarUpdate({ collapsed }: { collapsed: boolean }) {
     const enabled = runtime === "desktop" && state.status !== "disabled";
     const actionLabel = !enabled ? (state.error || "当前环境不支持自动更新") : persistBusy ? "正在保存" : state.status === "available" ? "下载并安装更新" : showControls ? desktopUpdateActionLabel(state.status) : state.status === "checking" ? "正在检查更新" : state.status === "error" ? "重试检查更新" : "检查更新";
     const errorText = state.status === "error" ? userFacingDesktopUpdateError(state.error) : "";
-    const updateLabel = state.status === "error" ? `${errorText}，${resumable ? "点击继续下载" : "点击重试"}` : latest ? `${actionLabel} ${latest}` : actionLabel;
+    const updateLabel = updater.canForceInstall ? "保存未完成，点击查看处理方式" : state.status === "error" ? `${errorText.replace(/[。！，]$/, "")}，${resumable ? "点击继续下载" : "点击重试"}` : latest ? `${actionLabel} ${latest}` : actionLabel;
     const line = showControls ? statusLine(state, persistBusy, latest, percent) : null;
     const amount = state.totalBytes > 0 ? desktopUpdateProgressLabel(state) : "";
     const tooltip = line ? [line.title, amount, line.detail].filter(Boolean).join("\n") : updateLabel;
@@ -92,7 +92,8 @@ export function WorkspaceSidebarUpdate({ collapsed }: { collapsed: boolean }) {
                 ]}
             >
                 <p>{errorText}</p>
-                <p className="mt-3">更新会关闭并重启应用，尚未保存的修改可能丢失。建议先返回处理或重试保存。</p>
+                <p className="mt-3">更新会关闭并重启应用，尚未保存的修改可能丢失。</p>
+                <p className="mt-3">你可以先返回处理，或重试保存。</p>
             </AppModal>
         </div>
     );
