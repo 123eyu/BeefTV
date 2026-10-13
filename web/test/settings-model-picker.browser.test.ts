@@ -17,6 +17,7 @@ beforeAll(async () => {
     if (!build.success) throw new Error(build.logs.join("\n"));
     const js = await build.outputs.find(o => o.path.endsWith(".js"))!.text();
     const css = (await build.outputs.find(o => o.path.endsWith(".css"))?.text() || "")
+        + readFileSync(import.meta.dir + "/../src/styles/globals.css", "utf8").replace(/^@import .*;$/gm, "")
         + readFileSync(import.meta.dir + "/../src/styles/workspace-product.css", "utf8");
     server = Bun.serve({ port: 0, fetch(req) {
         const path = new URL(req.url).pathname;
@@ -67,6 +68,9 @@ test("快速切换模型时诊断只检查最后打开的菜单", async () => {
         expect(opened).toHaveLength(1);
         expect(opened[0]!.message).toContain("默认文本模型");
         expect(opened[0]!.message).toContain("在窗口内");
+        const recorded = await events(page);
+        expect(recorded.some(event => event.code === "MODEL_PICKER_CLOSE" && event.message.startsWith("默认生图模型"))).toBe(true);
+        expect(recorded.some(event => event.code === "MODEL_PICKER_POPUP_HIDDEN")).toBe(false);
     } finally { await page.close(); }
 }, 30000);
 
@@ -111,6 +115,20 @@ test("默认模型下拉展开时诊断记录点击、弹层位置与遮挡情�
 }, 30000);
 
 for (const reduced of [false, true]) {
+    test(`产品侧栏和弹窗关闭后移除遮罩：${reduced ? "减少动态效果" : "普通动效"}`, async () => {
+        const page = await open({ reduced });
+        try {
+            const initialOverflow = await page.evaluate(() => getComputedStyle(document.body).overflow);
+            await page.getByRole("button", { name: "打开验证侧栏", exact: true }).click();
+            await page.getByRole("button", { name: "关闭验证侧栏", exact: true }).click();
+            await page.locator(".ant-drawer").waitFor({ state: "detached", timeout: 3000 });
+            await page.getByRole("button", { name: "打开验证弹窗", exact: true }).click();
+            await page.getByRole("button", { name: "关闭验证弹窗", exact: true }).click();
+            await page.locator(".ant-modal-root").waitFor({ state: "detached", timeout: 3000 });
+            expect(await page.evaluate(() => document.querySelectorAll(".ant-drawer-mask, .ant-modal-mask").length)).toBe(0);
+            expect(await page.evaluate(() => getComputedStyle(document.body).overflow)).toBe(initialOverflow);
+        } finally { await page.close(); }
+    }, 30000);
     for (const dark of [false, true]) {
         for (const mobile of [false, true]) {
             test(`五类默认模型可见并可选择：${reduced ? "减少动态效果" : "普通动效"} / ${dark ? "深色" : "浅色"} / ${mobile ? "手机" : "桌面"}`, async () => {
@@ -134,6 +152,9 @@ for (const reduced of [false, true]) {
                         expect(box.y).toBeGreaterThanOrEqual(0);
                         expect(box.x + box.width).toBeLessThanOrEqual(viewport.width + 1);
                         expect(box.y + box.height).toBeLessThanOrEqual(viewport.height + 1);
+                        if (process.env.BEEFTV_MODEL_PICKER_SCREENSHOT && reduced && !dark && !mobile && id === "text") {
+                            await page.screenshot({ path: process.env.BEEFTV_MODEL_PICKER_SCREENSHOT });
+                        }
                         await popup.locator(".ant-select-item-option").filter({ hasText: model! }).click();
                         const selected = JSON.parse((await page.getByTestId("selected-models").textContent())!);
                         expect(selected[key!]).toBe(`studio::${model}`);
