@@ -175,6 +175,9 @@ def probe_self_test():
             subprocess.run([str(installer), '/S'], check=True, timeout=90)
             (installed / 'BeefTV.exe').write_bytes(b'previous app must survive failed replacement')
             locked_windows_upgrade(installer, installed)
+            concurrent_windows_install(installer, installed)
+            locked_windows_upgrade(installer, installed, release_after_failure=True)
+            assert (installed / 'BeefTV.exe').read_bytes() == b'installer fixture payload'
         finally:
             if (installed / 'Uninstall.exe').is_file():
                 subprocess.run([str(installed / 'Uninstall.exe'), '/S'], check=True, timeout=90)
@@ -265,7 +268,29 @@ def verify_data(data):
         assert (data / name).read_bytes() == b'preserve installer data'
 
 
-def locked_windows_upgrade(installer, installed):
+def concurrent_windows_install(installer, installed):
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+    kernel.CreateMutexW.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = kernel.CreateMutexW(None, False, r'Local\BeefTV.Installation')
+    if not handle:
+        raise ctypes.WinError(ctypes.get_last_error())
+    before = digest(installed / 'BeefTV.exe')
+    try:
+        result = subprocess.run([str(installer), '/S'], timeout=60)
+        assert result.returncode == 2, 'a second installer bypassed installation mutex'
+        result = subprocess.run([str(installed / 'Uninstall.exe'), '/S', '_?=' + str(installed)], timeout=60)
+        assert result.returncode == 2, 'uninstaller bypassed installation mutex'
+        assert digest(installed / 'BeefTV.exe') == before
+    finally:
+        kernel.CloseHandle(handle)
+    print('PASS: installer and uninstaller refuse concurrent changes')
+
+
+def locked_windows_upgrade(installer, installed, release_after_failure=False):
     import ctypes
     from ctypes import wintypes
     kernel = ctypes.WinDLL('kernel32', use_last_error=True)
@@ -277,6 +302,9 @@ def locked_windows_upgrade(installer, installed):
     if handle == ctypes.c_void_p(-1).value:
         raise ctypes.WinError(ctypes.get_last_error())
     before = {str(path.relative_to(installed)): digest(path) for path in installed.rglob('*') if path.is_file()}
+    logs = Path(os.environ['LOCALAPPDATA']) / 'BeefTV/Installer'
+    previous_logs = set(logs.glob('*.log'))
+    process = None
     try:
         # Prove the fixture denies a real rename before judging the installer.
         control = installed.with_name(installed.name + '-rename-control')
@@ -287,12 +315,41 @@ def locked_windows_upgrade(installer, installed):
         else:
             control.rename(installed)
             raise RuntimeError('Directory lock fixture did not prevent rename')
-        result = subprocess.run([str(installer), '/S'], timeout=180)
-        assert result.returncode == 1, f'locked application directory: expected failure code 1, got {result.returncode}'
+        process = subprocess.Popen([str(installer), '/S'])
+        if release_after_failure:
+            # Release only after the real installer has logged a denied move.
+            # This proves its retry, rather than relying on an arbitrary sleep.
+            deadline = time.monotonic() + 60
+            while time.monotonic() < deadline:
+                current = set(logs.glob('*.log')) - previous_logs
+                if any('backup: error=' in p.read_text(errors='replace') for p in current):
+                    kernel.CloseHandle(handle)
+                    handle = None
+                    break
+                if process.poll() is not None:
+                    raise RuntimeError('Installer exited before reporting the held directory lock')
+                time.sleep(.05)
+            else:
+                raise RuntimeError('Installer did not report the held directory lock')
+        expected = 0 if release_after_failure else 1
+        result = process.wait(timeout=180)
+        assert result == expected, f'locked application directory: expected code {expected}, got {result}'
+        current = set(logs.glob('*.log')) - previous_logs
+        assert len(current) == 1, 'expected a persistent log for this installation'
+        log = current.pop().read_text(errors='replace')
+        assert 'backup: error=5 ' in log or 'backup: error=32 ' in log, log
+        assert str(installed) in log, log
+        if release_after_failure:
+            assert 'activate: moved ' in log and 'registered: installed=' in log, log
     finally:
-        kernel.CloseHandle(handle)
+        if handle:
+            kernel.CloseHandle(handle)
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.wait(timeout=30)
     after = {str(path.relative_to(installed)): digest(path) for path in installed.rglob('*') if path.is_file()}
-    assert before == after, 'failed installer changed the previous application'
+    if not release_after_failure:
+        assert before == after, 'failed installer changed the previous application'
 
 
 def smoke(args):
