@@ -422,6 +422,10 @@ func ClassifyError(err error) Failure {
 	if errors.Is(err, context.Canceled) {
 		return normalizeFailure(Failure{Category: CategoryCancelled})
 	}
+	var preparation RequestPreparationError
+	if errors.As(err, &preparation) {
+		return normalizeFailure(Failure{Category: CategoryInputInaccessible, Reason: "本次请求在准备时失败，未发送到模型服务", Action: "请检查参考素材和生成参数后重试"})
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return normalizeFailure(Failure{Category: CategoryTimeout, Uncertain: true, Reason: "模型服务响应超时，请求可能仍在执行", Action: "请先查询原任务，不要立即重新提交"})
 	}
@@ -514,6 +518,9 @@ func ClassifyText(raw string) Failure {
 		return normalizeFailure(Failure{Category: CategoryLocalStorage, FromCode: true, RequestID: sanitizeDebugID(fields.RequestID), TaskID: sanitizeDebugID(fields.TaskID)})
 	}
 	if fields.hasStructured() {
+		if strings.Contains(fields.Message, "暂无可用渠道") || strings.Contains(fields.Message, "无可用渠道") {
+			return normalizeFailure(Failure{Category: CategoryProviderUnavailable, Structured: true, ProviderCode: sanitizeProviderCode(fields.Code), ProviderMessage: sanitizeProviderText(fields.Message), RequestID: fields.RequestID})
+		}
 		if strings.EqualFold(fields.Code, "invalid_reference_audio") {
 			copy, _ := referenceAudioCopy(fields.Message, true)
 			return normalizeFailure(Failure{Category: CategoryInvalidParams, Reason: copy.Reason, Action: copy.Action, RequestID: fields.RequestID, TaskID: fields.TaskID, ProviderCode: fields.Code, Structured: true, FromCode: true})

@@ -175,11 +175,11 @@ func (p appImagePort) Intercept(req *http.Request) (bool, []byte, string, error)
 		return false, nil, "", nil
 	}
 	if p.service == nil {
-		return true, nil, "", imageRecoveryError{generation.ErrImageOwnerMissing}
+		return true, nil, "", imagePreparationError{generation.ErrImageOwnerMissing}
 	}
 	row, handled, err := prepareImageSubmission(p.service, req)
 	if err != nil {
-		return true, nil, "", imageRecoveryError{err}
+		return true, nil, "", imagePreparationError{err}
 	}
 	if !handled {
 		data, mimeType, sendErr := generation.DoBinaryWithConsumer(req, nil)

@@ -20,6 +20,7 @@ const BUILTIN_PROTOCOL_CAPABILITIES: Record<ModelProtocol, ProtocolCapability> =
     "claude-api": "text",
     "gemini-generate-content": "text",
     "openai-image": "image",
+    "openai-videos": "video",
     "gemini-image": "image",
     "grok-image": "image",
     "volcengine-ark-image": "image",
@@ -55,6 +56,21 @@ export function protocolForModelCatalog(_endpointTypes: string[] = []): ModelPro
     // A provider catalog cannot invent a protocol ID. The channel's selected
     // plugin or an explicit model configuration must supply it.
     return undefined;
+}
+export function protocolForBeefAPICatalog(endpointTypes: string[] = []): ModelProtocol | undefined {
+    // Only explicit wire contracts map to host protocol IDs; generic "openai"
+    // metadata cannot replace a user's configured protocol.
+    const endpoints = endpointTypes.map((value) => value.trim().toLowerCase());
+    const mappings: Array<[string, string[]]> = [
+        ["openai-image", ["image-generation", "images", "images.generations"]],
+        ["openai-videos", ["openai-video", "videos", "videos.generations"]],
+        ["openai-audio", ["audio.speech", "audio-speech"]],
+        ["openai-response", ["openai-response", "openai-response-compact", "responses"]],
+        ["claude-api", ["anthropic", "messages"]],
+        ["gemini-generate-content", ["gemini"]],
+        ["chat-completion", ["chat.completions", "chat-completions"]],
+    ];
+    return mappings.find(([, aliases]) => aliases.some((alias) => endpoints.includes(alias)))?.[0];
 }
 export function modelProtocolSummary(value: string | undefined, definitions: ModelProtocolDefinition[] = []) { const protocol = modelProtocolDefinition(value, definitions); return protocol ? [protocol.create, protocol.contentType, protocol.poll, protocol.media].filter(Boolean).join(" · ") : "当前协议未安装或尚未选择。"; }
 export function normalizeModelProtocol(value: unknown): ModelProtocol | undefined {

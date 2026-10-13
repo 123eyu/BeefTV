@@ -445,7 +445,7 @@ func ExecuteProtocolBinaryRequestWithConsumer(ctx context.Context, config Config
 	method := strings.ToUpper(strings.TrimSpace(spec.Method))
 	body, contentType, err := ProtocolRequestBody(ctx, config, spec)
 	if err != nil {
-		return nil, "", err
+		return nil, "", RequestPreparationError{Cause: err}
 	}
 	requestURL, err := ProtocolRequestURL(config.BaseURL, spec)
 	if err != nil {

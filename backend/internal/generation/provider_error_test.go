@@ -13,6 +13,16 @@ import (
 	"infinite-canvas/backend/internal/generation"
 )
 
+func TestNoAvailableChannelIsNotUserRateLimiting(t *testing.T) {
+	for _, message := range []string{"暂无可用渠道", "分组 Gemini 下模型 gemini-3.7-flash 无可用渠道（distributor）"} {
+		body, _ := json.Marshal(map[string]any{"error": map[string]any{"code": "upstream_crowded", "message": message}})
+		failure := generation.ClassifyHTTP(503, "", string(body))
+		if failure.Category != generation.CategoryProviderUnavailable {
+			t.Fatalf("no channel misclassified: %#v", failure)
+		}
+	}
+}
+
 func TestOutboundPolicyErrorsHaveActionableCopyAndDiagnostics(t *testing.T) {
 	for _, message := range []string{
 		"不允许访问本机或内网地址", "不允许访问本机、内网或链路本地地址",

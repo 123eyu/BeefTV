@@ -5,6 +5,7 @@ import { nanoid } from "nanoid";
 
 import { scopedLocalStorage } from "@/lib/user-scope";
 import { beefAPIVideoContract, isBeefAPIEndpoint } from "@/lib/beefapi-video-contracts";
+import { beefAPIImageContract } from "@/lib/beefapi-image-contracts";
 import { defaultProtocolForCapability, defaultProtocolForModel, modelProtocolCapability, normalizeModelProtocol, usesOpenAICompatibleProtocolDefault, type ModelProtocol } from "@/lib/model-protocols";
 import { normalizeVideoBoolean, normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
 import { defaultModelCapabilityConfig, workflowFieldRole, workflowFieldSafeToOverride, workflowVideoFieldsFromJson, type ModelCapabilityConfig } from "@/lib/model-capabilities";
@@ -839,6 +840,12 @@ function beefApiVideoCapabilityConfig(model: string, protocol: ModelProtocol, cu
     const resolved = profile || defaultModelCapabilityConfig(protocol, model);
     if (!resolved.video) return resolved;
     return { ...resolved, video: { ...resolved.video,
+        resolutions: contract.resolutions || resolved.video.resolutions,
+        defaultResolution: contract.resolutions?.includes(resolved.video.defaultResolution) ? resolved.video.defaultResolution : contract.resolutions?.[0] || resolved.video.defaultResolution,
+        ratios: contract.ratios || resolved.video.ratios,
+        defaultRatio: contract.ratios?.includes(resolved.video.defaultRatio) ? resolved.video.defaultRatio : contract.ratios?.[0] || resolved.video.defaultRatio,
+        duration: contract.duration ? { ...resolved.video.duration, selection: "range", min: contract.duration.min, max: contract.duration.max, default: contract.duration.default } : resolved.video.duration,
+        generateAudio: contract.generateAudio ? { ...resolved.video.generateAudio, supported: true } : resolved.video.generateAudio,
         references: { ...resolved.video.references, maxImages: Math.min(resolved.video.references.maxImages, limits.image ?? Infinity), maxVideos: Math.min(resolved.video.references.maxVideos, limits.video ?? Infinity), maxAudios: Math.min(resolved.video.references.maxAudios, limits.audio ?? Infinity) },
         operations: contract.operations || resolved.video.operations,
         defaultOperation: contract.operations?.includes(resolved.video.defaultOperation) ? resolved.video.defaultOperation : contract.operations?.[0] || resolved.video.defaultOperation,
@@ -879,14 +886,15 @@ function enrichBeefApiMediaChannel(channel: ModelChannel): ModelChannel {
         const current = existing.get(model);
         // These BeefAPI models use Images, even when an older generic catalog
         // saved a text protocol. Do not rewrite arbitrary custom model routes.
-        const staleTextProtocol = /^(gpt-image(?:-|$)|dall-e(?:-|$))/i.test(model) && modelProtocolCapability(current?.protocol) === "text";
-        const protocol = staleTextProtocol ? "openai-image" : current?.protocol || "openai-image";
+        const contract = beefAPIImageContract(model);
+        const staleTextProtocol = (/^(gpt-image(?:-|$)|dall-e(?:-|$))/i.test(model) || Boolean(contract)) && modelProtocolCapability(current?.protocol) === "text";
+        const protocol = contract?.protocol || (staleTextProtocol ? "openai-image" : current?.protocol || "openai-image");
         existing.set(model, {
             ...(current || {}),
             model,
             capability: "image",
             protocol,
-            capabilityConfig: current?.capabilityConfig || defaultModelCapabilityConfig(protocol, model),
+            capabilityConfig: contract ? defaultModelCapabilityConfig(contract.protocol, model) : current?.capabilityConfig || defaultModelCapabilityConfig(protocol, model),
         });
     }
     for (const model of models.filter(isTextModelName)) {

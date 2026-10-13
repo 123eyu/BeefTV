@@ -11,6 +11,15 @@ import (
 
 type SubmissionUnknownError struct{ Cause error }
 
+// RequestPreparationError proves that the create request was not dispatched.
+// Reference downloads may fail after their own HTTP calls, before a paid POST.
+type RequestPreparationError struct{ Cause error }
+
+func (e RequestPreparationError) Error() string {
+	return fmt.Sprintf("本次请求准备失败：%v", e.Cause)
+}
+func (e RequestPreparationError) Unwrap() error { return e.Cause }
+
 func (e SubmissionUnknownError) Error() string {
 	return fmt.Sprintf("提交结果尚未确认：%v", e.Cause)
 }
@@ -35,6 +44,10 @@ func SafeRouteRejection(err error) bool {
 }
 
 func UncertainVideoSubmission(ctx context.Context, err error) error {
+	var preparation RequestPreparationError
+	if errors.As(err, &preparation) {
+		return err
+	}
 	if err == nil || errors.Is(err, context.Canceled) || SafeRouteRejection(err) {
 		return err
 	}

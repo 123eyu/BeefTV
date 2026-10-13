@@ -1,4 +1,5 @@
 import { isVolcengineArkVideoProtocol, type ModelProtocol, type ModelProtocolWorkflow } from "@/lib/model-protocols";
+import { beefAPIImageContract } from "@/lib/beefapi-image-contracts";
 import type { ImageResolutionOption, ImageResolutionTier } from "@/lib/image-resolution-tiers";
 
 export type ModelCapabilityConfig = {
@@ -379,6 +380,16 @@ export function defaultImageCapabilityConfig(protocol?: ModelProtocol, model = "
         outputFormat: { supported: true },
         maxOutputs: 15,
     };
+    const contract = protocol === "openai-image" ? beefAPIImageContract(model) : undefined;
+    if (contract) {
+        return {
+            references: { promptMaxChars: contract.promptMaxChars, maxImages: contract.maxImages, maxImageBytes: contract.maxImageBytes, maskSupported: false },
+            size: { parameter: "size", values: Object.keys(contract.sizes), default: "1:1", allowCustom: true },
+            quality: { supported: false, values: [], default: "auto" },
+            transparentBackground: { supported: false, default: false },
+            responseFormat: { supported: false }, outputFormat: { supported: false }, maxOutputs: 1,
+        };
+    }
     if (protocol === "grok-image") {
         image.references.maxImages = 1;
         image.references.maskSupported = false;

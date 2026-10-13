@@ -1327,12 +1327,37 @@ func arrayValue(value any) []any {
 
 func firstPathValue(payload map[string]any, paths ...string) string {
 	for _, path := range paths {
+		if strings.Contains(path, "*") {
+			if text := strings.Join(manifestTextPathValues(payload, strings.Split(path, ".")), ""); strings.TrimSpace(text) != "" {
+				return strings.TrimSpace(text)
+			}
+			continue
+		}
 		value := pathValue(payload, path)
 		if text, ok := value.(string); ok && strings.TrimSpace(text) != "" {
 			return strings.TrimSpace(text)
 		}
 	}
 	return ""
+}
+
+// Responses text may follow reasoning/tool items and span multiple content
+// blocks. Wildcards collect text in wire order without guessing array indexes.
+func manifestTextPathValues(value any, parts []string) []string {
+	if len(parts) == 0 {
+		if text, ok := value.(string); ok && strings.TrimSpace(text) != "" {
+			return []string{text}
+		}
+		return nil
+	}
+	if parts[0] == "*" {
+		var values []string
+		for _, item := range arrayValue(value) {
+			values = append(values, manifestTextPathValues(item, parts[1:])...)
+		}
+		return values
+	}
+	return manifestTextPathValues(manifestPathValue(value, parts[0]), parts[1:])
 }
 
 func manifestError(payload map[string]any, paths ...string) bool {

@@ -11,6 +11,7 @@ import (
 
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/providerpreset"
 )
 
 func NormalizeCapability(value string) string {
@@ -53,6 +54,18 @@ func videoDurationSupported(value *VideoCapabilityConfig) bool {
 }
 
 func DefaultImageCapabilityConfig(protocol string, modelName string) *ImageCapabilityConfig {
+	if contract, ok := providerpreset.BeefAPIImageContract(modelName); ok && protocol == "openai-image" {
+		values := make([]string, 0, len(contract.Sizes))
+		for ratio := range contract.Sizes {
+			values = append(values, ratio)
+		}
+		sort.Strings(values)
+		return &ImageCapabilityConfig{
+			References: ImageReferenceConfig{PromptMaxChars: contract.PromptMaxChars, MaxImages: contract.MaxImages, MaxImageBytes: contract.MaxImageBytes},
+			Size:       ImageSizeConfig{Parameter: "size", Values: values, Default: "1:1", AllowCustom: true},
+			Quality:    ImageQualityConfig{Default: "auto"}, MaxOutputs: 1,
+		}
+	}
 	image := &ImageCapabilityConfig{
 		References:            ImageReferenceConfig{PromptMaxChars: 32000, MaxImages: 16, MaxImageBytes: 30 * 1024 * 1024, MaskSupported: true},
 		Size:                  ImageSizeConfig{Parameter: "size", Values: defaultImageSizeValues(), Default: "1:1", AllowCustom: true},
@@ -732,6 +745,20 @@ func validateVideoTaskParameters(profile *VideoCapabilityConfig, input TaskInput
 }
 
 func validateImageTask(profile *ImageCapabilityConfig, input TaskInput) error {
+	if providerpreset.IsBeefAPIEndpoint(input.Config.BaseURL) {
+		if contract, ok := providerpreset.BeefAPIImageContract(input.Config.Model); ok {
+			profile = DefaultImageCapabilityConfig(contract.Protocol, input.Config.Model)
+			if _, err := contract.PixelSize(input.Config.Size); err != nil {
+				return kernel.BadAuthRequest(err.Error())
+			}
+			if err := validateModelPromptLength("图片", composedPrompt(input.Config.SystemPrompt, input.Prompt), contract.PromptMaxChars); err != nil {
+				return err
+			}
+			if q := strings.ToLower(strings.TrimSpace(input.Config.Quality)); q != "" && q != "auto" && q != "any" {
+				return kernel.BadAuthRequest("当前图片模型不支持质量选项，请选择自动")
+			}
+		}
+	}
 	if profile == nil {
 		return nil
 	}

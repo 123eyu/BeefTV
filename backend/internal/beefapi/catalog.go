@@ -161,6 +161,9 @@ func catalogProtocol(model CatalogModel) string {
 }
 
 func catalogCapabilityAndProtocol(model CatalogModel) (capability, protocol string) {
+	if contract, ok := providerpreset.BeefAPIImageContract(model.ID); ok {
+		return "image", contract.Protocol
+	}
 	if contract, ok := providerpreset.BeefAPIVideoContract(model.ID); ok {
 		return "video", contract.Protocol
 	}

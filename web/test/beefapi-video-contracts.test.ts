@@ -74,8 +74,8 @@ test("saved BeefAPI grok video profile never keeps a text protocol", () => {
         const config = normalizeConfigSnapshot({config: {...defaultConfig, channels: [channel]}}).config;
         const profile = config.channels[0]!.modelProfiles!.find((item) => item.model === model)!;
         expect(profile.capability).toBe("video");
-        expect(profile.protocol).toBe("newapi-channel-2");
-        expect(resolveModelRequestConfig(config, `beefapi::${model}`).interfaceType).toBe("newapi-channel-2");
+        expect(profile.protocol).toBe("newapi");
+        expect(resolveModelRequestConfig(config, `beefapi::${model}`).interfaceType).toBe("newapi");
     }
 });
 

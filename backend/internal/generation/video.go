@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"mime/multipart"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -38,7 +39,7 @@ func RunVideoTaskWithPolicy(ctx context.Context, input Input, pollPolicy VideoPo
 	// BeefAPI exposes its flat /v1/videos contract. Route it before
 	// protocol adapters so stale persisted channel metadata cannot select an
 	// incompatible legacy multipart or flat request shape.
-	if IsBeefAPIVideoConfig(ctx, input.Config) && (IsSeedanceVideoConfig(input.Config) || IsBeefAPIH3Model(input.Config.Model)) {
+	if IsBeefAPIVideoConfig(ctx, input.Config) && (IsSeedanceVideoConfig(input.Config) || IsBeefAPIH3Model(input.Config.Model) || isBeefAPIFlatFrameVideo(input.Config.Model)) {
 		return RunSeedanceVideosTask(ctx, input, pollPolicy)
 	}
 	// 路由顺序是协议边界，不是“哪个请求先试”：官方声明式接口必须由已注册适配器执行，
@@ -248,12 +249,12 @@ func RunSeedanceVideosTask(ctx context.Context, input Input, pollPolicy VideoPol
 		}
 		extracted, err := firstJSONString(created, "id", "task_id")
 		if err != nil {
-			return nil, SubmissionUnknownError{Cause: fmt.Errorf("Seedance 接口任务 ID 无效：%w", err)}
+			return nil, SubmissionUnknownError{Cause: fmt.Errorf("视频接口任务 ID 无效：%w", err)}
 		}
 		id = extracted
 	}
 	if id == "" {
-		return nil, SubmissionUnknownError{Cause: errors.New("Seedance 接口没有返回任务 ID")}
+		return nil, SubmissionUnknownError{Cause: errors.New("视频接口没有返回任务 ID")}
 	}
 	return RunVideoPollLoop(ctx, id, pollPolicy, func(ctx context.Context) (VideoPollOutcome, error) {
 		var state map[string]interface{}
@@ -281,12 +282,17 @@ func RunSeedanceVideosTask(ctx context.Context, input Input, pollPolicy VideoPol
 				return getVideoResultWithGatewayFallback(ctx, input.Config, APIURL(input.Config.BaseURL, "/videos/"+id+"/content"), id)
 			})
 			if err != nil {
-				return VideoPollOutcome{}, fmt.Errorf("Seedance 任务成功但未返回视频 URL，备用内容下载失败：%w", err)
+				return VideoPollOutcome{}, fmt.Errorf("视频任务成功但未返回视频 URL，备用内容下载失败：%w", err)
 			}
 			return VideoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video", "video": map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}}}, nil
 		}
 		if status == "failed" || status == "cancelled" || status == "expired" {
-			return VideoPollOutcome{}, errors.New(defaultString(SeedanceErrorMessage(state), "Seedance 视频生成失败"))
+			message := SeedanceErrorMessage(state)
+			if message == "" {
+				payload, _ := json.Marshal(map[string]interface{}{"error": map[string]string{"code": "task_failed", "message": "视频生成失败", "task_id": id}})
+				message = string(payload)
+			}
+			return VideoPollOutcome{}, errors.New(message)
 		}
 		return VideoPollOutcome{}, nil
 	})
@@ -317,6 +323,9 @@ func SeedancePollStatusAndURL(state map[string]interface{}) (string, string) {
 func BeefAPIVideoRequestBody(input Input) (map[string]interface{}, error) {
 	if IsBeefAPIH3Model(input.Config.Model) {
 		return beefAPIH3VideoBody(input)
+	}
+	if isBeefAPIFlatFrameVideo(input.Config.Model) {
+		return beefAPIFlatFrameVideoBody(input)
 	}
 	options := SeedanceTaskOptions(input)
 	resolution := videoResolutionNameRequest(input.VideoCapability, input.Config.VQuality)
@@ -400,6 +409,63 @@ func BeefAPIVideoRequestBody(input Input) (map[string]interface{}, error) {
 	// rejects an explicit ratio as InvalidParameter.TaskTypeConstraint.
 	if _, firstFrame := body["image"]; !firstFrame {
 		body["aspect_ratio"] = NormalizeSeedanceVideosRatio(input.Config.Size)
+	}
+	return body, nil
+}
+
+func isBeefAPIFlatFrameVideo(name string) bool {
+	return name == "grok-imagine-video-1.5" || name == "kling-video-v3"
+}
+
+// These gateway models take resolution and aspect_ratio separately. The Sora
+// multipart adapter uses size/resolution_name and sends numeric UI resolutions.
+func beefAPIFlatFrameVideoBody(input Input) (map[string]interface{}, error) {
+	contract, _ := providerpreset.BeefAPIVideoContract(input.Config.Model)
+	if len(input.ReferenceImages) > 1 || len(input.ReferenceVideos) > 0 || len(input.ReferenceAudios) > 0 {
+		return nil, errors.New("当前视频模型只支持一张参考图片")
+	}
+	seconds := defaultString(input.Config.VideoSeconds, strconv.Itoa(contract.Duration.Default))
+	duration, err := strconv.Atoi(seconds)
+	if err != nil || duration <= 0 {
+		return nil, errors.New("视频时长必须为正整数")
+	}
+	maxDuration := contract.Duration.Max
+	if len(input.ReferenceImages) > 0 && contract.MaxImageDuration > 0 {
+		maxDuration = contract.MaxImageDuration
+	}
+	if duration < contract.Duration.Min || duration > maxDuration {
+		return nil, fmt.Errorf("当前视频模型时长须为 %d～%d 秒", contract.Duration.Min, maxDuration)
+	}
+	resolution := NormalizeVideoResolution(input.Config.VQuality)
+	if isAutomaticVideoResolution(input.Config.VQuality) {
+		resolution = "720p"
+	}
+	if !slices.Contains(contract.Resolutions, resolution) {
+		return nil, fmt.Errorf("当前视频模型不支持分辨率 %s", resolution)
+	}
+	if len(input.ReferenceImages) > 0 && contract.ReferenceResolution != "" && resolution != contract.ReferenceResolution {
+		return nil, fmt.Errorf("当前视频模型带参考图片时须选择 %s 分辨率", contract.ReferenceResolution)
+	}
+	ratio := defaultString(input.Config.Size, "16:9")
+	if (input.Config.Model != "kling-video-v3" || len(input.ReferenceImages) == 0) && !slices.Contains(contract.Ratios, ratio) {
+		return nil, fmt.Errorf("当前视频模型不支持比例 %s", ratio)
+	}
+	body := map[string]interface{}{
+		"model": input.Config.Model, "prompt": NewAPIVideoPromptText(input),
+		"duration": duration, "resolution": resolution,
+		"generate_audio": ParseBool(input.Config.VideoGenerateAudio, true),
+	}
+	if len(input.ReferenceImages) == 1 {
+		url, err := openAIImageInputURL(input.ReferenceImages[0])
+		if err != nil {
+			return nil, err
+		}
+		body["image"] = map[string]interface{}{"url": url}
+	}
+	// Kling derives the ratio from its first frame. Grok also accepts an
+	// explicit output ratio for image-to-video.
+	if input.Config.Model != "kling-video-v3" || len(input.ReferenceImages) == 0 {
+		body["aspect_ratio"] = ratio
 	}
 	return body, nil
 }
