@@ -31,7 +31,7 @@ beforeAll(async () => {
     const executablePath = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"].find((p): p is string => Boolean(p && existsSync(p)));
     browser = await chromium.launch({ executablePath, headless: true });
 }, 60000);
-afterAll(async () => { await browser?.close(); server?.stop(true); });
+afterAll(async () => { await browser?.close(); server?.stop(true); }, 30000);
 
 async function open(options: { reduced?: boolean; dark?: boolean; mobile?: boolean } = {}): Promise<Page> {
     const page = await browser.newPage({ viewport: { width: options.mobile ? 390 : 1424, height: 921 }, reducedMotion: options.reduced ? "reduce" : "no-preference" });
