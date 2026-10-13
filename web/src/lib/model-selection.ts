@@ -61,7 +61,7 @@ export function portraitGenerationError(config: AiConfig, model: string, resolut
     const channel = resolveModelChannel(config, model);
     const profile = channel.modelProfiles?.find((item) => item.model === modelOptionName(model));
     const quote = sanitizeVideoPriceQuote(profile?.videoPricing);
-    if (!quote) return "真人素材版价格暂不可用，请刷新模型列表";
+    if (!quote || quote.mode !== "tokens") return "真人素材版价格暂不可用，请刷新模型列表";
     if (resolution !== undefined) {
         const normalized = normalizeVideoResolutionValue(resolution);
         const key = normalized === "2160" ? "4k" : `${normalized}p`;

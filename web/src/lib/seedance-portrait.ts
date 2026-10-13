@@ -1,6 +1,6 @@
 export type VideoPriceQuote = {
     currency: "CNY";
-    mode: "tokens";
+    mode: "tokens" | "seconds";
     rates: Record<string, { output: number; reference_video: number }>;
 };
 
@@ -25,15 +25,16 @@ export function portraitTaskRetryError(inputJson?: string, model?: string): stri
 
 export function sanitizeVideoPriceQuote(value: unknown): VideoPriceQuote | null {
     const quote = value as VideoPriceQuote | undefined;
-    if (!quote || quote.currency !== "CNY" || quote.mode !== "tokens" || !quote.rates || typeof quote.rates !== "object" || !Object.keys(quote.rates).length) return null;
+    if (!quote || quote.currency !== "CNY" || !["tokens", "seconds"].includes(quote.mode) || !quote.rates || typeof quote.rates !== "object" || !Object.keys(quote.rates).length) return null;
     const entries = Object.entries(quote.rates);
-    if (!entries.every(([resolution, rate]) => ["480p", "720p", "1080p", "4k"].includes(resolution) && Number.isFinite(rate?.output) && rate.output > 0 && Number.isFinite(rate?.reference_video) && rate.reference_video > 0)) return null;
-    return { currency: "CNY", mode: "tokens", rates: Object.fromEntries(entries.map(([resolution, rate]) => [resolution, { output: rate.output, reference_video: rate.reference_video }])) };
+    if (!entries.every(([resolution, rate]) => ["480p", "720p", "768p", "1080p", "4k"].includes(resolution) && Number.isFinite(rate?.output) && rate.output > 0 && Number.isFinite(rate?.reference_video) && (quote.mode === "seconds" ? rate.reference_video === 0 : rate.reference_video > 0))) return null;
+    return { currency: "CNY", mode: quote.mode, rates: Object.fromEntries(entries.map(([resolution, rate]) => [resolution, { output: rate.output, reference_video: rate.reference_video }])) };
 }
 
 export function portraitPriceLines(value: unknown): string[] {
     const quote = sanitizeVideoPriceQuote(value);
     if (!quote) return [];
+    if (quote.mode === "seconds") return Object.entries(quote.rates).map(([resolution, rate]) => `${resolution}：¥${Number(rate.output.toFixed(4))} / 秒`);
     return Object.entries(quote.rates)
         .map(([resolution, rate]) => `${resolution}：无视频输入 ¥${rate.output}，含视频输入 ¥${rate.reference_video} / 百万视频 Token`);
 }
