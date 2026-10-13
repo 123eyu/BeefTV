@@ -22,6 +22,8 @@ export type DesktopUpdateScheduler = {
 };
 
 export type DesktopUpdateControllerOptions = {
+	/** Save deadline; expiration must never continue into native installation. */
+	persistTimeoutMs?: number;
     getBinding?: () => DesktopRuntimeBinding | undefined;
     isDesktopRuntime?: () => boolean;
     persistWorkspace?: () => Promise<void>;
@@ -82,6 +84,11 @@ export function parseDesktopUpdateState(value: unknown, fallbackCurrentVersion =
     const status = isDesktopUpdateStatus(source.status) ? source.status : error ? "error" : "idle";
     return {
         status,
+        ...(["downloading", "verifying", "extracting", "preparing", "restarting"].includes(readText(source.phase)) ? {
+            phase: readText(source.phase) as DesktopUpdateState["phase"],
+            completedFiles: readBytes(source.completedFiles),
+            totalFiles: readBytes(source.totalFiles),
+        } : {}),
         ...(source.installPrepared === true ? { installPrepared: true } : {}),
         currentVersion,
         latestVersion: readText(source.latestVersion),
@@ -160,6 +167,11 @@ export function formatDesktopUpdateRemaining(seconds: number | null): string {
 
 /** Secondary line under the download status: speed and time left, or why it paused. */
 export function desktopUpdateDetailLabel(state: DesktopUpdateState): string {
+    if (state.status === "installing") {
+        if (state.phase === "extracting" && state.totalFiles) return `${state.completedFiles ?? 0} / ${state.totalFiles} 个文件`;
+        if (state.phase === "restarting" || state.installPrepared) return "完成后将自动打开新版本";
+        return "请保持应用开启";
+    }
     if (state.status === "downloading") {
         if (state.reconnecting) return "网络中断，正在重新连接";
         if (state.totalBytes > 0 && state.downloadedBytes >= state.totalBytes) return "下载完成，正在校验更新包";
@@ -249,6 +261,7 @@ export function createDesktopUpdateController(options: DesktopUpdateControllerOp
     let actionBusy = false;
     let lastAction: InternalPhase = "none";
     let stagedReady = false;
+    let pendingPersistence: Promise<void> | null = null;
     let startPromise: Promise<void> | null = null;
     let stopPoll: (() => void) | null = null;
     let pollGeneration = 0;
@@ -383,11 +396,26 @@ export function createDesktopUpdateController(options: DesktopUpdateControllerOp
         const binding = getBinding();
         if (!hasDesktopUpdateBinding(binding) || runtimeKind() !== "desktop") return;
         if (state.status !== "ready" && !(state.status === "error" && stagedReady)) return;
+        if (pendingPersistence) {
+            apply({ ...state, status: "error", error: "上次保存仍未结束，请稍后重试。" });
+            return;
+        }
         lastAction = "install";
         persistBusy = true;
         emit();
+        let saveTimer: ReturnType<typeof setTimeout> | undefined;
         try {
-            await persistWorkspace();
+            const save = persistWorkspace();
+            pendingPersistence = save;
+            // A timeout stops this install attempt, not the editor's write.
+            // Keep ownership until settlement; the next attempt must save afresh.
+            void save.then(() => { pendingPersistence = null; }, () => { pendingPersistence = null; });
+            await Promise.race([
+                save,
+                new Promise<never>((_, reject) => {
+                    saveTimer = setTimeout(() => reject(new Error("保存耗时较长，尚未开始安装。请稍后重试。")), options.persistTimeoutMs ?? 60_000);
+                }),
+            ]);
         } catch (error) {
             persistBusy = false;
             apply(
@@ -399,10 +427,13 @@ export function createDesktopUpdateController(options: DesktopUpdateControllerOp
                 { persistBusy: false, actionBusy: false },
             );
             return;
+        } finally {
+            clearTimeout(saveTimer);
         }
+        if (disposed) return;
         persistBusy = false;
         actionBusy = true;
-        apply({ ...state, status: "installing", installPrepared: false, error: "" }, { persistBusy: false, actionBusy: true });
+        apply({ ...state, status: "installing", phase: "verifying", completedFiles: 0, totalFiles: 0, installPrepared: false, error: "" }, { persistBusy: false, actionBusy: true });
         try {
             await binding.InstallUpdate();
             if (disposed) return;
