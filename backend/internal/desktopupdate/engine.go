@@ -30,7 +30,6 @@ type verifiedUpdate struct {
 type stagedUpdate struct {
 	version  string
 	notes    string
-	root     string
 	archive  string
 	platform string
 	artifact PlatformArtifact
@@ -287,9 +286,7 @@ func (e *Engine) DownloadUpdate(ctx context.Context) (UpdateState, error) {
 	archivePath := filepath.Join(stageRoot, "update.zip")
 	stagingAccepted := false
 	defer func() {
-		// This invocation exclusively created stageRoot. Failed extraction or
-		// layout verification must not leave a whole installer after each retry.
-		// Installation recovery copies are created later and remain protected.
+		// Only remove this invocation's incomplete download, never recovery data.
 		if !stagingAccepted {
 			_ = os.RemoveAll(stageRoot)
 		}
@@ -302,22 +299,12 @@ func (e *Engine) DownloadUpdate(ctx context.Context) (UpdateState, error) {
 		e.fail(publicError(err))
 		return e.snapshot(), wrapPublic(err)
 	}
-	extracted := filepath.Join(stageRoot, "extracted")
-	if err := extractSecureZip(archivePath, extracted, defaultExtractLimits()); err != nil {
-		e.logf("extract failed: %v", err)
-		e.fail(publicError(ErrInvalidArchive))
-		return e.snapshot(), ErrInvalidArchive
-	}
-	if err := validateExtractedLayout(extracted, verified.platform); err != nil {
-		e.logf("layout invalid: %v", err)
-		e.fail(publicError(ErrInvalidArchive))
-		return e.snapshot(), ErrInvalidArchive
-	}
+	// Keep the signed archive only. Extract once on the installation volume,
+	// and validate the entire layout before the running application can exit.
 	e.mu.Lock()
 	e.staged = &stagedUpdate{
 		version:  verified.payload.Version,
 		notes:    verified.payload.Notes,
-		root:     extracted,
 		archive:  archivePath,
 		platform: verified.platform,
 		artifact: verified.artifact,
@@ -337,6 +324,8 @@ func (e *Engine) DownloadUpdate(ctx context.Context) (UpdateState, error) {
 }
 
 func (e *Engine) InstallUpdate(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
 	if err := e.begin(actionInstall); err != nil {
 		return err
 	}
@@ -362,6 +351,7 @@ func (e *Engine) InstallUpdate(ctx context.Context) error {
 		return fmt.Errorf("%s", publicInstallError(err))
 	}
 	e.set(func(state *UpdateState) { state.InstallPrepared = true })
+	e.setPhase("restarting")
 	e.logf("install prepared version=%s; requesting exit", staged.version)
 	if e.quit != nil {
 		if err := e.quit(); err != nil {
@@ -445,8 +435,23 @@ func (e *Engine) snapshot() UpdateState {
 func (e *Engine) set(fn func(*UpdateState)) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	previous := e.state.Status
 	fn(&e.state)
+	if previous != e.state.Status {
+		e.state.Phase = ""
+		e.state.CompletedFiles = 0
+		e.state.TotalFiles = 0
+	}
 	e.state.CurrentVersion = e.currentVersion
+}
+
+func (e *Engine) setPhase(phase string) {
+	e.set(func(state *UpdateState) {
+		state.Phase = phase
+		state.CompletedFiles = 0
+		state.TotalFiles = 0
+	})
+	e.logf("update phase=%s", phase)
 }
 
 func (e *Engine) fail(message string) {
