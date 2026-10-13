@@ -37,6 +37,7 @@ import { IMAGE_PROMPT_REVERSE } from "@/lib/prompts";
 import { createPortraitTextureNode } from "@/lib/canvas/canvas-image-source";
 import { mediaResultMetadata } from "@/lib/canvas/canvas-node-semantics";
 import { attachOwnedDepthCaptureResult, recoverOwnedDepthCaptureNode, recoverOwnedDepthCaptureNodes } from "@/lib/canvas/canvas-depth-recover";
+import { depthCaptureTaskMetadata, depthCaptureWaitFailureMetadata } from "@/lib/canvas/canvas-depth-capture";
 import { persistOwnedCanvasMediaNodes } from "@/lib/canvas/canvas-media-persist";
 import { captureVideoFrames } from "@/lib/canvas/canvas-video-frame";
 import { resolveCanvasVideoDurationMs } from "@/lib/canvas/canvas-video-duration";
@@ -383,6 +384,7 @@ export function useCanvasMediaTools({
         setSelectedNodeIds(new Set([childId]));
         setSelectedConnectionId(null);
         let submittedTaskId: string | undefined;
+        let latestDepthTask: GenerationTask | undefined;
         try {
             const session = beginLocalExecutorSession(originalProjectId, {
                 controller: observer,
@@ -399,15 +401,16 @@ export function useCanvasMediaTools({
                 nodeId: childId,
                 clientOperationId,
                 onCreated: async (created) => {
+                    latestDepthTask = created;
                     submittedTaskId = created.id;
                     nodesRef.current = nodesRef.current.map(item => item.id === childId && item.metadata?.taskClientOperationId === clientOperationId ? { ...item, metadata: { ...item.metadata, taskId: created.id, taskStatus: created.status, taskClientOperationId: created.clientOperationId || clientOperationId } } : item);
                     setNodes(nodesRef.current);
                     await persistCanvasDocument(originalProjectId, { nodes: nodesRef.current, connections: connectionsRef.current }, expectedScope);
                 },
-                onTaskUpdate: (next) => setNodes((current) => current.map((item) => item.id === childId && item.metadata?.taskId === next.id ? {
-                    ...item,
-                    metadata: { ...item.metadata, taskStatus: next.status, taskStage: next.stage, processingLabel: next.stage || "正在生成深度视频", taskProgress: next.progress },
-                } : item)),
+                onTaskUpdate: (next) => {
+                    latestDepthTask = next;
+                    setNodes((current) => current.map((item) => item.id === childId && item.metadata?.taskId === next.id ? { ...item, metadata: { ...item.metadata, ...depthCaptureTaskMetadata(next) } } : item));
+                },
             });
             const target = nodesRef.current.find(item => item.id === childId);
             if (target?.metadata?.taskId === task.id) await attachOwnedDepthCaptureResult({ node: target, task, session, nodesRef, setNodes });
@@ -431,6 +434,7 @@ export function useCanvasMediaTools({
                     taskClientOperationTerminal: intent.terminal,
                     taskStage: uncertain ? "submission_unknown" : item.metadata?.taskStage,
                     errorDetails: details,
+                    ...(!uncertain ? depthCaptureWaitFailureMetadata(error, latestDepthTask || submittedTaskId) : {}),
                 },
             } : item));
             message.error(details);
@@ -498,6 +502,7 @@ export function useCanvasMediaTools({
         } : item);
         setNodes(nodesRef.current);
         let submittedTaskId: string | undefined;
+        let latestDepthTask: GenerationTask | undefined;
         try {
             const session = beginLocalExecutorSession(originalProjectId, {
                 controller: observer,
@@ -514,15 +519,16 @@ export function useCanvasMediaTools({
                 nodeId: node.id,
                 clientOperationId,
                 onCreated: async (created) => {
+                    latestDepthTask = created;
                     submittedTaskId = created.id;
                     nodesRef.current = nodesRef.current.map(item => item.id === node.id && item.metadata?.taskClientOperationId === clientOperationId ? { ...item, metadata: { ...item.metadata, taskId: created.id, taskStatus: created.status, taskClientOperationId: created.clientOperationId || clientOperationId } } : item);
                     setNodes(nodesRef.current);
                     await persistCanvasDocument(originalProjectId, { nodes: nodesRef.current, connections: connectionsRef.current }, expectedScope);
                 },
-                onTaskUpdate: (next) => setNodes((current) => current.map((item) => item.id === node.id && item.metadata?.taskId === next.id ? {
-                    ...item,
-                    metadata: { ...item.metadata, taskStatus: next.status, taskStage: next.stage, processingLabel: next.stage || "正在生成深度视频", taskProgress: next.progress },
-                } : item)),
+                onTaskUpdate: (next) => {
+                    latestDepthTask = next;
+                    setNodes((current) => current.map((item) => item.id === node.id && item.metadata?.taskId === next.id ? { ...item, metadata: { ...item.metadata, ...depthCaptureTaskMetadata(next) } } : item));
+                },
             });
             const target = nodesRef.current.find(item => item.id === node.id);
             if (target?.metadata?.taskId === task.id) await attachOwnedDepthCaptureResult({ node: target, task, session, nodesRef, setNodes });
@@ -546,6 +552,7 @@ export function useCanvasMediaTools({
                     taskClientOperationTerminal: intent.terminal,
                     taskStage: uncertain ? "submission_unknown" : item.metadata?.taskStage,
                     errorDetails: details,
+                    ...(!uncertain ? depthCaptureWaitFailureMetadata(error, latestDepthTask || submittedTaskId) : {}),
                 },
             } : item));
             message.error(details);

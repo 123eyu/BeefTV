@@ -1,4 +1,5 @@
 import { generationErrorMessage } from "@/lib/generation-error";
+import { depthCaptureTaskMetadata, depthCaptureWaitFailureMetadata } from "@/lib/canvas/canvas-depth-capture";
 import { assertLocalExecutorSession, beginLocalExecutorSession, isLocalExecutorSessionStop, observeLocalExecutorTask, type LocalExecutorSession } from "@/lib/plugins/builtin/editor/local-executor-session";
 import type { CapturedUserScope } from "@/lib/user-scope-guard";
 import type { GenerationTask } from "@/services/api/task-center";
@@ -48,13 +49,14 @@ export async function recoverOwnedDepthCaptureNode(input: DepthTarget, bind = bi
         updateDepthTarget(input, node => ({ ...node, metadata: { ...node.metadata, status: "error", errorDetails: "深度任务未成功提交，请重新生成" } }));
         return;
     }
+    let latestTask: GenerationTask | undefined;
     try {
         const task = await observeLocalExecutorTask(taskId, input.session, {
             intervalMs: 1000,
-            onTaskUpdate: task => updateDepthTarget(input, node => ({
-                ...node,
-                metadata: { ...node.metadata, taskStatus: task.status, taskStage: task.stage, processingLabel: task.stage || "正在生成深度视频", taskProgress: task.progress },
-            })),
+            onTaskUpdate: task => {
+                latestTask = task;
+                updateDepthTarget(input, node => ({ ...node, metadata: { ...node.metadata, ...depthCaptureTaskMetadata(task) } }));
+            },
         });
         await attachOwnedDepthCaptureResult({ ...input, task }, bind);
     } catch (error) {
@@ -64,7 +66,7 @@ export async function recoverOwnedDepthCaptureNode(input: DepthTarget, bind = bi
             throw stop;
         }
         // Attachment failure must never turn a succeeded task into a failed one.
-        updateDepthTarget(input, node => ({ ...node, metadata: { ...node.metadata, status: "error", errorDetails: generationErrorMessage(error) } }));
+        updateDepthTarget(input, node => ({ ...node, metadata: { ...node.metadata, ...depthCaptureWaitFailureMetadata(generationErrorMessage(error), latestTask || taskId) } }));
     }
 }
 

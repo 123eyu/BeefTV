@@ -26,6 +26,26 @@ func Proxy(req *http.Request) (*url.URL, error) {
 	return proxyWithSystem(req.URL, *config, readSystemProxy())
 }
 
+// HTTPSProxyEnvironment carries desktop proxy selection to HTTPS-only child
+// downloaders, including redirect hosts and the system bypass list.
+func HTTPSProxyEnvironment() []string {
+	config := httpproxy.FromEnvironment()
+	if !ExplicitProxyConfigured() {
+		system := readSystemProxy()
+		config.HTTPSProxy = system.config.HTTPSProxy
+		config.NoProxy = strings.Trim(config.NoProxy+","+system.config.NoProxy, ",")
+	}
+	bypass := strings.Split(config.NoProxy, ",")
+	for i, host := range bypass {
+		bypass[i] = strings.TrimSpace(host)
+		if strings.HasPrefix(bypass[i], "*.") {
+			bypass[i] = bypass[i][1:]
+		}
+	}
+	noProxy := strings.Join(bypass, ",")
+	return []string{"HTTPS_PROXY=" + config.HTTPSProxy, "https_proxy=" + config.HTTPSProxy, "NO_PROXY=" + noProxy, "no_proxy=" + noProxy, "ALL_PROXY=", "all_proxy="}
+}
+
 // Explicit environment configuration must never be bypassed automatically.
 func ExplicitProxyConfigured() bool {
 	for _, name := range []string{"HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"} {

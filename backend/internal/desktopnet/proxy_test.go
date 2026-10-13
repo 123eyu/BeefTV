@@ -4,10 +4,33 @@ import (
 	"net/http"
 	"net/url"
 	"runtime"
+	"strings"
 	"testing"
 
 	"golang.org/x/net/http/httpproxy"
 )
+
+func TestHTTPSChildProxyPreservesRedirectBypassAndExplicitDirect(t *testing.T) {
+	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:7890")
+	t.Setenv("https_proxy", "http://127.0.0.1:9999")
+	t.Setenv("NO_PROXY", "*.internal,cdn.example.com,10.0.0.0/8")
+	t.Setenv("no_proxy", "")
+	env := strings.Join(HTTPSProxyEnvironment(), "\n")
+	if !strings.Contains(env, "https_proxy=http://127.0.0.1:7890") || !strings.Contains(env, "no_proxy=.internal,cdn.example.com,10.0.0.0/8") {
+		t.Fatal("child downloader lost desktop proxy precedence or redirect exclusions")
+	}
+	t.Setenv("HTTPS_PROXY", "")
+	t.Setenv("https_proxy", "")
+	t.Setenv("ALL_PROXY", "http://127.0.0.1:8888")
+	env = strings.Join(HTTPSProxyEnvironment(), "\n")
+	if !strings.HasPrefix(env, "HTTPS_PROXY=\nhttps_proxy=\n") || !strings.HasSuffix(env, "ALL_PROXY=\nall_proxy=") {
+		t.Fatal("explicit direct configuration fell back to a different proxy")
+	}
+	t.Setenv("NO_PROXY", "*")
+	if !strings.Contains(strings.Join(HTTPSProxyEnvironment(), "\n"), "no_proxy=*\n") {
+		t.Fatal("universal proxy bypass was lost")
+	}
+}
 
 func TestSystemProxySelection(t *testing.T) {
 	windows := parseWindowsProxy("http=127.0.0.1:8080;https=127.0.0.1:7890", "*.internal;<local>")

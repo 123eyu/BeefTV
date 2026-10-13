@@ -528,6 +528,34 @@ describe("recoverOwnedDepthCaptureNodes ownership", () => {
 });
 
 describe("owned canvas persist and recover callbacks", () => {
+    test("reopening a stale failure restores running state then records the real local failure", async () => {
+        const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+        Object.defineProperty(globalThis, "window", { configurable: true, value: { setTimeout: (callback: () => void) => { queueMicrotask(callback); return 0; }, clearTimeout: () => {} } });
+        const restore = switchScope("owner-a");
+        const node = depthNode("depth-1", { status: "error", errorDetails: "任务执行超时，请稍后重试" });
+        const nodesRef = { current: [node] };
+        const states: string[] = [];
+        let queries = 0;
+        try {
+            await withAdapter(async config => {
+                expect(config.method).toBe("get");
+                expect(config.url).toBe("/tasks/depth-task");
+                queries++;
+                return envelope(generationTask({ id: "depth-task", provider: "local", model: "video-depth-anything-small", status: queries === 1 ? "running" : "failed", stage: queries === 1 ? "分析视频" : "深度处理失败", error: queries === 1 ? undefined : "curl: (28) Connection timed out" }));
+            }, async () => {
+                await recoverOwnedDepthCaptureNode({ node, nodesRef,
+                    session: beginLocalExecutorSession("proj-a", { controller: new AbortController(), getLiveProjectId: () => "proj-a" }),
+                    setNodes: updater => { nodesRef.current = updater(nodesRef.current); states.push(nodesRef.current[0]?.metadata?.status || ""); },
+                }, async () => { throw new Error("failed task must not bind"); });
+                expect(states).toContain("loading");
+                expect(nodesRef.current[0]?.metadata).toMatchObject({ status: "error", taskId: "depth-task", taskStatus: "failed", taskStage: "深度处理失败", taskProvider: "local", errorDetails: "curl: (28) Connection timed out", taskClientOperationTerminal: true });
+            });
+        } finally {
+            restore();
+            if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
+            else Reflect.deleteProperty(globalThis, "window");
+        }
+    });
     test("reopening after an attachment failure retries the same task, preserving concurrent edits", async () => {
         const restore = switchScope("owner-a");
         const node = depthNode("depth-1");

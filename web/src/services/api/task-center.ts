@@ -597,6 +597,7 @@ async function taskTextStreamHTTPError(response: Response) {
 
 function taskWaitTimeoutMs(task?: GenerationTask) {
     const type = task?.type || "";
+    if (type === "depth_capture") return 122 * 60 * 1000;
     if (type.includes("storyboard")) return 13 * 60 * 1000;
     if (type.includes("video")) return 32 * 60 * 1000;
     if (type.includes("image")) return 10 * 60 * 1000;

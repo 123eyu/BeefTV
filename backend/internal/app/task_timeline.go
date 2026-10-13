@@ -79,14 +79,18 @@ func (w *taskWorkerCoordinator) processTimelineTranscription(task *model.Task, c
 
 func (w *taskWorkerCoordinator) failTimelineTask(task *model.Task, stage string, message string) error {
 	s := w.service
-	done, err := s.repo.UpdateTaskTerminalState(task.ID, task.LeaseOwner, model.TaskStatusRunning, model.TaskStatusFailed, stage, message, time.Now())
+	done, err := s.repo.UpdateTaskTerminalState(task.ID, task.LeaseOwner, model.TaskStatusRunning, model.TaskStatusFailed, stage, message, time.Now(), task.FailureDiagnostics)
 	if err != nil {
 		return fmt.Errorf("写入转写失败态失败: %w", err)
 	}
 	if !done {
 		return fmt.Errorf("时间线任务状态或租约已变化：%w", repository.ErrTaskStateConflict)
 	}
-	s.logInfo(task.UserID, task.ID, fmt.Sprintf("时间线转写失败: %s", message), "")
+	label := "时间线转写失败"
+	if task.Type == model.TaskTypeDepthCapture {
+		label = "深度处理失败"
+	}
+	s.logInfo(task.UserID, task.ID, fmt.Sprintf("%s: %s", label, message), "")
 	return nil
 }
 
