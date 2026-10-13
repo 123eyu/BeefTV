@@ -31,3 +31,19 @@ func TestH3CatalogPersistsCNYSecondPriceAndVideoProtocol(t *testing.T) {
 		t.Fatal("stale price survived catalog refresh")
 	}
 }
+
+func TestH3BaseCatalogPersistsUpscaleAndReferenceImagePrice(t *testing.T) {
+	store, err := workspace.NewProviderConfig(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := CatalogModel{ID: "minimax-h3", DisplayName: "MiniMax H3", SupportedEndpointTypes: []string{"openai-video"}, VideoPricing: json.RawMessage(`{"currency":"CNY","mode":"seconds","rates":{"2k":{"output":1.322373,"reference_video":0},"4k":{"output":1.627536,"reference_video":0}},"reference_image":0.813768,"free_reference_images":5}`)}
+	if err = applyCatalog(store, []CatalogModel{entry}, "", "42", ""); err != nil {
+		t.Fatal(err)
+	}
+	profile := catalogProfile(t, store, entry.ID)
+	price, _ := profile["videoPricing"].(map[string]any)
+	if profile["protocol"] != "newapi-channel-2" || price["reference_image"] != 0.813768 || price["free_reference_images"] != float64(5) {
+		t.Fatalf("base price lost: %#v", profile)
+	}
+}

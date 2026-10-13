@@ -9,6 +9,13 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.7.20
+
+- 新增 MiniMax H3 和 H3 Max，与 H3 Max Turbo 一起提供人民币报价。
+- H3 支持 2K/4K、首尾帧和多图、视频、音频参考；前 5 张参考图免费，超过后显示按张费用。
+- 修正 H3 视频请求的画面比例，关键帧视频沿用图片比例。
+- 深度动作捕捉等待时间与后端保持一致，重启后恢复原任务；已生成的视频可以继续取回。
+
 ## v1.7.19
 
 - 下载更新后只解压一次，并显示校验、保存、解压和准备安装的进度。失败时能看到原因，可以重试。

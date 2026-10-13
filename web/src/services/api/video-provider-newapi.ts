@@ -30,16 +30,22 @@ export async function createVideoGenerationsTask(deps: VideoProviderDeps, config
         Promise.all(audioReferences.map((item) => resolveVideoGenerationsUrl(item.url, item.storageKey, inline))),
     ]);
     const resolution = newAPIVideoResolutionRequest(profile, config.vquality, modelOptionName(model));
-    const h3 = contract?.models.includes("minimax-h3-max-turbo") === true;
+    const h3 = contract !== undefined && ["minimax-h3", "minimax-h3-max", "minimax-h3-max-turbo"].includes(modelOptionName(model));
+    const h3References = h3 && modelOptionName(model) === "minimax-h3" && (options?.videoEditOperation === "reference_to_video" || videoUrls.length > 0 || audioUrls.length > 1 || imageUrls.length > 0 && !options?.videoStartFrameNodeId && !options?.videoEndFrameNodeId);
+    if (h3References && (options?.videoStartFrameNodeId || options?.videoEndFrameNodeId)) throw new Error("H3 多素材参考不能同时指定首帧或尾帧");
+    if (h3References && imageUrls.length + videoUrls.length + audioUrls.length > 12) throw new Error("H3 参考素材合计不能超过 12 个");
+    const h3Ratio = config.size.trim() || (h3References ? "adaptive" : "16:9");
+    if (h3 && !h3References && !imageUrls.length && h3Ratio === "adaptive") throw new Error("自适应比例仅支持多素材参考，请选择固定比例");
     const framePayload: Record<string, string> = {};
-    if (h3) {
+    if (h3 && !h3References) {
+        if (imageUrls.length > 2 || audioUrls.length > 1 || videoUrls.length > 0) throw new Error("H3 首尾帧模式支持最多 2 张图片、1 段配音");
         imageUrls.forEach((url, index) => {
             const image = references[index]!;
             if (options?.videoStartFrameNodeId || options?.videoEndFrameNodeId) {
                 let matched = false;
                 if (image.id === options.videoStartFrameNodeId) { framePayload.first_frame_url = url; matched = true; }
                 if (image.id === options.videoEndFrameNodeId) { framePayload.last_frame_url = url; matched = true; }
-                if (!matched) throw new Error("H3 Max Turbo 的图片须指定为首帧或尾帧");
+                if (!matched) throw new Error("H3 的图片须指定为首帧或尾帧");
             } else framePayload[index === 0 ? "first_frame_url" : "last_frame_url"] = url;
         });
         if ((options?.videoStartFrameNodeId && !framePayload.first_frame_url) || (options?.videoEndFrameNodeId && !framePayload.last_frame_url)) throw new Error("已选择的首尾帧未包含在视频请求中");
@@ -49,12 +55,14 @@ export async function createVideoGenerationsTask(deps: VideoProviderDeps, config
         prompt: prompt.trim(),
         ...(isApiMartVideoConfig(config)
             ? { duration: normalizeVideoSeconds(config.videoSeconds), size: normalizeVideoSize(config.size) || "16:9" }
-            : { seconds: normalizeVideoSeconds(config.videoSeconds), aspect_ratio: normalizeVideoSize(config.size) || "16:9" }),
+            : { seconds: normalizeVideoSeconds(config.videoSeconds), ...(h3 ? (!h3References && imageUrls.length ? {} : {aspect_ratio: h3Ratio}) : {aspect_ratio: normalizeVideoSize(config.size) || "16:9"}) }),
         ...(resolution ? { resolution } : {}),
         ...(!h3 && profile.generateAudio.supported ? { generate_audio: boolConfig(config.videoGenerateAudio, profile.generateAudio.default) } : {}),
-        ...(h3 ? framePayload : imageUrls.length ? { image_urls: imageUrls } : {}),
-        ...(videoUrls.length ? { video_urls: videoUrls } : {}),
-        ...(audioUrls.length ? { audio_urls: audioUrls } : {}),
+        ...(h3References ? {operation: "reference_to_video", ...(imageUrls.length ? {reference_image_urls: imageUrls} : {}), ...(videoUrls.length ? {reference_video_urls: videoUrls} : {}), ...(audioUrls.length ? {reference_audio_urls: audioUrls} : {})} : {
+            ...(h3 ? framePayload : imageUrls.length ? {image_urls: imageUrls} : {}),
+            ...(videoUrls.length ? {video_urls: videoUrls} : {}),
+            ...(audioUrls.length ? h3 ? {target_audio_url: audioUrls[0]} : {audio_urls: audioUrls} : {}),
+        }),
     };
     try {
         const raw = await deps.transport.post<ApiVideoResponse>(deps.transport.apiUrl(isApiMartVideoConfig(config) ? "/videos/generations" : "/video/generations"), payload, options);

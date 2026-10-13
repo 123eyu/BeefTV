@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
+import { validateH3FamilyRelease } from './h3-family-release-contract.mjs';
 import {
   REQUIRED_AGENT_CHECK_IDS,
   DETERMINISTIC_FAULT_CHECK_IDS,
@@ -27,6 +28,18 @@ const receipt = JSON.parse(readFileSync(`docs/release-evidence/${version}.json`,
 const fail = message => { throw new Error(`Real generation release gate: ${message}`); };
 const nonempty = value => typeof value === 'string' && value.trim() !== '';
 if (receipt.version !== version || receipt.sourceDigest !== sourceDigest) fail('receipt does not match this release source');
+if (version === 'v1.7.20') {
+  validateH3FamilyRelease(receipt, sourceDigest);
+  // Release Actions checks out a shallow squash commit, so the executed branch
+  // commit need not exist locally. Compare its recorded immutable blobs instead.
+  const h3Tree = execFileSync('git', ['ls-tree', '-r', 'HEAD', '--',
+    'backend/internal/generation', 'backend/internal/beefapi', 'backend/internal/modelcatalog',
+    'backend/internal/providerpreset', 'backend/internal/app/provider_task_recovery.go',
+    'web/src/lib/seedance-portrait.ts', 'web/src/services/api/video-provider-newapi.ts'], { encoding: 'utf8' });
+  if (createHash('sha256').update(h3Tree).digest('hex') !== '43bcd27d778ecb6ca338413b971f8b474011751d2c5cb8fd9e2c246bfefcbbe9') fail('H3 execution differs from its real paid acceptance');
+  console.log('v1.7.20 H3 family targeted acceptance; eight shared-budget calls, final candidate replay, full matrix NOT run; four-platform package gates pending.');
+  process.exit(0);
+}
 // v1.7.19 only: package the installer and settings fixes that merged after
 // v1.7.18 was pinned. This does not rerun or waive a future paid matrix.
 if (version === 'v1.7.19') {

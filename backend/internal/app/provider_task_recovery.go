@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"infinite-canvas/backend/internal/generation"
 	"strings"
 	"time"
 
@@ -92,7 +93,7 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	}
 	ctx = ensureOfficialProtocolAdapter(ctx, config.InterfaceType)
 	adapter, declarative := declarativeProtocolAdapterForContext(ctx, config.InterfaceType)
-	beefVideo := isBeefAPIVideoConfig(ctx, config) && (isSeedanceVideoConfig(config) || config.Model == "minimax-h3-max-turbo")
+	beefVideo := isBeefAPIVideoConfig(ctx, config) && (isSeedanceVideoConfig(config) || generation.IsBeefAPIH3Model(config.Model))
 	if !declarative && !beefVideo {
 		return nil, BadAuthRequest("该任务的请求协议不支持安全查询上游状态")
 	}
