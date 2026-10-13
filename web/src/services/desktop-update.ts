@@ -1,5 +1,5 @@
 import { DESKTOP_UPDATE_STATUSES, getDesktopAppBinding, type DesktopRuntimeBinding, type DesktopUpdateState, type DesktopUpdateStatus } from "@/services/desktop-runtime";
-import { prepareDesktopEditorsForUpdate } from "@/services/desktop-update-preparation";
+import { assertDesktopUpdateProgressSettled, DesktopUpdateSaveInProgressError, prepareDesktopEditorsForUpdate } from "@/services/desktop-update-preparation";
 
 export type { DesktopUpdateState, DesktopUpdateStatus };
 
@@ -15,6 +15,7 @@ export type DesktopUpdateSnapshot = {
     persistBusy: boolean;
     actionBusy: boolean;
     runtime: DesktopUpdateRuntimeKind;
+    canForceInstall: boolean;
 };
 
 export type DesktopUpdateScheduler = {
@@ -25,6 +26,7 @@ export type DesktopUpdateControllerOptions = {
     getBinding?: () => DesktopRuntimeBinding | undefined;
     isDesktopRuntime?: () => boolean;
     persistWorkspace?: () => Promise<void>;
+    assertNoActiveSaves?: () => Promise<void>;
     fallbackVersion?: string;
     pollIntervalMs?: number;
     scheduler?: DesktopUpdateScheduler;
@@ -37,6 +39,7 @@ export type DesktopUpdateController = {
     check: () => Promise<void>;
     download: () => Promise<void>;
     install: () => Promise<void>;
+    forceInstall: () => Promise<void>;
     downloadAndInstall: () => Promise<void>;
     retry: () => Promise<void>;
     dispose: () => void;
@@ -224,9 +227,17 @@ function readBuildVersion(): string {
 export async function persistWorkspaceBeforeDesktopInstall() {
     await prepareDesktopEditorsForUpdate();
     const [{ flushCanvasStorePersistence }, { flushAssetStorePersistence }, { flushModelConfig }] = await Promise.all([import("@/stores/canvas/use-canvas-store"), import("@/stores/use-asset-store"), import("@/services/model-config-repository")]);
-    await Promise.all([flushCanvasStorePersistence(), flushAssetStorePersistence(), flushModelConfig()]);
+    // A failed store must not offer restart while another store is still writing.
+    const results = await Promise.allSettled([flushCanvasStorePersistence(), flushAssetStorePersistence(), flushModelConfig()]);
+    const failed = results.find(result => result.status === "rejected");
+    if (failed?.status === "rejected") throw failed.reason;
+    await assertDesktopSaveProgress();
+}
+
+async function assertDesktopSaveProgress(allowFailed = false) {
     const { useSyncProgressStore } = await import("@/stores/use-sync-progress-store");
-    if (useSyncProgressStore.getState().isAnySyncing()) throw new Error("仍有内容正在保存，请稍后再更新。");
+    const { useCanvasStore } = await import("@/stores/canvas/use-canvas-store");
+    assertDesktopUpdateProgressSettled(useSyncProgressStore.getState().syncingProjects, new Set(useCanvasStore.getState().projects.map(project => project.id)), undefined, allowFailed);
 }
 
 const defaultScheduler: DesktopUpdateScheduler = {
@@ -240,12 +251,14 @@ export function createDesktopUpdateController(options: DesktopUpdateControllerOp
     const getBinding = options.getBinding ?? getDesktopAppBinding;
     const isDesktopRuntime = options.isDesktopRuntime ?? (() => isDesktopUpdateRuntime(getBinding()));
     const persistWorkspace = options.persistWorkspace ?? persistWorkspaceBeforeDesktopInstall;
+    const assertNoActiveSaves = options.assertNoActiveSaves ?? (() => assertDesktopSaveProgress(true));
     const fallbackVersion = options.fallbackVersion ?? readBuildVersion();
     const pollIntervalMs = options.pollIntervalMs ?? DESKTOP_UPDATE_POLL_INTERVAL_MS;
     const scheduler = options.scheduler ?? defaultScheduler;
 
     let state = emptyDesktopUpdateState(fallbackVersion);
     let persistBusy = false;
+    let canForceInstall = false;
     let actionBusy = false;
     let lastAction: InternalPhase = "none";
     let stagedReady = false;
@@ -263,6 +276,7 @@ export function createDesktopUpdateController(options: DesktopUpdateControllerOp
         persistBusy,
         actionBusy,
         runtime: runtimeKind(),
+        canForceInstall,
     });
 
     const emit = () => {
@@ -378,18 +392,22 @@ export function createDesktopUpdateController(options: DesktopUpdateControllerOp
         }
     };
 
-    const install = async () => {
+    const install = async (force = false) => {
         if (actionBusy || persistBusy) return;
+        if (force && !canForceInstall) return;
         const binding = getBinding();
         if (!hasDesktopUpdateBinding(binding) || runtimeKind() !== "desktop") return;
         if (state.status !== "ready" && !(state.status === "error" && stagedReady)) return;
         lastAction = "install";
         persistBusy = true;
+        canForceInstall = false;
         emit();
         try {
-            await persistWorkspace();
+            if (force) await assertNoActiveSaves();
+            else await persistWorkspace();
         } catch (error) {
             persistBusy = false;
+            canForceInstall = !(error instanceof DesktopUpdateSaveInProgressError);
             apply(
                 {
                     ...state,
@@ -474,6 +492,7 @@ export function createDesktopUpdateController(options: DesktopUpdateControllerOp
         check,
         download,
         install,
+        forceInstall: () => install(true),
         downloadAndInstall,
         retry,
         dispose: () => {

@@ -1,5 +1,8 @@
 import { useReducedMotion } from "motion/react";
 import { Download, LoaderCircle, RotateCcw } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Button } from "antd";
+import { AppModal } from "@/components/ui/product/app-modal";
 
 import { AppChangelogButton, APP_VERSION } from "@/components/layout/app-changelog-modal";
 import { cn } from "@/lib/utils";
@@ -40,6 +43,10 @@ export function WorkspaceSidebarUpdate({ collapsed }: { collapsed: boolean }) {
     const reducedMotion = useReducedMotion();
     const updater = useDesktopUpdate();
     const { state, persistBusy, actionBusy, runtime } = updater;
+    const [saveWarningOpen, setSaveWarningOpen] = useState(false);
+    useEffect(() => {
+        if (updater.canForceInstall) setSaveWarningOpen(true);
+    }, [updater.canForceInstall]);
     const installed = formatDesktopVersionLabel(state.currentVersion || APP_VERSION);
     const latest = formatDesktopVersionLabel(state.latestVersion);
     const showControls = shouldShowDesktopUpdaterControls(updater.snapshot);
@@ -55,6 +62,10 @@ export function WorkspaceSidebarUpdate({ collapsed }: { collapsed: boolean }) {
     const tooltip = line ? [line.title, amount, line.detail].filter(Boolean).join("\n") : updateLabel;
     const showBar = ["downloading", "ready", "installing"].includes(state.status) || persistBusy || (line?.tone === "paused" && line.percent !== null);
     const handleUpdate = () => {
+        if (updater.canForceInstall) {
+            setSaveWarningOpen(true);
+            return;
+        }
         if (state.status === "error") return showControls ? updater.downloadAndInstall() : updater.retry();
         return showControls ? updater.downloadAndInstall() : updater.check();
     };
@@ -69,6 +80,20 @@ export function WorkspaceSidebarUpdate({ collapsed }: { collapsed: boolean }) {
                         {busy ? <LoaderCircle className="size-4 animate-spin" strokeWidth={1.8} aria-hidden="true" /> : state.status === "error" ? <RotateCcw className="size-4" strokeWidth={1.8} aria-hidden="true" /> : <Download className="size-4" strokeWidth={1.8} aria-hidden="true" />}
                     </button>
                 </div>
+            <AppModal
+                open={saveWarningOpen && updater.canForceInstall}
+                title="保存未完成，是否仍然更新？"
+                onCancel={() => setSaveWarningOpen(false)}
+                width={480}
+                footer={[
+                    <Button key="cancel" onClick={() => setSaveWarningOpen(false)}>返回处理</Button>,
+                    <Button key="retry" type="primary" onClick={() => { setSaveWarningOpen(false); void updater.install(); }}>重试保存</Button>,
+                    <Button key="force" danger onClick={() => { setSaveWarningOpen(false); void updater.forceInstall(); }}>仍然更新</Button>,
+                ]}
+            >
+                <p>{errorText}</p>
+                <p className="mt-3">更新会关闭并重启应用，尚未保存的修改可能丢失。建议先返回处理或重试保存。</p>
+            </AppModal>
         </div>
     );
 }
