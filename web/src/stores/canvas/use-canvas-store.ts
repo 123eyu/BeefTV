@@ -725,6 +725,12 @@ export async function flushCanvasStorePersistence() {
     }
 }
 
+export function hasActiveCanvasStorePersistence() {
+    // Failed queues remain retryable, but only a timer or storage tail can
+    // still perform IO without another explicit save request.
+    return canvasStorageTails.size > 0 || canvasSaveTimers.size > 0;
+}
+
 export const useCanvasStore = create<CanvasStore>()(
     persist(
         (set, get) => ({

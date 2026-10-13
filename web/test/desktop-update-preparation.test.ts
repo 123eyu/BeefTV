@@ -1,6 +1,16 @@
 import { expect, test } from "bun:test";
-import { assertDesktopUpdateProgressSettled, DesktopUpdateSaveInProgressError, prepareDesktopEditorsForUpdate, registerDesktopUpdatePreparation } from "../src/services/desktop-update-preparation";
+import { assertDesktopUpdateProgressSettled, DesktopUpdateSaveInProgressError, hasActiveDesktopEditorSaves, prepareDesktopEditorsForUpdate, registerDesktopUpdatePreparation } from "../src/services/desktop-update-preparation";
 import { canvasSyncProgressKey, type SyncProjectProgress } from "../src/stores/use-sync-progress-store";
+
+test("unmounting an editor does not hide IO already in progress", () => {
+    let writing = true;
+    const unregister = registerDesktopUpdatePreparation(() => {}, () => writing);
+    expect(hasActiveDesktopEditorSaves()).toBe(true);
+    unregister();
+    expect(hasActiveDesktopEditorSaves()).toBe(true);
+    writing = false;
+    expect(hasActiveDesktopEditorSaves()).toBe(false);
+});
 
 test("historical errors for removed projects and other accounts do not block an idle update", () => {
     const records: Record<string, SyncProjectProgress> = {

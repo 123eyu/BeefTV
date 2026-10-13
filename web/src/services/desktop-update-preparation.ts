@@ -25,15 +25,26 @@ export function assertDesktopUpdateProgressSettled(
 
 // Mounted editors own their pending writes; the updater must await them before
 // asking the native host to exit. Unmounting removes the old workspace callback.
-const editors = new Set<PrepareEditor>();
+const editors = new Set<{ prepare: PrepareEditor; isSaving: () => boolean; mounted: boolean }>();
 
-export function registerDesktopUpdatePreparation(prepare: PrepareEditor) {
-    editors.add(prepare);
+export function registerDesktopUpdatePreparation(prepare: PrepareEditor, isSaving: () => boolean = () => false) {
+    const editor = { prepare, isSaving, mounted: true };
+    editors.add(editor);
     return () => {
-        editors.delete(prepare);
+        editor.mounted = false;
+        if (!isSaving()) editors.delete(editor);
     };
 }
 
 export async function prepareDesktopEditorsForUpdate() {
-    for (const prepare of [...editors]) await prepare();
+    for (const editor of [...editors]) if (editor.mounted) await editor.prepare();
+}
+
+export function hasActiveDesktopEditorSaves() {
+    let saving = false;
+    for (const editor of editors) {
+        if (editor.isSaving()) saving = true;
+        else if (!editor.mounted) editors.delete(editor);
+    }
+    return saving;
 }

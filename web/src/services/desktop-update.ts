@@ -1,5 +1,5 @@
 import { DESKTOP_UPDATE_STATUSES, getDesktopAppBinding, type DesktopRuntimeBinding, type DesktopUpdateState, type DesktopUpdateStatus } from "@/services/desktop-runtime";
-import { assertDesktopUpdateProgressSettled, DesktopUpdateSaveInProgressError, prepareDesktopEditorsForUpdate } from "@/services/desktop-update-preparation";
+import { assertDesktopUpdateProgressSettled, DesktopUpdateSaveInProgressError, hasActiveDesktopEditorSaves, prepareDesktopEditorsForUpdate } from "@/services/desktop-update-preparation";
 
 export type { DesktopUpdateState, DesktopUpdateStatus };
 
@@ -226,12 +226,30 @@ function readBuildVersion(): string {
 
 export async function persistWorkspaceBeforeDesktopInstall() {
     await prepareDesktopEditorsForUpdate();
-    const [{ flushCanvasStorePersistence }, { flushAssetStorePersistence }, { flushModelConfig }] = await Promise.all([import("@/stores/canvas/use-canvas-store"), import("@/stores/use-asset-store"), import("@/services/model-config-repository")]);
+    const [{ flushCanvasStorePersistence }, { flushAssetStorePersistence }, { flushModelConfig, getModelConfigPersistenceState }] = await Promise.all([import("@/stores/canvas/use-canvas-store"), import("@/stores/use-asset-store"), import("@/services/model-config-repository")]);
     // A failed store must not offer restart while another store is still writing.
     const results = await Promise.allSettled([flushCanvasStorePersistence(), flushAssetStorePersistence(), flushModelConfig()]);
     const failed = results.find(result => result.status === "rejected");
     if (failed?.status === "rejected") throw failed.reason;
+    const modelConfig = getModelConfigPersistenceState();
+    if (modelConfig.status === "saving") throw new DesktopUpdateSaveInProgressError();
+    if (modelConfig.dirty || modelConfig.status === "error") throw new Error("模型配置尚未保存完成，请重试保存，或选择仍然更新。");
     await assertDesktopSaveProgress();
+    await assertNoActiveDesktopSaves();
+}
+
+export async function assertNoActiveDesktopSaves() {
+    const [canvas, assets, generation, modelConfig, progress] = await Promise.all([
+        import("@/stores/canvas/use-canvas-store"), import("@/stores/use-asset-store"),
+        import("@/services/generation-asset-repository"), import("@/services/model-config-repository"),
+        import("@/stores/use-sync-progress-store"),
+    ]);
+    if (hasActiveDesktopEditorSaves() || canvas.hasActiveCanvasStorePersistence() || assets.hasActiveAssetStorePersistence()
+        || generation.hasActiveGenerationAssetWrites() || modelConfig.getModelConfigPersistenceState().status === "saving") {
+        throw new DesktopUpdateSaveInProgressError();
+    }
+    assertDesktopUpdateProgressSettled(progress.useSyncProgressStore.getState().syncingProjects,
+        new Set(canvas.useCanvasStore.getState().projects.map(project => project.id)), undefined, true);
 }
 
 async function assertDesktopSaveProgress(allowFailed = false) {
@@ -251,7 +269,7 @@ export function createDesktopUpdateController(options: DesktopUpdateControllerOp
     const getBinding = options.getBinding ?? getDesktopAppBinding;
     const isDesktopRuntime = options.isDesktopRuntime ?? (() => isDesktopUpdateRuntime(getBinding()));
     const persistWorkspace = options.persistWorkspace ?? persistWorkspaceBeforeDesktopInstall;
-    const assertNoActiveSaves = options.assertNoActiveSaves ?? (() => assertDesktopSaveProgress(true));
+    const assertNoActiveSaves = options.assertNoActiveSaves ?? assertNoActiveDesktopSaves;
     const fallbackVersion = options.fallbackVersion ?? readBuildVersion();
     const pollIntervalMs = options.pollIntervalMs ?? DESKTOP_UPDATE_POLL_INTERVAL_MS;
     const scheduler = options.scheduler ?? defaultScheduler;
@@ -406,6 +424,12 @@ export function createDesktopUpdateController(options: DesktopUpdateControllerOp
             if (force) await assertNoActiveSaves();
             else await persistWorkspace();
         } catch (error) {
+            if (!(error instanceof DesktopUpdateSaveInProgressError)) {
+                try { await assertNoActiveSaves(); }
+                catch (activeError) {
+                    if (activeError instanceof DesktopUpdateSaveInProgressError) error = activeError;
+                }
+            }
             persistBusy = false;
             canForceInstall = !(error instanceof DesktopUpdateSaveInProgressError);
             apply(
