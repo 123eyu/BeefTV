@@ -23,6 +23,7 @@ import { cacheResourceObjectUrl, getCachedResourceObjectUrl, peekCachedResourceO
 import { resolveMediaUrl } from "@/services/file-storage";
 import { useResourceVideoPlayback } from "@/hooks/use-resource-video-playback";
 import { resolveImageUrl } from "@/services/image-storage";
+import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
 import { acquireCanvasVideoPreview, canvasDerivedPreviewSourceKey, canvasVideoPreviewNeedsHydration } from "@/services/canvas-video-preview";
 import { acquireCanvasVideoSource } from "@/services/canvas-video-source";
 import { getActiveUserScopeEpoch, subscribeUserScope } from "@/lib/user-scope";
@@ -70,6 +71,7 @@ export type CanvasNodeContentProps = {
     onToggleBatch?: () => void;
     reduceMediaEffects?: boolean;
     mediaActive?: boolean;
+    scale?: number;
     onMediaPlayRequest?: (nodeId: string) => void;
 };
 
@@ -457,7 +459,7 @@ function ImageNodeContent(props: CanvasNodeContentProps) {
         return <BatchFrame batchPreviewNodes={props.batchPreviewNodes} batchCount={props.batchCount} batchExpanded={props.batchExpanded} batchOpening={props.batchOpening} batchRecovering={props.batchRecovering} theme={props.theme} onToggleBatch={props.onToggleBatch}>{content}</BatchFrame>;
     }
     if (!props.node.metadata?.content) return <EmptyImageContent {...props} />;
-    return <ImageContent batchPreviewNodes={props.batchPreviewNodes} node={props.node} theme={props.theme} isBatchRoot={props.isBatchRoot} batchCount={props.batchCount} batchExpanded={props.batchExpanded} batchOpening={props.batchOpening} batchRecovering={props.batchRecovering} onToggleBatch={props.onToggleBatch} />;
+    return <ImageContent scale={props.scale} batchPreviewNodes={props.batchPreviewNodes} node={props.node} theme={props.theme} isBatchRoot={props.isBatchRoot} batchCount={props.batchCount} batchExpanded={props.batchExpanded} batchOpening={props.batchOpening} batchRecovering={props.batchRecovering} onToggleBatch={props.onToggleBatch} />;
 }
 
 function EmptyImageContent({ node, theme, isBatchRoot, batchCount, batchPreviewNodes, batchExpanded, batchOpening, batchRecovering, onToggleBatch }: CanvasNodeContentProps) {
@@ -686,13 +688,14 @@ function EmptyAudioContent({ theme }: { theme: CanvasTheme }) {
     return <div className="flex h-full w-full items-center justify-center" style={{ color: theme.node.muted }}><Music2 className="canvas-node-empty-audio-mark size-14 opacity-30" strokeWidth={1.25} aria-hidden /></div>;
 }
 
-function ImageContent({ node, theme, isBatchRoot, batchCount, batchPreviewNodes, batchExpanded, batchOpening, batchRecovering, onToggleBatch }: Pick<CanvasNodeContentProps, "node" | "theme" | "isBatchRoot" | "batchCount" | "batchPreviewNodes" | "batchExpanded" | "batchOpening" | "batchRecovering" | "onToggleBatch">) {
+function ImageContent({ node, theme, scale = 1, isBatchRoot, batchCount, batchPreviewNodes, batchExpanded, batchOpening, batchRecovering, onToggleBatch }: Pick<CanvasNodeContentProps, "node" | "theme" | "scale" | "isBatchRoot" | "batchCount" | "batchPreviewNodes" | "batchExpanded" | "batchOpening" | "batchRecovering" | "onToggleBatch">) {
     const imageContainerRef = useRef<HTMLDivElement>(null);
     const nearViewport = useNearViewport(imageContainerRef);
     const { url, loading, error, retry, fail } = useNodeResourceUrl(node, nearViewport);
     const importedFromLibTV = node.metadata?.importSource?.provider === "libtv";
     const { updateMediaNode } = useCanvasNodeActions();
     const measuredSizeRef = useRef<{ width: number; height: number } | null>(null);
+    const compactStatus = node.width * scale < 140 || node.height * scale < 80;
 
     /**
      * 让节点跟随图片真实比例。
@@ -732,7 +735,17 @@ function ImageContent({ node, theme, isBatchRoot, batchCount, batchPreviewNodes,
     return (
         <BatchFrame batchPreviewNodes={batchPreviewNodes} batchCount={isBatchRoot ? batchCount : 0} batchExpanded={batchExpanded} batchOpening={batchOpening} batchRecovering={batchRecovering} theme={theme} onToggleBatch={onToggleBatch}>
             <div ref={imageContainerRef} className="h-full w-full overflow-hidden rounded-[var(--node-radius)]">
-                {error ? <div role="status" className="flex size-full flex-col items-center justify-center gap-2 px-3 text-center text-xs" style={{ color: theme.node.muted }}><span>图片加载失败</span><button type="button" data-canvas-no-zoom className="rounded border px-3 py-1" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); retry(); }}>重新加载</button></div> : url ? <img src={url} alt={node.title} loading="lazy" decoding="async" draggable={false} onDragStart={(event) => event.preventDefault()} onError={fail} onLoad={(event) => fitToImage(event.currentTarget)} className={`pointer-events-none block h-full w-full select-none ${node.metadata?.freeResize ? "object-fill" : "object-contain"}`} /> : <div className="grid size-full place-items-center" style={{ color: theme.node.muted }}>{loading ? <LoaderCircle className="size-5 animate-spin" /> : <ImageIcon className="size-5 opacity-45" />}</div>}
+                {error ? (
+                    <div role="status" aria-label="图片加载失败" className="flex size-full items-center justify-center text-center text-xs" style={{ background: theme.node.fill, color: theme.node.text }}>
+                        <div className="flex flex-col items-center gap-2" style={{ transform: "scale(var(--canvas-live-inverse-scale, 1))", transformOrigin: "center" }}>
+                            {!compactStatus ? <span>图片加载失败</span> : null}
+                            <button type="button" data-canvas-no-zoom aria-label="重新加载图片" title="重新加载图片" className={`inline-flex items-center justify-center gap-1.5 rounded border focus-visible:outline focus-visible:outline-2 ${compactStatus ? "size-7" : "px-3 py-1"}`} style={{ borderColor: theme.node.stroke, color: theme.node.text }} onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); retry(); }}>
+                                <RefreshCw className="size-4 shrink-0" aria-hidden />
+                                {!compactStatus ? "重新加载" : null}
+                            </button>
+                        </div>
+                    </div>
+                ) : url ? <img src={url} alt={node.title} loading="lazy" decoding="async" draggable={false} onDragStart={(event) => event.preventDefault()} onError={fail} onLoad={(event) => fitToImage(event.currentTarget)} className={`pointer-events-none block h-full w-full select-none ${node.metadata?.freeResize ? "object-fill" : "object-contain"}`} /> : <div role="status" aria-label="正在加载图片" className="grid size-full place-items-center" style={{ background: theme.node.fill, color: theme.node.muted }}><span style={{ transform: "scale(var(--canvas-live-inverse-scale, 1))" }}>{loading ? <LoaderCircle className="size-5 animate-spin" /> : <ImageIcon className="size-5" />}</span></div>}
             </div>
         </BatchFrame>
     );
@@ -768,8 +781,19 @@ function useNodeResourceUrl(node: CanvasNodeData, eager: boolean) {
     const reloadRequested = useRef(false);
     const [scopeEpoch, setScopeEpoch] = useState(getActiveUserScopeEpoch);
     useEffect(() => subscribeUserScope((epoch) => setScopeEpoch(epoch.generation)), []);
-    const fail = useCallback(() => setError(true), []);
-    const retry = useCallback(() => { reloadRequested.current = true; setError(false); setAttempt((current) => current + 1); }, []);
+    const reportImageEvent = useCallback((code: "CANVAS_IMAGE_READ_FAILED" | "CANVAS_IMAGE_DECODE_FAILED" | "CANVAS_IMAGE_RELOAD") => {
+        if (node.type !== CanvasNodeType.Image) return;
+        const safeNodeId = /^[A-Za-z0-9._:-]{1,96}$/.test(node.id) ? node.id : "unknown";
+        recordDiagnosticEvent({
+            level: code === "CANVAS_IMAGE_RELOAD" ? "info" : "error",
+            category: "runtime", code,
+            message: `${code === "CANVAS_IMAGE_DECODE_FAILED" ? "画布图片解码失败" : code === "CANVAS_IMAGE_READ_FAILED" ? "画布图片读取失败" : "重新读取画布图片"} node=${safeNodeId}`,
+            taskId: node.metadata?.taskId,
+            route: resourceId && /^[A-Za-z0-9_-]{1,96}$/.test(resourceId) ? `/resources/${resourceId}/file` : undefined,
+        });
+    }, [node.id, node.type, node.metadata?.taskId, resourceId]);
+    const fail = useCallback(() => { reportImageEvent("CANVAS_IMAGE_DECODE_FAILED"); setError(true); }, [reportImageEvent]);
+    const retry = useCallback(() => { reportImageEvent("CANVAS_IMAGE_RELOAD"); reloadRequested.current = true; setError(false); setAttempt((current) => current + 1); }, [reportImageEvent]);
 
     useEffect(() => {
         let cancelled = false;
@@ -786,7 +810,7 @@ function useNodeResourceUrl(node: CanvasNodeData, eager: boolean) {
                     if (!cancelled) setUrl(resolved);
                 })
                 .catch(() => {
-                    if (!cancelled) { setUrl(""); setError(true); }
+                    if (!cancelled) { setUrl(""); setError(true); reportImageEvent("CANVAS_IMAGE_READ_FAILED"); }
                 })
                 .finally(() => {
                     if (!cancelled) setLoading(false);
@@ -812,17 +836,17 @@ function useNodeResourceUrl(node: CanvasNodeData, eager: boolean) {
         const resolve = eager ? cacheResourceObjectUrl(storageKey, reload) : getCachedResourceObjectUrl(storageKey);
         void resolve.then((cached) => {
             if (!cancelled && cached) setUrl(cached);
-            if (!cancelled && eager && !cached) setError(true);
+            if (!cancelled && eager && !cached) { setError(true); reportImageEvent("CANVAS_IMAGE_READ_FAILED"); }
             // Never hand a protected resource URL to a native <img> after a
             // cache miss. It cannot attach the auth header and would render
             // as a broken image after relogin.
         }).catch(() => {
-            if (!cancelled && eager) { setUrl(synchronousUrl); setError(true); }
+            if (!cancelled && eager) { setUrl(synchronousUrl); setError(true); reportImageEvent("CANVAS_IMAGE_READ_FAILED"); }
         }).finally(() => {
             if (!cancelled) setLoading(false);
         });
         return () => { cancelled = true; };
-    }, [eager, fallback, isLazyVisual, isRemoteResource, storageKey, attempt, scopeEpoch]);
+    }, [eager, fallback, isLazyVisual, isRemoteResource, storageKey, attempt, scopeEpoch, reportImageEvent]);
 
     return { url, loading, error, retry, fail };
 }
