@@ -9,6 +9,13 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.7.19
+
+- 下载更新后只解压一次，并显示校验、保存、解压和准备安装的进度。失败时能看到原因，可以重试。
+- 更新前不再把以前导入失败留下的记录当成还没保存。保存失败时可以返回处理、再试一次，或确认后继续更新；继续更新可能丢掉还没保存的修改。
+- Windows 安装时如果目录被占用，会自动重试，并显示中文说明和错误码。安装失败时会尽量恢复原来的程序。
+- 开启「减少动态效果」后，默认模型菜单会留在屏幕内，可以正常打开和选择。
+
 ## v1.7.18
 
 - 新增 MiniMax H3 Max Turbo 视频模型，支持 480p、768p、1080p，显示当前人民币秒价。

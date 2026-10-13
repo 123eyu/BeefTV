@@ -27,6 +27,58 @@ const receipt = JSON.parse(readFileSync(`docs/release-evidence/${version}.json`,
 const fail = message => { throw new Error(`Real generation release gate: ${message}`); };
 const nonempty = value => typeof value === 'string' && value.trim() !== '';
 if (receipt.version !== version || receipt.sourceDigest !== sourceDigest) fail('receipt does not match this release source');
+// v1.7.19 only: package the installer and settings fixes that merged after
+// v1.7.18 was pinned. This does not rerun or waive a future paid matrix.
+if (version === 'v1.7.19') {
+  const evidence = value => Array.isArray(value) && value.length > 0 && value.every(nonempty);
+  const bound = value => value?.sourceDigest === sourceDigest && evidence(value.evidence);
+  if (receipt.ownerException?.scope !== 'late-merged-installer-ui-20261013'
+    || receipt.ownerException.approvedBy !== 'Ender'
+    || receipt.ownerException.instruction !== '继续打包有两项pr晚于这次打包但是合了'
+    || !evidence(receipt.ownerException.evidence)
+    || receipt.releaseAuthorization?.additionalHumanReplyRequired !== false
+    || receipt.releaseAuthorization.scope !== 'v1.7.19 only'
+    || receipt.baseRelease !== 'v1.7.18'
+    || receipt.baseCommit !== '3df73e4da93e30b4fdf394e6ed317ed7d90dcdd0'
+    || JSON.stringify(receipt.includedPullRequests) !== JSON.stringify([136, 137, 135])
+    || receipt.paidSubmissionPathChanged !== false
+    || receipt.liveMatrixStatus !== 'not_run_owner_waived'
+    || receipt.agentAcceptanceStatus !== 'not_run_owner_waived'
+    || receipt.acceptanceComplete !== false) fail('v1.7.19 requires the exact late-package authorization and the three merged pull requests');
+  if (receipt.paidSubmissionLimit !== 0 || receipt.newBudgetCNY !== 0
+    || receipt.newSpentCNY !== 0 || receipt.newPendingCNY !== 0
+    || !Array.isArray(receipt.cases) || receipt.cases.length !== 0
+    || !Array.isArray(receipt.billingAttempts) || receipt.billingAttempts.length !== 0
+    || [receipt.budgetCNY, receipt.spentCNY, receipt.pendingCNY].some(value => value !== null)) fail('v1.7.19 must not add paid generation or zero historical totals');
+  if (receipt.priorFinancialUncertainty?.status !== 'unresolved'
+    || receipt.priorFinancialUncertainty.carriedFromVersion !== 'v1.7.18'
+    || receipt.priorFinancialUncertainty.pendingCNY !== null
+    || !evidence(receipt.priorFinancialUncertainty.evidence)) fail('v1.7.19 must retain v1.7.18 financial uncertainty');
+  if (receipt.review?.result !== 'approved' || receipt.review.independent !== true
+    || !nonempty(receipt.review.reviewer) || !bound(receipt.review)
+    || receipt.upgrade?.preservedData !== true || !bound(receipt.upgrade)) fail('v1.7.19 requires current-source review and data preservation');
+  for (const [id, method] of Object.entries({
+    singleExtractProgress: 'test',
+    reducedMotionModelMenu: 'test',
+    installSaveAndRetry: 'test',
+    noNewPaidGeneration: 'source-diff',
+    localReleaseGate: 'local-script',
+    ci: 'github-actions',
+  })) {
+    const item = receipt.verification?.[id];
+    if (item?.status !== 'passed' || item.method !== method || !bound(item)) fail(`v1.7.19 missing targeted evidence: ${id}`);
+  }
+  const packages = receipt.packages;
+  const platforms = ['darwin-arm64', 'darwin-amd64', 'windows-amd64', 'linux-amd64'];
+  if (!Array.isArray(packages?.platforms) || JSON.stringify([...packages.platforms].sort()) !== JSON.stringify([...platforms].sort())
+    || packages.status !== 'pending_release_workflow' || packages.archives != null
+    || receipt.releasePublished !== false || receipt.releaseComplete !== false
+    || packages.windowsReleasedUpgradeAndRollbackBeforeUpload !== true || packages.finalArchiveSmokeBeforeUpload !== true
+    || packages.linuxNativeWindowBeforeUpload !== true || packages.signedManifestBeforePublish !== true
+    || packages.publicReadbackAfterPublish !== true || !evidence(packages.workflowEvidence)) fail('v1.7.19 must enforce all four final-package gates');
+  console.log('v1.7.19 late installer and settings package; no new paid generation; full matrix NOT run; four-platform package gates pending.');
+  process.exit(0);
+}
 // Exact H3-only authorization. Prior backend canaries and the current native
 // production client have different evidence and must never be relabeled.
 if (version === 'v1.7.18') {

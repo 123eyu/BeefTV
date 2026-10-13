@@ -50,6 +50,61 @@ function setupRepo(version) {
   return { dir, git, run, save, commitVersion };
 }
 
+test('v1.7.19 packages only the three late merges and cannot carry the waiver forward', () => {
+  const { dir, run, save, commitVersion } = setupRepo('v1.7.19');
+  try {
+    assert.throws(() => run());
+    const sourceDigest = run('--fingerprint').trim();
+    const evidence = ['synthetic receipt for gate testing; not live acceptance'];
+    const passed = (method) => ({ status: 'passed', method, sourceDigest, evidence });
+    const value = {
+      version: 'v1.7.19', sourceDigest,
+      ownerException: { scope: 'late-merged-installer-ui-20261013', approvedBy: 'Ender', instruction: '继续打包有两项pr晚于这次打包但是合了', evidence },
+      releaseAuthorization: { additionalHumanReplyRequired: false, scope: 'v1.7.19 only' },
+      baseRelease: 'v1.7.18', baseCommit: '3df73e4da93e30b4fdf394e6ed317ed7d90dcdd0',
+      includedPullRequests: [136, 137, 135], paidSubmissionPathChanged: false,
+      paidSubmissionLimit: 0, newBudgetCNY: 0, newSpentCNY: 0, newPendingCNY: 0,
+      cases: [], billingAttempts: [], budgetCNY: null, spentCNY: null, pendingCNY: null,
+      liveMatrixStatus: 'not_run_owner_waived', agentAcceptanceStatus: 'not_run_owner_waived', acceptanceComplete: false,
+      priorFinancialUncertainty: { status: 'unresolved', carriedFromVersion: 'v1.7.18', pendingCNY: null, evidence },
+      review: { result: 'approved', independent: true, reviewer: 'synthetic reviewer', sourceDigest, evidence },
+      upgrade: { preservedData: true, sourceDigest, evidence },
+      verification: {
+        singleExtractProgress: passed('test'),
+        reducedMotionModelMenu: passed('test'),
+        installSaveAndRetry: passed('test'),
+        noNewPaidGeneration: passed('source-diff'),
+        localReleaseGate: passed('local-script'),
+        ci: passed('github-actions'),
+      },
+      packages: { platforms: ['darwin-arm64', 'darwin-amd64', 'windows-amd64', 'linux-amd64'], status: 'pending_release_workflow', archives: null,
+        windowsReleasedUpgradeAndRollbackBeforeUpload: true, finalArchiveSmokeBeforeUpload: true, linuxNativeWindowBeforeUpload: true,
+        signedManifestBeforePublish: true, publicReadbackAfterPublish: true, workflowEvidence: evidence },
+      releasePublished: false, releaseComplete: false,
+    };
+    save(value);
+    assert.match(run(), /late installer and settings package/);
+    const deny = mutate => { const changed = structuredClone(value); mutate(changed); save(changed); assert.throws(() => run()); };
+    for (const mutate of [
+      r => r.ownerException.instruction = '继续打包', r => r.ownerException.approvedBy = 'other',
+      r => r.releaseAuthorization.additionalHumanReplyRequired = true, r => r.releaseAuthorization.scope = 'later versions',
+      r => r.baseRelease = 'v1.7.17', r => r.baseCommit = '0'.repeat(40),
+      r => r.includedPullRequests = [136, 137], r => r.includedPullRequests = [136, 137, 135, 119],
+      r => r.paidSubmissionPathChanged = true, r => r.paidSubmissionLimit = 1, r => r.newBudgetCNY = 1,
+      r => r.cases.push({}), r => r.billingAttempts.push({}), r => r.budgetCNY = 0, r => r.spentCNY = 0, r => r.pendingCNY = 0,
+      r => r.liveMatrixStatus = 'passed', r => r.acceptanceComplete = true,
+      r => r.priorFinancialUncertainty.carriedFromVersion = 'v1.7.17', r => r.priorFinancialUncertainty.pendingCNY = 0,
+      r => r.review.independent = false, r => r.upgrade.preservedData = false,
+      r => r.verification.ci.method = 'test', r => r.verification.singleExtractProgress.status = 'pending',
+      r => r.packages.platforms.pop(), r => r.packages.archives = {}, r => r.releaseComplete = true,
+    ]) deny(mutate);
+    save(value);
+    commitVersion('v1.7.20');
+    save({ ...value, version: 'v1.7.20', sourceDigest: run('--fingerprint').trim() }, 'v1.7.20');
+    assert.throws(() => run());
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('v1.7.18 H3-only receipt requires current native settlement, bounded funding and all package gates', () => {
   const { dir, run, save, commitVersion } = setupRepo('v1.7.18');
   try {
