@@ -14,18 +14,18 @@ func NormalizeCatalogVideoPricing(raw json.RawMessage) (map[string]any, bool) {
 			ReferenceVideo float64 `json:"reference_video"`
 		} `json:"rates"`
 	}
-	if json.Unmarshal(raw, &value) != nil || value.Currency != "CNY" || value.Mode != "tokens" || len(value.Rates) == 0 {
+	if json.Unmarshal(raw, &value) != nil || value.Currency != "CNY" || value.Mode != "tokens" && value.Mode != "seconds" || len(value.Rates) == 0 {
 		return nil, false
 	}
 	rates := map[string]any{}
 	for resolution, rate := range value.Rates {
-		if resolution != "480p" && resolution != "720p" && resolution != "1080p" && resolution != "4k" {
+		if resolution != "480p" && resolution != "720p" && resolution != "768p" && resolution != "1080p" && resolution != "4k" {
 			return nil, false
 		}
-		if rate.Output <= 0 || rate.ReferenceVideo <= 0 || math.IsNaN(rate.Output) || math.IsInf(rate.Output, 0) || math.IsNaN(rate.ReferenceVideo) || math.IsInf(rate.ReferenceVideo, 0) {
+		if rate.Output <= 0 || value.Mode == "tokens" && rate.ReferenceVideo <= 0 || value.Mode == "seconds" && rate.ReferenceVideo != 0 || math.IsNaN(rate.Output) || math.IsInf(rate.Output, 0) || math.IsNaN(rate.ReferenceVideo) || math.IsInf(rate.ReferenceVideo, 0) {
 			return nil, false
 		}
 		rates[resolution] = map[string]any{"output": rate.Output, "reference_video": rate.ReferenceVideo}
 	}
-	return map[string]any{"currency": "CNY", "mode": "tokens", "rates": rates}, true
+	return map[string]any{"currency": "CNY", "mode": value.Mode, "rates": rates}, true
 }

@@ -30,6 +30,20 @@ export async function createVideoGenerationsTask(deps: VideoProviderDeps, config
         Promise.all(audioReferences.map((item) => resolveVideoGenerationsUrl(item.url, item.storageKey, inline))),
     ]);
     const resolution = newAPIVideoResolutionRequest(profile, config.vquality, modelOptionName(model));
+    const h3 = contract?.models.includes("minimax-h3-max-turbo") === true;
+    const framePayload: Record<string, string> = {};
+    if (h3) {
+        imageUrls.forEach((url, index) => {
+            const image = references[index]!;
+            if (options?.videoStartFrameNodeId || options?.videoEndFrameNodeId) {
+                let matched = false;
+                if (image.id === options.videoStartFrameNodeId) { framePayload.first_frame_url = url; matched = true; }
+                if (image.id === options.videoEndFrameNodeId) { framePayload.last_frame_url = url; matched = true; }
+                if (!matched) throw new Error("H3 Max Turbo 的图片须指定为首帧或尾帧");
+            } else framePayload[index === 0 ? "first_frame_url" : "last_frame_url"] = url;
+        });
+        if ((options?.videoStartFrameNodeId && !framePayload.first_frame_url) || (options?.videoEndFrameNodeId && !framePayload.last_frame_url)) throw new Error("已选择的首尾帧未包含在视频请求中");
+    }
     const payload = {
         model: modelOptionName(model),
         prompt: prompt.trim(),
@@ -37,8 +51,8 @@ export async function createVideoGenerationsTask(deps: VideoProviderDeps, config
             ? { duration: normalizeVideoSeconds(config.videoSeconds), size: normalizeVideoSize(config.size) || "16:9" }
             : { seconds: normalizeVideoSeconds(config.videoSeconds), aspect_ratio: normalizeVideoSize(config.size) || "16:9" }),
         ...(resolution ? { resolution } : {}),
-        ...(profile.generateAudio.supported ? { generate_audio: boolConfig(config.videoGenerateAudio, profile.generateAudio.default) } : {}),
-        ...(imageUrls.length ? { image_urls: imageUrls } : {}),
+        ...(!h3 && profile.generateAudio.supported ? { generate_audio: boolConfig(config.videoGenerateAudio, profile.generateAudio.default) } : {}),
+        ...(h3 ? framePayload : imageUrls.length ? { image_urls: imageUrls } : {}),
         ...(videoUrls.length ? { video_urls: videoUrls } : {}),
         ...(audioUrls.length ? { audio_urls: audioUrls } : {}),
     };

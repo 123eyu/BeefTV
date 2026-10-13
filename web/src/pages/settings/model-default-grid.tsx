@@ -70,7 +70,7 @@ export function ModelDefaultGrid({ config, onChange, onOpenChannels }: { config:
                 const unavailable = isAssistant ? Boolean(config.assistantModel && !selected) : Boolean(selected && !options.some((option) => option.value === selected));
                 const value = unavailable ? undefined : isAssistant && !config.assistantModel ? "" : options.some((option) => option.value === selected) ? selected : undefined;
                 const Icon = row.icon;
-                const snapshot: ModelPickerSnapshot = { title: row.title, optionCount: options.length, hasValue: value !== undefined && value !== "", unavailable, disabled: !options.length, buildMs: performance.now() - buildStartedAt };
+                const snapshot: ModelPickerSnapshot = { pickerId: row.id, title: row.title, optionCount: options.length, hasValue: value !== undefined && value !== "", unavailable, disabled: !options.length, buildMs: performance.now() - buildStartedAt };
                 return (
                     <section key={row.id} className="model-default-setting-row" aria-labelledby={`default-${row.id}-title`}>
                         <div className="model-default-setting-label">
@@ -90,7 +90,7 @@ export function ModelDefaultGrid({ config, onChange, onOpenChannels }: { config:
                                 showSearch={{ optionFilterProp: "searchLabel" }}
                                 listHeight={256}
                                 popupMatchSelectWidth
-                                classNames={{ popup: { root: "model-default-select-popup" } }}
+                                classNames={{ popup: { root: `model-default-select-popup model-default-select-popup-${row.id}` } }}
                                 optionRender={(option) => (
                                     <div className="model-default-select-option">
                                         <span>{option.data.label}</span>

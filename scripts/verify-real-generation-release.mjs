@@ -27,6 +27,74 @@ const receipt = JSON.parse(readFileSync(`docs/release-evidence/${version}.json`,
 const fail = message => { throw new Error(`Real generation release gate: ${message}`); };
 const nonempty = value => typeof value === 'string' && value.trim() !== '';
 if (receipt.version !== version || receipt.sourceDigest !== sourceDigest) fail('receipt does not match this release source');
+// Exact H3-only authorization. Prior backend canaries and the current native
+// production client have different evidence and must never be relabeled.
+if (version === 'v1.7.18') {
+  const evidence = value => Array.isArray(value) && value.length > 0 && value.every(nonempty);
+  const bound = value => value?.sourceDigest === sourceDigest && evidence(value.evidence);
+  if (receipt.ownerException?.scope !== 'fal-h3-targeted-20261013'
+    || receipt.ownerException.approvedBy !== 'Ender'
+    || receipt.ownerException.instruction !== '本版采用 H3 专项验收（推荐）'
+    || !evidence(receipt.ownerException.evidence)
+    || receipt.releaseAuthorization?.additionalHumanReplyRequired !== false
+    || receipt.releaseAuthorization.scope !== 'v1.7.18 only'
+    || receipt.liveMatrixStatus !== 'not_run_owner_waived'
+    || receipt.agentAcceptanceStatus !== 'not_run_owner_waived'
+    || receipt.acceptanceComplete !== false) fail('v1.7.18 requires exact owner H3-only and cross-review authorization');
+  if (!Array.isArray(receipt.cases) || receipt.cases.length !== 0
+    || !Array.isArray(receipt.billingAttempts) || receipt.billingAttempts.length !== 0
+    || [receipt.budgetCNY, receipt.spentCNY, receipt.pendingCNY, receipt.newSpentCNY, receipt.newPendingCNY].some(value => value !== null)) fail('v1.7.18 must not add a generic paid matrix or zero unresolved financial totals');
+  const priorDigest = '1eca0cde63aaa9d09431465f997c9959d523ca2cda60cb8dcf00e132a6f55f50';
+  const requiredCases = { 'text-768p': '768p', 'first-last-480p': '480p', 'last-only-1080p': '1080p', 'pinned-audio-768p': '768p' };
+  if (receipt.priorH3Canaries?.length !== 4) fail('v1.7.18 requires exactly four recorded backend canaries');
+  const ids = new Set();
+  for (const [id, resolution] of Object.entries(requiredCases)) {
+    const item = receipt.priorH3Canaries.find(item => item.id === id);
+    if (!item || item.method !== 'production-go-test' || item.executedSourceDigest !== priorDigest
+      || item.model !== 'minimax-h3-max-turbo' || item.resolution !== resolution || item.seconds !== 3
+      || item.status !== 'succeeded' || !nonempty(item.providerRequestId) || ids.has(item.providerRequestId)
+      || !/^[a-f0-9]{64}$/.test(item.artifactSHA256 || '') || !evidence(item.evidence)) fail(`v1.7.18 invalid historical H3 case: ${id}`);
+    ids.add(item.providerRequestId);
+  }
+  const funding = receipt.h3Funding;
+  if (funding?.budgetCNY !== 20 || !Number.isFinite(funding.reservedUpperCNY)
+    || funding.reservedUpperCNY < 7.10326 || funding.reservedUpperCNY > 20
+    || funding.supplierInvoiceConfirmed !== false || funding.supplierBillingReadHTTPStatus !== 403
+    || !evidence(funding.evidence) || receipt.paidSubmissionLimit !== 5) fail('v1.7.18 must bound five H3 creates within CNY 20 and preserve supplier invoice uncertainty');
+  const item = receipt.productionH3;
+  if (!bound(item) || item.method !== 'native-cli' || item.clientVersion !== version
+    || item.model !== 'minimax-h3-max-turbo' || item.resolution !== '768p' || item.seconds !== 3
+    || item.status !== 'succeeded' || item.billing !== 'settled' || item.billingMarket !== 'enterprise'
+    || !Number.isFinite(item.costCNY) || Math.abs(item.costCNY - 0.7323912) > 0.000002
+    || item.canvasVerified !== true || item.saved !== true || item.reopened !== true
+    || item.mediaDecoded !== true || item.mediaOpened !== true || item.noDuplicateSubmission !== true
+    || ![item.taskId, item.gatewayTaskId, item.providerRequestId].every(nonempty)
+    || ids.has(item.providerRequestId) || !/^[a-f0-9]{64}$/.test(item.artifactSHA256 || '')) fail('v1.7.18 requires a current native production task, CNY settlement and saved playable canvas');
+  ids.add(item.providerRequestId);
+  if (!Array.isArray(funding.inferenceRequestIds) || funding.inferenceRequestIds.length !== 5
+    || new Set(funding.inferenceRequestIds).size !== 5
+    || funding.inferenceRequestIds.some(id => !ids.has(id))) fail('v1.7.18 must account for exactly the five recorded H3 inference requests');
+  if (receipt.priorFinancialUncertainty?.status !== 'unresolved'
+    || receipt.priorFinancialUncertainty.carriedFromVersion !== 'v1.7.17'
+    || receipt.priorFinancialUncertainty.pendingCNY !== null
+    || !evidence(receipt.priorFinancialUncertainty.evidence)) fail('v1.7.18 must retain historical financial uncertainty');
+  if (receipt.review?.result !== 'approved' || receipt.review.independent !== true
+    || !nonempty(receipt.review.reviewer) || !bound(receipt.review)
+    || receipt.upgrade?.preservedData !== true || !bound(receipt.upgrade)) fail('v1.7.18 requires final-source review and data preservation');
+  for (const id of ['h3Catalog', 'h3KeyframesAudio', 'nativeCanvasDelivery', 'noDuplicateSubmission', 'localReleaseGate', 'ci']) {
+    if (receipt.verification?.[id]?.status !== 'passed' || !bound(receipt.verification[id])) fail(`v1.7.18 missing targeted evidence: ${id}`);
+  }
+  const packages = receipt.packages;
+  const platforms = ['darwin-arm64', 'darwin-amd64', 'windows-amd64', 'linux-amd64'];
+  if (!Array.isArray(packages?.platforms) || JSON.stringify([...packages.platforms].sort()) !== JSON.stringify([...platforms].sort())
+    || packages.status !== 'pending_release_workflow' || packages.archives != null
+    || receipt.releasePublished !== false || receipt.releaseComplete !== false
+    || packages.windowsReleasedUpgradeAndRollbackBeforeUpload !== true || packages.finalArchiveSmokeBeforeUpload !== true
+    || packages.linuxNativeWindowBeforeUpload !== true || packages.signedManifestBeforePublish !== true
+    || packages.publicReadbackAfterPublish !== true || !evidence(packages.workflowEvidence)) fail('v1.7.18 must enforce all four final-package gates');
+  console.log('v1.7.18 H3 targeted acceptance; prior backend canaries recorded separately; native production CNY settlement verified; full matrix NOT run; four-platform package gates pending.');
+  process.exit(0);
+}
 // Ender's October 13 acceptance replaces the paid rerun authorization.
 // Historical native tests remain bound to the builds actually tested.
 if (version === 'v1.7.17') {

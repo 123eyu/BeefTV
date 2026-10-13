@@ -9,6 +9,11 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.7.18
+
+- 新增 MiniMax H3 Max Turbo 视频模型，支持 480p、768p、1080p，显示当前人民币秒价。
+- 支持首尾帧、仅尾帧和指定配音；生成结果沿用画布保存与原任务恢复。
+
 ## v1.7.17
 
 - 修复 macOS 视频播放器点击全屏无反应的问题。

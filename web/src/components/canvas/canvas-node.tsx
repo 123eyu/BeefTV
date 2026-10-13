@@ -456,6 +456,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                         onToggleBatch={() => onToggleBatch?.(data.id)}
                         reduceMediaEffects={reduceMediaEffects}
                         mediaActive={mediaActive}
+                        scale={scale}
                         onMediaPlayRequest={onMediaPlayRequest}
                     />
                     {imageCropActive && hasImageContent ? (

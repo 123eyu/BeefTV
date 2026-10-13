@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { chromium, type Browser, type Page } from "playwright";
 
 let browser: Browser;
@@ -16,28 +16,63 @@ beforeAll(async () => {
     } }] });
     if (!build.success) throw new Error(build.logs.join("\n"));
     const js = await build.outputs.find(o => o.path.endsWith(".js"))!.text();
-    const css = await build.outputs.find(o => o.path.endsWith(".css"))?.text() || "";
+    const css = (await build.outputs.find(o => o.path.endsWith(".css"))?.text() || "")
+        + readFileSync(import.meta.dir + "/../src/styles/globals.css", "utf8").replace(/^@import .*;$/gm, "")
+        + readFileSync(import.meta.dir + "/../src/styles/workspace-product.css", "utf8");
     server = Bun.serve({ port: 0, fetch(req) {
         const path = new URL(req.url).pathname;
         if (path === "/harness.js") return new Response(js, { headers: { "Content-Type": "application/javascript" } });
         if (path === "/harness.css") return new Response(css, { headers: { "Content-Type": "text/css" } });
         if (path.includes("model-config")) return Response.json({ code: 0, data: req.method === "GET" ? { config: {}, revision: 0 } : { saved: true, revision: 1 } });
         if (path.startsWith("/api/")) return Response.json({ code: 0, data: {} });
-        return new Response('<html><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="/harness.css"><div id="root"></div><script type="module" src="/harness.js"></script></html>', { headers: { "Content-Type": "text/html" } });
+        const dark = new URL(req.url).searchParams.get("theme") === "dark";
+        return new Response(`<html class="${dark ? "dark" : ""}"><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="/harness.css"><body class="app-product-overlays"><div id="root" class="app-product-workspace"></div><script type="module" src="/harness.js"></script></body></html>`, { headers: { "Content-Type": "text/html" } });
     } });
     const executablePath = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"].find((p): p is string => Boolean(p && existsSync(p)));
     browser = await chromium.launch({ executablePath, headless: true });
 }, 60000);
-afterAll(async () => { await browser?.close(); server?.stop(true); });
+afterAll(async () => { await browser?.close(); server?.stop(true); }, 30000);
 
-async function open(): Promise<Page> {
-    const page = await browser.newPage({ viewport: { width: 1000, height: 800 } });
-    await page.goto(server.url.toString());
+async function open(options: { reduced?: boolean; dark?: boolean; mobile?: boolean } = {}): Promise<Page> {
+    const page = await browser.newPage({ viewport: { width: options.mobile ? 390 : 1424, height: 921 }, reducedMotion: options.reduced ? "reduce" : "no-preference" });
+    await page.goto(server.url.toString() + (options.dark ? "?theme=dark" : ""));
     await page.getByRole("button", { name: "删除渠道 工作室渠道" }).waitFor();
     return page;
 }
 
 const events = (page: Page) => page.evaluate(() => (window as unknown as { diagnostics: () => DiagnosticEvent[] }).diagnostics());
+
+test("菜单在窗口外时诊断报告不可见，保留动效偏好", async () => {
+    const page = await open({ reduced: true });
+    try {
+        await page.addStyleTag({ content: ".model-default-select-popup { left: -20000px !important; top: -20000px !important; }" });
+        await page.locator('section[aria-labelledby="default-text-title"] .model-default-select').click();
+        await page.waitForFunction(() => (window as unknown as { diagnostics: () => DiagnosticEvent[] }).diagnostics().some(event => event.code === "MODEL_PICKER_POPUP_HIDDEN"), undefined, { timeout: 3000 });
+        const recorded = await events(page);
+        const hidden = recorded.find(event => event.code === "MODEL_PICKER_POPUP_HIDDEN")!;
+        expect(hidden.level).toBe("warning");
+        expect(hidden.message).toContain("在窗口外");
+        expect(hidden.message).toContain("无法检测遮挡");
+        expect(hidden.message).toContain("减少动态效果 开启");
+        expect(recorded.some(event => event.code === "MODEL_PICKER_OPEN")).toBe(false);
+    } finally { await page.close(); }
+}, 30000);
+
+test("快速切换模型时诊断只检查最后打开的菜单", async () => {
+    const page = await open({ reduced: true });
+    try {
+        await page.locator('section[aria-labelledby="default-image-title"] .model-default-select').click();
+        await page.locator('section[aria-labelledby="default-text-title"] .model-default-select').click();
+        await page.waitForFunction(() => (window as unknown as { diagnostics: () => DiagnosticEvent[] }).diagnostics().some(event => event.code === "MODEL_PICKER_OPEN" && event.message.startsWith("默认文本模型")), undefined, { timeout: 3000 });
+        const opened = (await events(page)).filter(event => event.code === "MODEL_PICKER_OPEN" || event.code === "MODEL_PICKER_POPUP_HIDDEN");
+        expect(opened).toHaveLength(1);
+        expect(opened[0]!.message).toContain("默认文本模型");
+        expect(opened[0]!.message).toContain("在窗口内");
+        const recorded = await events(page);
+        expect(recorded.some(event => event.code === "MODEL_PICKER_CLOSE" && event.message.startsWith("默认生图模型"))).toBe(true);
+        expect(recorded.some(event => event.code === "MODEL_PICKER_POPUP_HIDDEN")).toBe(false);
+    } finally { await page.close(); }
+}, 30000);
 
 test("删除渠道保持现有按钮与确认框，确认后渠道移除并留下诊断", async () => {
     const page = await open();
@@ -74,9 +109,65 @@ test("默认模型下拉展开时诊断记录点击、弹层位置与遮挡情�
         expect(recorded.some(event => event.code === "MODEL_PICKER_PRESS" && event.message.includes("默认文本模型"))).toBe(true);
         const opened = recorded.find(event => event.code === "MODEL_PICKER_OPEN")!;
         expect(opened.message).toContain("未被遮挡");
-        expect(opened.message).toContain("已渲染选项 1 个");
+        expect(opened.message).toContain("已渲染选项 2 个");
+        expect(opened.message).toContain("在窗口内");
     } finally { await page.close(); }
 }, 30000);
+
+for (const reduced of [false, true]) {
+    test(`产品侧栏和弹窗关闭后移除遮罩：${reduced ? "减少动态效果" : "普通动效"}`, async () => {
+        const page = await open({ reduced });
+        try {
+            const initialOverflow = await page.evaluate(() => getComputedStyle(document.body).overflow);
+            await page.getByRole("button", { name: "打开验证侧栏", exact: true }).click();
+            await page.getByRole("button", { name: "关闭验证侧栏", exact: true }).click();
+            await page.locator(".ant-drawer").waitFor({ state: "detached", timeout: 3000 });
+            await page.getByRole("button", { name: "打开验证弹窗", exact: true }).click();
+            await page.getByRole("button", { name: "关闭验证弹窗", exact: true }).click();
+            await page.locator(".ant-modal-root").waitFor({ state: "detached", timeout: 3000 });
+            expect(await page.evaluate(() => document.querySelectorAll(".ant-drawer-mask, .ant-modal-mask").length)).toBe(0);
+            expect(await page.evaluate(() => getComputedStyle(document.body).overflow)).toBe(initialOverflow);
+        } finally { await page.close(); }
+    }, 30000);
+    for (const dark of [false, true]) {
+        for (const mobile of [false, true]) {
+            test(`五类默认模型可见并可选择：${reduced ? "减少动态效果" : "普通动效"} / ${dark ? "深色" : "浅色"} / ${mobile ? "手机" : "桌面"}`, async () => {
+                const page = await open({ reduced, dark, mobile });
+                try {
+                    for (const [id, key, model] of [
+                        ["image", "imageModel", "image-z"],
+                        ["video", "videoModel", "video-z"],
+                        ["text", "textModel", "chat-z"],
+                        ["assistant", "assistantModel", "chat-z"],
+                        ["audio", "audioModel", "audio-z"],
+                    ]) {
+                        const row = page.locator(`section[aria-labelledby="default-${id}-title"]`);
+                        const title = await row.locator("h3").textContent();
+                        await row.locator(".model-default-select").click();
+                        await page.waitForFunction((title) => (window as unknown as { diagnostics: () => DiagnosticEvent[] }).diagnostics().some(event => event.code === "MODEL_PICKER_OPEN" && event.message.startsWith(title!)), title, { timeout: 3000 });
+                        const popup = page.locator(".model-default-select-popup:not(.ant-select-dropdown-hidden)");
+                        const box = (await popup.boundingBox())!;
+                        const viewport = page.viewportSize()!;
+                        expect(box.x).toBeGreaterThanOrEqual(0);
+                        expect(box.y).toBeGreaterThanOrEqual(0);
+                        expect(box.x + box.width).toBeLessThanOrEqual(viewport.width + 1);
+                        expect(box.y + box.height).toBeLessThanOrEqual(viewport.height + 1);
+                        if (process.env.BEEFTV_MODEL_PICKER_SCREENSHOT && reduced && !dark && !mobile && id === "text") {
+                            await page.screenshot({ path: process.env.BEEFTV_MODEL_PICKER_SCREENSHOT });
+                        }
+                        await popup.locator(".ant-select-item-option").filter({ hasText: model! }).click();
+                        const selected = JSON.parse((await page.getByTestId("selected-models").textContent())!);
+                        expect(selected[key!]).toBe(`studio::${model}`);
+                    }
+                    const recorded = await events(page);
+                    expect(recorded.filter(event => event.code === "MODEL_PICKER_CHANGE")).toHaveLength(5);
+                    expect(recorded.filter(event => event.code === "MODEL_PICKER_POPUP_HIDDEN")).toHaveLength(0);
+                    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+                } finally { await page.close(); }
+            }, 30000);
+        }
+    }
+}
 
 test("盖在下拉上的浮层接走点击时，诊断记下是谁挡住了", async () => {
     const page = await open();
