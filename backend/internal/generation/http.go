@@ -14,6 +14,7 @@ import (
 
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/outbound"
+	"infinite-canvas/backend/internal/protocol"
 )
 
 const (
@@ -123,7 +124,13 @@ func GetProviderExternalBinary(ctx context.Context, config Config, rawURL string
 		return nil, "", err
 	}
 	if SameProviderOrigin(config.BaseURL, downloadURL) {
-		ApplyAuth(req, config)
+		if auth, ok := ctx.Value(videoProtocolAuthContext{}).(protocol.ManifestAuth); ok {
+			if err := ApplyProtocolAuth(req, config, auth); err != nil {
+				return nil, "", err
+			}
+		} else {
+			ApplyAuth(req, config)
+		}
 		outbound.ApplyOutboundHeaders(req, config.Headers)
 	}
 	return DoBinary(req)
@@ -308,28 +315,33 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 		}
 		defer release()
 	}
+	videoIdleTimeout, _ := req.Context().Value(videoDeliveryRequestContext{}).(time.Duration)
+	credentials, _ := req.Context().Value(videoCredentialContext{}).(videoProviderCredentials)
+	if videoIdleTimeout > 0 && !SameProviderOrigin(credentials.Origin, req.URL.String()) {
+		stripVideoCredentialQuery(req.URL, credentials.Values)
+	}
 	if _, err := outbound.ValidateOutboundURL(req.URL.String()); err != nil {
 		return nil, "", err
 	}
 	outbound.ApplyDefaultOutboundHeaders(req)
 	client := outbound.OutboundHTTPClient(requestTimeout)
-	videoIdleTimeout, _ := req.Context().Value(videoDeliveryRequestContext{}).(time.Duration)
 	if videoIdleTimeout > 0 {
 		checkRedirect := client.CheckRedirect
+		leftOrigin := false
 		client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
 			if err := checkRedirect(next, via); err != nil {
 				return err
 			}
 			if !SameProviderOrigin(req.URL.String(), next.URL.String()) {
+				leftOrigin = true
+			}
+			if leftOrigin {
 				// Signed media URLs carry their own authorization. Even a
 				// same-host redirect to another port must not inherit gateway
 				// credentials or custom channel headers.
-				userAgent, accept := next.Header.Get("User-Agent"), next.Header.Get("Accept")
 				next.Header = make(http.Header)
-				next.Header.Set("User-Agent", userAgent)
-				if accept != "" {
-					next.Header.Set("Accept", accept)
-				}
+				outbound.ApplyDefaultOutboundHeaders(next)
+				stripVideoCredentialQuery(next.URL, credentials.Values)
 			}
 			return nil
 		}

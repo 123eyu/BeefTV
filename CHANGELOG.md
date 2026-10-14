@@ -9,6 +9,12 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.7.22
+
+- 所有视频渠道统一优先取回上游结果；下载中断或链接失效时刷新原任务链接，内置 BeefAPI 还可切换备用文件，无需重新生成。
+- 修复工作流多个结果在链接更新后取错素材的问题，并按实际文件识别视频、图片和音频。
+- H3 Max、Max Turbo 的时长输入支持小数秒，H3 Max 支持中间帧与参考顺序设置；修复高级设置菜单被弹层遮挡的问题。
+
 ## v1.7.21
 
 - 视频生成完成后优先下载上游结果，减少取回等待；下载失败时自动取回同一视频的备用文件，不重新生成。
