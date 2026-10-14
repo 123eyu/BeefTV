@@ -56,6 +56,18 @@ export function h3Duration(model: string, value: string): string {
 }
 
 export type H3Media = { id: string; type: "image" | "video" | "audio"; url: string };
+// Resolve card groups only after character images/voices have been hydrated.
+// Explicit prompt mentions may select a subset of the connected nodes.
+export function h3ResolvedReferenceOrder(order: string[] | undefined, media: Array<{ id: string; sourceNodeId?: string }>): string[] | undefined {
+    if (!order) return undefined;
+    const resolved: string[] = [];
+    const append = (id: string) => { if (!resolved.includes(id)) resolved.push(id); };
+    for (const nodeId of order) {
+        for (const item of media) if (item.id === nodeId || item.sourceNodeId === nodeId) append(item.id);
+    }
+    for (const item of media) append(item.id);
+    return resolved;
+}
 type H3FrameOptions = { videoEditOperation?: string; videoStartFrameNodeId?: string; videoEndFrameNodeId?: string; videoMiddleFrameNodeId?: string; videoMiddleFrameTime?: number; videoReferenceOrder?: string[] };
 
 export function h3MediaPayload(model: string, media: H3Media[], options: H3FrameOptions = {}, seconds = 5, resolution = "768p") {

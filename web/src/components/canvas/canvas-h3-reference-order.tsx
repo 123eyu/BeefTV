@@ -24,7 +24,7 @@ export function CanvasH3ReferenceOrder({ model, inputs, metadata, onChange }: { 
     return (
         <details className="mt-2 rounded border border-[var(--color-border)] px-2 py-2" data-canvas-no-zoom>
             <summary className="cursor-pointer text-[var(--fs-tiny)]">参考素材顺序</summary>
-            <p className="my-2 text-[var(--fs-micro)] opacity-65">上移或下移设置跨图片、视频、音频的参考顺序，同时切换为参考生成。</p>
+            <p className="my-2 text-[var(--fs-micro)] opacity-65">调整参考顺序，同时切换为参考生成。角色卡的图片和声音样本会放在卡片的位置；仅发送实际引用的素材，其余引用追加在末尾。</p>
             <ol className="flex flex-col gap-1">
                 {order.map((id, index) => {
                     const item = refs.find((i) => i.nodeId === id)!;

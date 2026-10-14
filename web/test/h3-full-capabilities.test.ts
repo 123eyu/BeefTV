@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { h3Duration, h3GenerationControls, h3MediaPayload, isH3Style } from "../src/lib/h3-video";
+import { h3Duration, h3GenerationControls, h3MediaPayload, h3ResolvedReferenceOrder, isH3Style } from "../src/lib/h3-video";
 import { H3DirectorControl, h3DirectorConfigure } from "../src/lib/h3-director";
 import { sanitizeServerVideoCapability, normalizeVideoValue, videoDurationAllowed } from "../src/lib/model-capabilities";
 
@@ -50,6 +50,29 @@ test("Max mixed frames retain cross-modality reference ordering", () => {
     expect(() => h3MediaPayload("minimax-h3-max-turbo", media, options, 5, "768p")).toThrow();
     expect(() => h3MediaPayload("minimax-h3-max", media, options, 5, "1080p")).toThrow();
     expect(() => h3MediaPayload("minimax-h3-max", media, { ...options, videoMiddleFrameTime: 5 }, 5, "768p")).toThrow();
+});
+
+test("saved card order expands to actual image and voice ids before H3 submission", () => {
+    const media = [
+        { id: "scene", type: "image" as const, url: "https://example.com/scene" },
+        { id: "character-reference-1", sourceNodeId: "card", type: "image" as const, url: "https://example.com/front" },
+        { id: "character-reference-2", sourceNodeId: "card", type: "image" as const, url: "https://example.com/side" },
+        { id: "motion", type: "video" as const, url: "https://example.com/motion" },
+        { id: "character-voice-asset", sourceNodeId: "card", type: "audio" as const, url: "https://example.com/voice" },
+        { id: "extra", type: "audio" as const, url: "https://example.com/extra" },
+    ];
+    const order = h3ResolvedReferenceOrder(["motion", "card", "scene", "connected-but-not-mentioned"], media);
+    expect(order).toEqual(["motion", "character-reference-1", "character-reference-2", "character-voice-asset", "scene", "extra"]);
+    const { payload } = h3MediaPayload("minimax-h3-max", media, { videoEditOperation: "reference_to_video", videoReferenceOrder: order });
+    expect(payload.reference_conditions).toEqual([
+        { type: "video", url: "https://example.com/motion" },
+        { type: "image", url: "https://example.com/front" },
+        { type: "image", url: "https://example.com/side" },
+        { type: "audio", url: "https://example.com/voice" },
+        { type: "image", url: "https://example.com/scene" },
+        { type: "audio", url: "https://example.com/extra" },
+    ]);
+    expect(h3ResolvedReferenceOrder(undefined, media)).toBeUndefined();
 });
 
 test("Styles only transmit supported controls including VHS damage", () => {
