@@ -3,7 +3,7 @@ import { useEffect } from "react";
 import type { NodeGenerationInput } from "./canvas-node-generation";
 import type { CanvasNodeMetadata } from "@/types/canvas";
 
-export function CanvasH3ReferenceOrder({ model, inputs, metadata, onChange }: { model: string; inputs: NodeGenerationInput[]; metadata?: CanvasNodeMetadata; onChange: (patch: Partial<CanvasNodeMetadata>) => void }) {
+export function CanvasH3ReferenceOrder({ model, inputs, metadata, onChange }: { model: string; inputs: Array<Pick<NodeGenerationInput, "nodeId" | "type" | "title">>; metadata?: CanvasNodeMetadata; onChange: (patch: Partial<CanvasNodeMetadata>) => void }) {
     const supported = ["minimax-h3-max", "minimax-h3-max-turbo"].includes(model.split("::").at(-1) || "");
     const frames = [metadata?.videoStartFrameNodeId, metadata?.videoEndFrameNodeId, metadata?.videoMiddleFrameNodeId];
     const rank = { image: 0, character: 0, video: 1, audio: 2, text: 3 };

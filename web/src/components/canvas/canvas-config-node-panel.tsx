@@ -5,8 +5,8 @@ import { ChevronDown, Dice5, Image as ImageIcon, LoaderCircle, MessageSquare, Mu
 
 import { Switch } from "@/components/ui/base/switch";
 import { isSeedance25Model } from "@/lib/model-capabilities";
-import { isH3Model, isH3Style, h3VideoOperation } from "@/lib/h3-video";
-import { CanvasH3Controls } from "./canvas-h3-controls";
+import { isH3Model, h3VideoOperation } from "@/lib/h3-video";
+import { CanvasH3Controls, CanvasH3UnsupportedFrames } from "./canvas-h3-controls";
 import { resolveVideoOperation } from "@/lib/model-selection";
 
 import {
@@ -336,16 +336,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
                     onChange={(videoH3Options) => onConfigChange(node.id, { videoH3Options })}
                 />
             ) : null}
-            {mode === "video" &&
-            isH3Model(config.model) &&
-            ((isH3Style(config.model) && node.metadata?.videoEndFrameNodeId) || (modelOptionName(config.model) !== "minimax-h3-max" && (node.metadata?.videoMiddleFrameNodeId || node.metadata?.videoMiddleFrameTime !== undefined))) ? (
-                <div className="flex flex-col gap-2 rounded-lg border px-3 py-2 text-[var(--fs-label)]" style={{ borderColor: theme.node.stroke }}>
-                    <span>当前模型不支持此前选择的尾帧或中间帧。</span>
-                    <Button size="small" onClick={() => onConfigChange(node.id, { ...(isH3Style(config.model) ? { videoEndFrameNodeId: undefined } : {}), videoMiddleFrameNodeId: undefined, videoMiddleFrameTime: undefined })}>
-                        清除不支持的帧设置
-                    </Button>
-                </div>
-            ) : null}
+            {mode === "video" && isH3Model(config.model) ? <CanvasH3UnsupportedFrames model={config.model} metadata={node.metadata} onChange={(patch) => onConfigChange(node.id, patch)} /> : null}
 
             {simpleMode ? (
                 <div className="rounded-lg px-3 py-2.5 text-[var(--fs-label)]" style={{ background: theme.node.fill, color: theme.node.muted }}>
