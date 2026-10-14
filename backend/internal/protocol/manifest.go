@@ -162,6 +162,12 @@ type metadataAdapter struct {
 }
 
 func (a metadataAdapter) Metadata() Metadata { return a.metadata }
+func (a metadataAdapter) MediaAuth() ManifestAuth {
+	if adapter, ok := a.delegate.(MediaAuthAdapter); ok {
+		return adapter.MediaAuth()
+	}
+	return ManifestAuth{}
+}
 func (a metadataAdapter) AgentAvailable() bool {
 	capability, ok := a.delegate.(AgentCapability)
 	return ok && capability.AgentAvailable()
@@ -413,7 +419,8 @@ func validateManifestOperation(operation ManifestOperation) error {
 
 type manifestAdapter struct{ manifest Manifest }
 
-func (a manifestAdapter) Metadata() Metadata { return a.manifest.Metadata }
+func (a manifestAdapter) Metadata() Metadata      { return a.manifest.Metadata }
+func (a manifestAdapter) MediaAuth() ManifestAuth { return a.manifest.Auth }
 func (a manifestAdapter) AgentAvailable() bool {
 	return a.manifest.Agent != nil && a.manifest.AgentResponse != nil
 }
@@ -716,6 +723,11 @@ func mediaReferencesFromManifestValue(value any, kind string, ephemeral bool) []
 			}
 			result = append(result, reference)
 		case map[string]any:
+			if kind == "video" {
+				if video, ok := typed["video"].(map[string]any); ok {
+					typed = video
+				}
+			}
 			reference := MediaReference{
 				ID: manifestString(typed["id"]), URL: manifestString(typed["url"]), DataURL: manifestString(typed["dataUrl"]),
 				Kind: defaultValue(manifestString(typed["kind"]), kind), Role: manifestString(typed["role"]), MIMEType: manifestString(typed["mimeType"]),
@@ -726,6 +738,9 @@ func mediaReferencesFromManifestValue(value any, kind string, ephemeral bool) []
 			}
 			if reference.DataURL == "" {
 				reference.DataURL = firstString(typed, "data_url", "b64_json")
+				if kind == "video" && reference.DataURL == "" {
+					reference.DataURL = firstString(typed, "bytesBase64Encoded")
+				}
 			}
 			// OpenAI / Ark 等渠道常直接返回裸 b64_json；声明式结果下载要求 data URL。
 			reference.DataURL = normalizeManifestInlineDataURL(reference.DataURL, reference.Kind, firstString(typed, "output_format", "mime_type", "mimeType"))

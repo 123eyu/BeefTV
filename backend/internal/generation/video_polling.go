@@ -17,7 +17,7 @@ import (
 
 const DefaultVideoPollInterval = 30 * time.Second
 
-const beefAPISeedancePollInterval = 5 * time.Second
+const beefAPIVideoPollInterval = 5 * time.Second
 
 type VideoPollPolicy struct {
 	InitialDelay          time.Duration
@@ -70,12 +70,12 @@ func DefaultVideoPollPolicy() VideoPollPolicy {
 }
 
 func videoPollPolicyForConfig(ctx context.Context, config Config, policy VideoPollPolicy) VideoPollPolicy {
-	if IsBeefAPIVideoConfig(ctx, config) && strings.Contains(strings.ToLower(config.Model), "seedance") {
+	if IsBeefAPIVideoConfig(ctx, config) {
 		if policy.InitialDelay == DefaultVideoPollInterval {
-			policy.InitialDelay = beefAPISeedancePollInterval
+			policy.InitialDelay = beefAPIVideoPollInterval
 		}
 		if policy.Interval == DefaultVideoPollInterval {
-			policy.Interval = beefAPISeedancePollInterval
+			policy.Interval = beefAPIVideoPollInterval
 		}
 	}
 	return policy

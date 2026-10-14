@@ -461,12 +461,15 @@ func ExecuteProtocolBinaryRequestWithConsumer(ctx context.Context, config Config
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
-	for name, value := range spec.Headers {
-		req.Header.Set(name, value)
-	}
-	outbound.ApplyOutboundHeaders(req, config.Headers)
-	if err := ApplyProtocolAuth(req, config, spec.Auth); err != nil {
-		return nil, "", err
+	idle, _ := ctx.Value(videoDeliveryRequestContext{}).(time.Duration)
+	if idle == 0 || SameProviderOrigin(config.BaseURL, requestURL) {
+		for name, value := range spec.Headers {
+			req.Header.Set(name, value)
+		}
+		outbound.ApplyOutboundHeaders(req, config.Headers)
+		if err := ApplyProtocolAuth(req, config, spec.Auth); err != nil {
+			return nil, "", err
+		}
 	}
 	applyBeefAPIVideoDeliveryHeader(ctx, config, req)
 	if consume != nil {
@@ -622,6 +625,12 @@ func ApplyProtocolAuth(req *http.Request, config Config, auth protocol.ManifestA
 		return nil
 	}
 	credential := ProtocolCredentialField(config, auth.Field)
+	if idle, _ := req.Context().Value(videoDeliveryRequestContext{}).(time.Duration); idle > 0 {
+		credentials, _ := req.Context().Value(videoCredentialContext{}).(videoProviderCredentials)
+		credentials.Origin = config.BaseURL
+		credentials.Values = append(credentials.Values, credential, auth.Prefix+credential, ProtocolCredentialField(config, auth.SecretField))
+		*req = *req.WithContext(context.WithValue(req.Context(), videoCredentialContext{}, credentials))
+	}
 	switch typeName {
 	case "none":
 		return nil
@@ -648,6 +657,9 @@ func ApplyProtocolAuth(req *http.Request, config Config, auth protocol.ManifestA
 		query := req.URL.Query()
 		query.Set(name, auth.Prefix+credential)
 		req.URL.RawQuery = query.Encode()
+		if idle, _ := req.Context().Value(videoDeliveryRequestContext{}).(time.Duration); idle > 0 {
+			*req = *req.WithContext(context.WithValue(req.Context(), videoCredentialQueryContext{}, map[string]string{name: auth.Prefix + credential}))
+		}
 		return nil
 	case "basic":
 		username := auth.Username
@@ -881,6 +893,10 @@ func AppendProtocolQuery(rawURL string, values map[string][]string) (string, err
 }
 
 func FinishProtocolResult(ctx context.Context, config Config, mode string, taskID string, result *protocol.Result, pollPolicy VideoPollPolicy) (map[string]interface{}, error) {
+	return finishProtocolResult(ctx, config, mode, taskID, result, pollPolicy, nil)
+}
+
+func finishProtocolResult(ctx context.Context, config Config, mode string, taskID string, result *protocol.Result, pollPolicy VideoPollPolicy, renew func(context.Context, int) (VideoResultSource, error)) (map[string]interface{}, error) {
 	if mode == "video" {
 		pollPolicy = videoPollPolicyForConfig(ctx, config, pollPolicy)
 	}
@@ -909,17 +925,17 @@ func FinishProtocolResult(ctx context.Context, config Config, mode string, taskI
 		return nil, errors.New("声明式协议已完成但没有返回媒体地址")
 	}
 	items := make([]interface{}, 0, len(references))
-	for _, reference := range references {
+	for index, reference := range references {
 		var data []byte
 		var mimeType string
 		var err error
 		if mode == "video" {
-			download := func(ctx context.Context) ([]byte, string, error) {
-				return ProtocolMediaBytesOnce(ctx, config, reference)
+			var resolve videoResultResolver
+			if renew != nil {
+				resolve = func(ctx context.Context) (VideoResultSource, error) { return renew(ctx, index) }
 			}
-			if strings.TrimSpace(reference.DataURL) == "" && strings.TrimSpace(reference.URL) != "" {
-				download = videoResultDownloader(config, reference.URL, taskID)
-			}
+			source := videoURLSource(config, defaultString(reference.DataURL, reference.URL))
+			download := VideoResultDownloader(config, taskID, source, resolve)
 			data, mimeType, err = RunVideoDownload(ctx, taskID, pollPolicy, download)
 		} else {
 			data, mimeType, err = ProtocolMediaBytes(ctx, config, reference)
@@ -947,9 +963,15 @@ func FinishProtocolResult(ctx context.Context, config Config, mode string, taskI
 func FinishProtocolAdapterResult(ctx context.Context, input Input, adapter protocol.Adapter, request protocol.GenerationRequest, taskID string, result *protocol.Result, pollPolicy VideoPollPolicy) (map[string]interface{}, error) {
 	if input.Mode == "video" {
 		pollPolicy = videoPollPolicyForConfig(ctx, input.Config, pollPolicy)
+		if auth, ok := adapter.(protocol.MediaAuthAdapter); ok {
+			ctx = withVideoProtocolAuth(ctx, auth.MediaAuth())
+		}
+	}
+	renew := func(ctx context.Context, index int) (VideoResultSource, error) {
+		return queryProtocolVideoSource(ctx, input, adapter, request, taskID, index)
 	}
 	if ProtocolResultHasOutput(input.Mode, result) {
-		return FinishProtocolResult(ctx, input.Config, input.Mode, taskID, result, pollPolicy)
+		return finishProtocolResult(ctx, input.Config, input.Mode, taskID, result, pollPolicy, renew)
 	}
 	resultAdapter, ok := adapter.(protocol.ResultAdapter)
 	capability, hasCapability := adapter.(protocol.ResultCapability)
@@ -963,12 +985,12 @@ func FinishProtocolAdapterResult(ctx context.Context, input Input, adapter proto
 	download := func(ctx context.Context) ([]byte, string, error) {
 		return ExecuteProtocolBinaryRequest(WithRequestKind(ctx, "download"), input.Config, spec)
 	}
-	if input.Mode == "video" && IsBeefAPIVideoConfig(ctx, input.Config) && strings.EqualFold(spec.Method, http.MethodGet) {
-		resultURL, urlErr := ProtocolRequestURL(input.Config.BaseURL, spec)
-		if urlErr != nil {
-			return nil, urlErr
+	if input.Mode == "video" {
+		source, sourceErr := protocolVideoRequestSource(input.Config, spec)
+		if sourceErr != nil {
+			return nil, sourceErr
 		}
-		download = videoResultDownloader(input.Config, resultURL, taskID)
+		download = VideoResultDownloader(input.Config, taskID, source, func(ctx context.Context) (VideoResultSource, error) { return renew(ctx, 0) })
 	}
 	var data []byte
 	var mimeType string
@@ -1000,6 +1022,54 @@ func FinishProtocolAdapterResult(ctx context.Context, input Input, adapter proto
 		return nil, fmt.Errorf("声明式协议结果下载不支持生成模式 %s", input.Mode)
 	}
 	return FinishProtocolResult(ctx, input.Config, input.Mode, taskID, downloaded, pollPolicy)
+}
+
+func protocolVideoRequestSource(config Config, spec protocol.RequestSpec) (VideoResultSource, error) {
+	rawURL, err := ProtocolRequestURL(config.BaseURL, spec)
+	if err != nil {
+		return VideoResultSource{}, err
+	}
+	return VideoResultSource{URL: rawURL, Read: func(ctx context.Context) ([]byte, string, error) {
+		return ExecuteProtocolBinaryRequest(withVideoProtocolAuth(WithRequestKind(ctx, "download"), spec.Auth), config, spec)
+	}}, nil
+}
+
+func queryProtocolVideoSource(ctx context.Context, input Input, adapter protocol.Adapter, request protocol.GenerationRequest, taskID string, index int) (VideoResultSource, error) {
+	pollContext := protocol.PollContext{BaseURL: input.Config.BaseURL, Model: request.Model, Request: request, TaskID: taskID}
+	spec, err := adapter.BuildPoll(ctx, pollContext)
+	if err != nil {
+		return VideoResultSource{}, err
+	}
+	body, err := ExecuteProtocolRequest(WithRequestKind(ctx, "poll"), input.Config, spec)
+	if err != nil {
+		return VideoResultSource{}, err
+	}
+	state, err := adapter.ParsePoll(ctx, pollContext, body)
+	if err != nil {
+		return VideoResultSource{}, err
+	}
+	if state.Status == protocol.StatusFailed || state.Status == protocol.StatusCancelled {
+		return VideoResultSource{}, ProtocolResultError(state.Message, taskID, body)
+	}
+	if state.Status != protocol.StatusSucceeded {
+		_, err := videoResultURL(string(state.Status), "")
+		return VideoResultSource{}, err
+	}
+	if state.Result != nil && index < len(state.Result.Videos) {
+		reference := state.Result.Videos[index]
+		rawURL, err := videoResultURL("succeeded", defaultString(reference.DataURL, reference.URL))
+		return videoURLSource(input.Config, rawURL), err
+	}
+	resultAdapter, ok := adapter.(protocol.ResultAdapter)
+	capability, capable := adapter.(protocol.ResultCapability)
+	if !ok || !capable || !capability.ResultAvailable() {
+		return VideoResultSource{}, errors.New("原视频任务没有返回可取回的结果")
+	}
+	spec, err = resultAdapter.BuildResult(ctx, pollContext)
+	if err != nil {
+		return VideoResultSource{}, err
+	}
+	return protocolVideoRequestSource(input.Config, spec)
 }
 
 func ProtocolResultHasOutput(mode string, result *protocol.Result) bool {

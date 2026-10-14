@@ -133,14 +133,14 @@ func RunVideoTaskWithPolicy(ctx context.Context, input Input, pollPolicy VideoPo
 		status := strings.ToLower(stringField(state, "status"))
 		if status == "completed" || status == "succeeded" || status == "success" || status == "done" {
 			if videoURL := NewAPIVideoResultURL(state); videoURL != "" {
-				data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, videoResultDownloader(input.Config, videoURL, id))
+				data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, videoResultDownloader(input.Config, videoURL, id, newAPIVideoURLResolver(input.Config, id)))
 				if err != nil {
 					return VideoPollOutcome{}, fmt.Errorf("视频结果下载失败（任务 %s）：%w", id, err)
 				}
 				mimeType = NormalizedMediaMIMEType(mimeType, data)
 				return VideoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video", "video": map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}}}, nil
 			}
-			data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, videoResultDownloader(input.Config, APIURL(input.Config.BaseURL, "/videos/"+id+"/content"), id))
+			data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, videoResultDownloader(input.Config, APIURL(input.Config.BaseURL, "/videos/"+id+"/content"), id, newAPIVideoURLResolver(input.Config, id)))
 			if err != nil {
 				return VideoPollOutcome{}, err
 			}
@@ -265,14 +265,14 @@ func RunSeedanceVideosTask(ctx context.Context, input Input, pollPolicy VideoPol
 		status, videoURL := SeedancePollStatusAndURL(state)
 		if status == "completed" || status == "succeeded" {
 			if videoURL != "" {
-				data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, videoResultDownloader(input.Config, videoURL, id))
+				data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, videoResultDownloader(input.Config, videoURL, id, newAPIVideoURLResolver(input.Config, id)))
 				if err != nil {
 					return VideoPollOutcome{}, fmt.Errorf("视频结果下载失败：%w", err)
 				}
 				mimeType = NormalizedMediaMIMEType(mimeType, data)
 				return VideoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video", "video": map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}}}, nil
 			}
-			data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, videoResultDownloader(input.Config, APIURL(input.Config.BaseURL, "/videos/"+id+"/content"), id))
+			data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, videoResultDownloader(input.Config, APIURL(input.Config.BaseURL, "/videos/"+id+"/content"), id, newAPIVideoURLResolver(input.Config, id)))
 			if err != nil {
 				return VideoPollOutcome{}, fmt.Errorf("视频任务成功但未返回视频 URL，备用内容下载失败：%w", err)
 			}
@@ -534,12 +534,15 @@ func RunSeedanceAgentPlanVideoTask(ctx context.Context, input Input, pollPolicy 
 			if videoURL == "" {
 				return VideoPollOutcome{}, fmt.Errorf("%s任务成功但没有返回视频 URL", providerName)
 			}
-			data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, func(ctx context.Context) ([]byte, string, error) {
-				return GetExternalBinary(WithRequestKind(ctx, "download"), videoURL)
+			renew := videoTaskURLResolver(input.Config, "/contents/generations/tasks/"+id, func(state map[string]interface{}) (string, string) {
+				content, _ := state["content"].(map[string]interface{})
+				return stringField(state, "status"), stringField(content, "video_url")
 			})
+			data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, videoResultDownloader(input.Config, videoURL, id, renew))
 			if err != nil {
 				return VideoPollOutcome{}, fmt.Errorf("视频结果下载失败：%w", err)
 			}
+			mimeType = NormalizedMediaMIMEType(mimeType, data)
 			return VideoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video", "video": map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}}}, nil
 		}
 		if status == "failed" || status == "cancelled" || status == "expired" {
@@ -547,6 +550,29 @@ func RunSeedanceAgentPlanVideoTask(ctx context.Context, input Input, pollPolicy 
 		}
 		return VideoPollOutcome{}, nil
 	})
+}
+
+func newAPIVideoURLResolver(config Config, id string) videoResultURLResolver {
+	return videoTaskURLResolver(config, "/videos/"+id, func(state map[string]interface{}) (string, string) {
+		status, rawURL := SeedancePollStatusAndURL(state)
+		if rawURL == "" && (status == "completed" || status == "succeeded") {
+			rawURL = APIURL(config.BaseURL, "/videos/"+id+"/content")
+		}
+		return status, rawURL
+	})
+}
+
+func videoTaskURLResolver(config Config, path string, extract func(map[string]interface{}) (string, string)) videoResultURLResolver {
+	return func(ctx context.Context) (string, error) {
+		var state map[string]interface{}
+		if err := GetJSON(WithRequestKind(ctx, "poll"), config, path, &state); err != nil {
+			return "", err
+		}
+		if nested, ok := state["data"].(map[string]interface{}); ok {
+			state = nested
+		}
+		return videoResultURL(extract(state))
+	}
 }
 
 func SeedanceContent(input Input) ([]map[string]interface{}, error) {

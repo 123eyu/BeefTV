@@ -139,13 +139,16 @@ func TestVideoRecoveryDownloadDisconnectKeepsOriginalTask(t *testing.T) {
 					_, _ = w.Write([]byte("test-video"))
 					return
 				}
+				if r.URL.Path != "/v1/video/generations/original-paid-task" {
+					t.Error("download renewal changed original task identity")
+				}
 				polls++
 				_, _ = fmt.Fprintf(w, `{"code":"success","data":{"task_id":"original-paid-task","status":"SUCCESS","result_url":%q}}`, server.URL+"/result.mp4")
 			}))
 			defer server.Close()
 			input := canvasGenerationInput{Mode: "video", Prompt: "test", Config: providerConfig{BaseURL: server.URL, Model: "seedance-2.0-mini", InterfaceType: "newapi-channel-2"}}
 			result, err := runProtocolAdapterTaskWithPolicy(context.Background(), input, recoveryTestAdapter(t), fastVideoPollPolicy())
-			if creates != 1 || polls != 1 || downloads < 2 {
+			if creates != 1 || polls < 1 || polls > 4 || downloads < 2 || (alwaysBroken && polls < 2) {
 				t.Fatalf("creates=%d polls=%d downloads=%d", creates, polls, downloads)
 			}
 			if !alwaysBroken {
@@ -272,7 +275,7 @@ func TestFailedBeefAPIVideoRecoveryUsesFreshBackupAndKeepsOriginalTask(t *testin
 	svc, db := openDBRuntimeMatrix(t, t.TempDir())
 	defer closeDBRuntimeMatrix(t, svc, db)
 	input := canvasGenerationInput{Mode: "video", Prompt: "test", Config: providerConfig{
-		BaseURL: gateway.URL, APIKey: "test-key", Model: "seedance-2.0-mini", InterfaceType: "newapi",
+		BaseURL: gateway.URL, APIKey: "test-key", Model: "unlisted-future-video", InterfaceType: "newapi",
 		Headers: []outbound.OutboundHeader{{Name: "X-Gateway-Secret", Value: "private-value"}},
 	}}
 	inputJSON, err := json.Marshal(input)
@@ -313,5 +316,143 @@ func TestFailedBeefAPIVideoRecoveryUsesFreshBackupAndKeepsOriginalTask(t *testin
 	data, err := os.ReadFile(filepath.Join(svc.dataDir, "resources", filepath.FromSlash(resource.ObjectKey)))
 	if err != nil || !bytes.Equal(data, payload) {
 		t.Fatalf("stored media differs: bytes=%d err=%v", len(data), err)
+	}
+}
+
+func TestFailedThirdPartyVideoRecoveryRenewsOriginalTaskAndMaterializes(t *testing.T) {
+	allowLoopbackProviderTest(t)
+	payload, err := os.ReadFile("testdata/reference-fragmented-30fps.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expired := 0
+	media := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		expired++
+		if r.Header.Get("Authorization") != "" || r.Header.Get("x-goog-api-key") != "" {
+			t.Error("provider credential leaked to media")
+		}
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer media.Close()
+	polls, downloads := 0, 0
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.Header.Get("x-goog-api-key") != "provider-fixture" || r.Header.Get("Authorization") != "" || r.URL.Query().Get("delivery") != "" || r.Header.Get("X-Beeftv-Video-Delivery") != "" {
+			t.Error("third-party recovery changed auth or attempted generation/BeefAPI backup")
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if r.URL.Path == "/fresh.mp4" {
+			downloads++
+			w.Header().Set("Content-Type", "application/octet-stream")
+			_, _ = w.Write(payload)
+			return
+		}
+		if r.URL.Path != "/v1beta/original" {
+			t.Errorf("wrong original task query %s", r.URL.Path)
+		}
+		polls++
+		url := media.URL + "?signature=expired"
+		if polls > 1 {
+			url = "/fresh.mp4"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"name": "original", "done": true, "response": map[string]interface{}{"generatedVideos": []interface{}{map[string]interface{}{"video": map[string]interface{}{"uri": url}}}}})
+	}))
+	defer provider.Close()
+	svc, db := openDBRuntimeMatrix(t, t.TempDir())
+	defer closeDBRuntimeMatrix(t, svc, db)
+	inputJSON, err := json.Marshal(canvasGenerationInput{Mode: "video", Config: providerConfig{BaseURL: provider.URL, APIKey: "provider-fixture", APIFormat: "openai", InterfaceType: "gemini-veo", Model: "unlisted-future-video"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	task := model.Task{ID: "failed-original-third-party", UserID: "local", Type: "canvas_video", Status: model.TaskStatusFailed, ProviderRequestID: "original", InputJSON: string(inputJSON), CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	result, err := svc.QueryFailedVideoTask(context.Background(), task.UserID, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Recovered || result.Task.ID != task.ID || result.Task.ProviderRequestID != "original" || result.Task.ResultState != "READY" || len(result.Task.Outputs) != 1 || result.Task.Outputs[0].MaterializedAssetID == "" || polls != 2 || downloads != 1 || expired != 1 {
+		t.Fatalf("recovered=%v state=%s polls=%d downloads=%d expired=%d", result.Recovered, result.Task.ResultState, polls, downloads, expired)
+	}
+	var resource model.Resource
+	if err := db.First(&resource, "id = ?", result.Task.Outputs[0].ResourceID).Error; err != nil || resource.Kind != "video" || resource.MimeType != "video/mp4" {
+		t.Fatalf("resource kind=%s mime=%s err=%v", resource.Kind, resource.MimeType, err)
+	}
+	data, err := os.ReadFile(filepath.Join(svc.dataDir, "resources", filepath.FromSlash(resource.ObjectKey)))
+	if err != nil || !bytes.Equal(data, payload) {
+		t.Fatalf("saved video differs: bytes=%d err=%v", len(data), err)
+	}
+}
+
+func TestFailedRunningHubVideoRecoveryRenewsOriginalTaskAndMaterializes(t *testing.T) {
+	allowLoopbackProviderTest(t)
+	payload, err := os.ReadFile("testdata/reference-fragmented-30fps.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	polls, reads := 0, 0
+	media := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reads++
+		if r.Header.Get("Authorization") != "" || r.Header.Get("X-Private-Channel") != "" || r.URL.Query().Get("apiKey") != "" {
+			t.Error("workflow credentials leaked to media")
+		}
+		if reads == 1 {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write(payload)
+	}))
+	defer media.Close()
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/task/openapi/outputs" || r.URL.Query().Get("delivery") != "" {
+			t.Error("manual recovery entered a generation/schema/BeefAPI backup path")
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body["taskId"] != "original" || body["apiKey"] != "provider-key" {
+			t.Error("original workflow query identity/auth lost")
+		}
+		polls++
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"code": 0, "data": []interface{}{map[string]interface{}{"fileUrl": media.URL + "/video?apiKey=provider-key&signature=media-signature"}}})
+	}))
+	defer provider.Close()
+	svc, db := openDBRuntimeMatrix(t, t.TempDir())
+	defer closeDBRuntimeMatrix(t, svc, db)
+	center, err := newPluginRuntime(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := center.setEnabled(WorkflowPluginRunningHub, true); err != nil {
+		t.Fatal(err)
+	}
+	svc.pluginRuntime = center
+	inputJSON, err := json.Marshal(canvasGenerationInput{Mode: "video", Config: providerConfig{BaseURL: provider.URL, APIKey: "provider-key", InterfaceType: "runninghub-workflow-video", Headers: []outbound.OutboundHeader{{Name: "X-Private-Channel", Value: "private-fixture"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	task := model.Task{ID: "failed-original-workflow", UserID: "local", Type: "canvas_video", Status: model.TaskStatusFailed, ProviderRequestID: "original", InputJSON: string(inputJSON), CreatedAt: now, UpdatedAt: now}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	result, err := svc.QueryFailedVideoTask(context.Background(), task.UserID, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Recovered || result.Task.ID != task.ID || result.Task.ProviderRequestID != "original" || result.Task.ResultState != "READY" || len(result.Task.Outputs) != 1 || result.Task.Outputs[0].MaterializedAssetID == "" || polls != 2 || reads != 2 {
+		t.Fatalf("recovered=%v state=%s polls=%d reads=%d", result.Recovered, result.Task.ResultState, polls, reads)
+	}
+	var resource model.Resource
+	if err := db.First(&resource, "id = ?", result.Task.Outputs[0].ResourceID).Error; err != nil || resource.Kind != "video" || resource.MimeType != "video/mp4" {
+		t.Fatalf("resource kind=%s mime=%s err=%v", resource.Kind, resource.MimeType, err)
+	}
+	data, err := os.ReadFile(filepath.Join(svc.dataDir, "resources", filepath.FromSlash(resource.ObjectKey)))
+	if err != nil || !bytes.Equal(data, payload) {
+		t.Fatalf("saved video differs: bytes=%d err=%v", len(data), err)
 	}
 }
