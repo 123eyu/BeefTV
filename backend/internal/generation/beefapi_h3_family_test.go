@@ -41,8 +41,9 @@ func TestBeefAPIH3BaseReferencesStayMultimodal(t *testing.T) {
 	}
 	input.Metadata = nil
 	input.Config.Model = "minimax-h3-max"
-	if _, err = BeefAPIVideoRequestBody(input); err == nil {
-		t.Fatal("unsupported Max references accepted")
+	input.Config.VQuality = "768p"
+	if _, err = BeefAPIVideoRequestBody(input); err != nil {
+		t.Fatalf("Max references rejected: %v", err)
 	}
 }
 

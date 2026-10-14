@@ -93,6 +93,8 @@ export type VideoCapabilityConfig = {
         maxAudioTotalDurationSeconds?: number;
     };
     duration: {
+		continuous?: boolean;
+		fractionalMin?: number;
         selection: "range" | "enum";
         min?: number;
         max?: number;
@@ -268,6 +270,11 @@ function sanitizeCatalogDuration(input: Record<string, unknown>): VideoCapabilit
     const defaultValue = catalogWholeNumber(input.default);
     if ((selection !== "range" && selection !== "enum") || defaultValue === null) return null;
     if (selection === "range") {
+        if (input.continuous===true) {
+            const min=Number(input.min),max=Number(input.max),step=Number(input.step),fractionalMin=Number(input.fractionalMin ?? input.min);
+            if (![min,max,step,fractionalMin].every(Number.isFinite) || fractionalMin<.92 || fractionalMin>min || max<min || max>3600 || step<=0 || defaultValue<min || defaultValue>max) return null;
+            return {selection,min,max,step,fractionalMin,default:defaultValue,continuous:true};
+        }
         const min = catalogWholeNumber(input.min);
         const max = catalogWholeNumber(input.max);
         const step = catalogWholeNumber(input.step);
@@ -1368,17 +1375,19 @@ export function videoResolutionRequest(profile: VideoCapabilityConfig, value: st
 }
 
 function normalizeRangeDuration(profile: VideoCapabilityConfig, value: number) {
-    const min = profile.duration.min || 1;
+    const min = profile.duration.continuous ? profile.duration.fractionalMin || profile.duration.min || .92 : profile.duration.min || 1;
     const max = profile.duration.max || min;
     const step = profile.duration.step || 1;
-    const candidate = Number.isFinite(value) ? Math.floor(value) : profile.duration.default;
+    const candidate = Number.isFinite(value) ? (profile.duration.continuous ? value : Math.floor(value)) : profile.duration.default;
     const clamped = Math.min(max, Math.max(min, candidate));
+	if (profile.duration.continuous) return clamped;
     const maxStep = Math.max(0, Math.floor((max - min) / step));
     return min + Math.min(maxStep, Math.max(0, Math.round((clamped - min) / step))) * step;
 }
 
 export function videoDurationOptions(profile: VideoCapabilityConfig) {
     if (profile.duration.selection === "enum") return profile.duration.values || [];
+	if (profile.duration.continuous) return [profile.duration.fractionalMin || profile.duration.min || .92,...Array.from({length:15},(_,i)=>i+1)];
     const min = profile.duration.min || 1;
     const max = profile.duration.max || min;
     const step = profile.duration.step || 1;
@@ -1388,8 +1397,8 @@ export function videoDurationOptions(profile: VideoCapabilityConfig) {
 export function videoDurationAllowed(profile: VideoCapabilityConfig, value: number) {
     if (value === -1) return (profile.duration.values || []).includes(-1);
     if (profile.duration.selection === "enum") return (profile.duration.values || []).includes(value);
-    const min = profile.duration.min || 1;
+    const min = profile.duration.continuous ? profile.duration.fractionalMin || profile.duration.min || .92 : profile.duration.min || 1;
     const max = profile.duration.max || min;
     const step = profile.duration.step || 1;
-    return value >= min && value <= max && (value - min) % step === 0;
+    return Number.isFinite(value) && value >= min && value <= max && (profile.duration.continuous || Math.abs((value-min)/step-Math.round((value-min)/step))<1e-7);
 }

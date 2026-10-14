@@ -1,5 +1,6 @@
 import { modelCapabilityConfigFor, videoResolutionRequest } from "@/lib/model-capabilities";
 import { boolConfig } from "@/lib/seedance-video";
+import { h3Duration, h3GenerationControls, h3MediaPayload, isH3Model } from "@/lib/h3-video";
 import { getResourceBlob, getResourceOSSUrl } from "@/services/api/resources";
 import { beefAPIVideoContract, isBeefAPIEndpoint } from "@/lib/beefapi-video-contracts";
 import { modelOptionName } from "@/stores/use-config-store";
@@ -30,38 +31,23 @@ export async function createVideoGenerationsTask(deps: VideoProviderDeps, config
         Promise.all(audioReferences.map((item) => resolveVideoGenerationsUrl(item.url, item.storageKey, inline))),
     ]);
     const resolution = newAPIVideoResolutionRequest(profile, config.vquality, modelOptionName(model));
-    const h3 = contract !== undefined && ["minimax-h3", "minimax-h3-max", "minimax-h3-max-turbo"].includes(modelOptionName(model));
-    const h3References = h3 && modelOptionName(model) === "minimax-h3" && (options?.videoEditOperation === "reference_to_video" || videoUrls.length > 0 || audioUrls.length > 1 || imageUrls.length > 0 && !options?.videoStartFrameNodeId && !options?.videoEndFrameNodeId);
-    if (h3References && (options?.videoStartFrameNodeId || options?.videoEndFrameNodeId)) throw new Error("H3 多素材参考不能同时指定首帧或尾帧");
-    if (h3References && imageUrls.length + videoUrls.length + audioUrls.length > 12) throw new Error("H3 参考素材合计不能超过 12 个");
-    const h3Ratio = config.size.trim() || (h3References ? "adaptive" : "16:9");
-    if (h3 && !h3References && !imageUrls.length && h3Ratio === "adaptive") throw new Error("自适应比例仅支持多素材参考，请选择固定比例");
-    const framePayload: Record<string, string> = {};
-    if (h3 && !h3References) {
-        if (imageUrls.length > 2 || audioUrls.length > 1 || videoUrls.length > 0) throw new Error("H3 首尾帧模式支持最多 2 张图片、1 段配音");
-        imageUrls.forEach((url, index) => {
-            const image = references[index]!;
-            if (options?.videoStartFrameNodeId || options?.videoEndFrameNodeId) {
-                let matched = false;
-                if (image.id === options.videoStartFrameNodeId) { framePayload.first_frame_url = url; matched = true; }
-                if (image.id === options.videoEndFrameNodeId) { framePayload.last_frame_url = url; matched = true; }
-                if (!matched) throw new Error("H3 的图片须指定为首帧或尾帧");
-            } else framePayload[index === 0 ? "first_frame_url" : "last_frame_url"] = url;
-        });
-        if ((options?.videoStartFrameNodeId && !framePayload.first_frame_url) || (options?.videoEndFrameNodeId && !framePayload.last_frame_url)) throw new Error("已选择的首尾帧未包含在视频请求中");
-    }
+    const h3 = contract !== undefined && isH3Model(model);
+    const h3Media = h3 ? h3MediaPayload(model,[...imageUrls.map((url,i)=>({id:references[i]!.id,type:"image" as const,url})),...videoUrls.map((url,i)=>({id:videoReferences[i]!.id,type:"video" as const,url})),...audioUrls.map((url,i)=>({id:audioReferences[i]!.id,type:"audio" as const,url}))],options,Number(h3Duration(model,config.videoSeconds)),resolution) : undefined;
+    const h3Ratio = config.size.trim() || (h3Media?.referenceMode ? "adaptive" : "16:9");
+    if (h3 && !h3Media?.referenceMode && !h3Media?.frameMode && h3Ratio==="adaptive") throw new Error("自适应比例仅支持参考生成，请选择固定比例");
     const payload = {
         model: modelOptionName(model),
         prompt: prompt.trim(),
+        ...(h3 ? h3GenerationControls(model, options?.videoH3Options) : {}),
         ...(isApiMartVideoConfig(config)
             ? { duration: normalizeVideoSeconds(config.videoSeconds), size: normalizeVideoSize(config.size) || "16:9" }
-            : { seconds: normalizeVideoSeconds(config.videoSeconds), ...(h3 ? (!h3References && imageUrls.length ? {} : {aspect_ratio: h3Ratio}) : {aspect_ratio: normalizeVideoSize(config.size) || "16:9"}) }),
+            : { seconds: h3 ? h3Duration(model, config.videoSeconds) : normalizeVideoSeconds(config.videoSeconds), ...(h3 ? (h3Media?.frameMode ? {} : {aspect_ratio: h3Ratio}) : {aspect_ratio: normalizeVideoSize(config.size) || "16:9"}) }),
         ...(resolution ? { resolution } : {}),
         ...(!h3 && profile.generateAudio.supported ? { generate_audio: boolConfig(config.videoGenerateAudio, profile.generateAudio.default) } : {}),
-        ...(h3References ? {operation: "reference_to_video", ...(imageUrls.length ? {reference_image_urls: imageUrls} : {}), ...(videoUrls.length ? {reference_video_urls: videoUrls} : {}), ...(audioUrls.length ? {reference_audio_urls: audioUrls} : {})} : {
-            ...(h3 ? framePayload : imageUrls.length ? {image_urls: imageUrls} : {}),
+        ...(h3 ? h3Media?.payload : {
+            ...(imageUrls.length ? {image_urls: imageUrls} : {}),
             ...(videoUrls.length ? {video_urls: videoUrls} : {}),
-            ...(audioUrls.length ? h3 ? {target_audio_url: audioUrls[0]} : {audio_urls: audioUrls} : {}),
+            ...(audioUrls.length ? {audio_urls: audioUrls} : {}),
         }),
     };
     try {
