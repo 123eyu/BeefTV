@@ -235,6 +235,22 @@ def windows_custom_install_dir(installer, root):
     result = run('/S', '/D=' + str(custom))
     assert result.returncode == 0, f'reinstall into the chosen folder failed with {result.returncode}'
 
+    # A portable BeefTV folder (with BeefTV.exe but no installer manifest yet)
+    # can be upgraded in place while keeping unknown user files inside it.
+    portable_dir = root / 'PortableUpgrade' / 'BeefTV'
+    portable_dir.mkdir(parents=True)
+    (portable_dir / 'BeefTV.exe').write_bytes(b'old portable exe')
+    (portable_dir / 'user-note.txt').write_bytes(b'keep user note')
+    result = run('/S', '/D=' + str(portable_dir))
+    assert result.returncode == 0, f'portable folder upgrade failed with {result.returncode}'
+    assert (portable_dir / '.installed-root-files.txt').is_file()
+    assert (portable_dir / 'user-note.txt').read_bytes() == b'keep user note'
+    assert install_location() == str(portable_dir), install_location()
+    result = run('/S', '/D=' + str(custom))
+    assert result.returncode == 0, f'reinstall into the chosen folder failed with {result.returncode}'
+    assert not (portable_dir / 'BeefTV.exe').exists(), 'moving from portable upgrade left old executable behind'
+    assert (portable_dir / 'user-note.txt').read_bytes() == b'keep user note'
+
     # A non-empty BeefTV folder that is not a BeefTV install must be refused
     # without touching its files.
     foreign = root / 'Foreign' / 'BeefTV'
@@ -257,7 +273,7 @@ def windows_custom_install_dir(installer, root):
         pass
     else:
         raise AssertionError('uninstall left the BeefTV registry key')
-    print('PASS: chosen install folder, upgrade reuse, foreign-folder refusal and custom uninstall')
+    print('PASS: chosen install folder, upgrade reuse, portable upgrade, foreign-folder refusal and custom uninstall')
 
 
 def verify_data(data):
@@ -382,6 +398,8 @@ def smoke(args):
                 menu = Path(os.environ['APPDATA']) / 'Microsoft/Windows/Start Menu/Programs/BeefTV'
                 assert (menu / 'BeefTV.lnk').is_file()
                 assert (menu / 'Uninstall.lnk').is_file()
+                desktop = Path(os.environ['USERPROFILE']) / 'Desktop/BeefTV.lnk'
+                assert desktop.is_file()
             def uninstall():
                 # Normal NSIS uninstall runs a temporary copy so it can delete itself.
                 subprocess.run([str(installed / 'Uninstall.exe'), '/S'], check=True, timeout=90)
@@ -445,11 +463,11 @@ def smoke(args):
                 if source.is_file() and not source.is_symlink():
                     assert digest(source) == digest(installed / source.relative_to(payload)), str(source)
             process = launch(installed / relative_exe, env, data, root / f'installed-{iteration}.log', cleanup)
-            if args.platform == 'windows-amd64':
-                blocked = subprocess.run([str(installer), '/S'], timeout=60)
-                assert blocked.returncode == 2, 'installer did not reject a running app'
-                blocked = subprocess.run([str(installed / 'Uninstall.exe'), '/S', '_?=' + str(installed)], timeout=60)
-                assert blocked.returncode == 2, 'uninstaller did not reject a running app'
+            if iteration == 0 and args.platform == 'windows-amd64':
+                # Installing while BeefTV is open must automatically close the
+                # running instance and complete the upgrade cleanly.
+                install()
+                process.wait(timeout=30)
             stop(process)
             if args.platform == 'windows-amd64':
                 probe_cache(helper, profile, 'read', env, root, cleanup)
@@ -458,7 +476,8 @@ def smoke(args):
             if iteration == 0:
                 if args.platform == 'windows-amd64':
                     locked_windows_upgrade(installer, installed)
-                install()
+                else:
+                    install()
         uninstall()
         verify_data(data)
         assert cache.read_bytes() == b'keep webview cache'
