@@ -1,9 +1,10 @@
-import { useCallback, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useRef, type Dispatch, type SetStateAction } from "react";
 import { App } from "antd";
 
 import { buildNodeGenerationContext, hydrateNodeGenerationContext } from "@/components/canvas/canvas-node-generation";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import { buildEmotionImageArtifacts, emotionGenerationSize, emotionProviderMask, normalizeEmotionPromptForProvider, resolveEmotionEditPlan } from "@/lib/canvas/canvas-emotion";
+import { captureUserScope, userScopeMatches } from "@/lib/user-scope-guard";
 import {
     buildAudioGenerationMetadata,
     buildGenerationConfig,
@@ -73,6 +74,8 @@ export function useCanvasGenerationRetry({
     const { message } = App.useApp();
     const effectiveConfig = useEffectiveConfig();
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
+    const projectIdRef = useRef(projectId);
+    projectIdRef.current = projectId;
 
     return useCallback(
         async (node: CanvasNodeData) => {
@@ -220,6 +223,9 @@ export function useCanvasGenerationRetry({
 
             setRunningNodeId(node.id);
             const controller = startGenerationRequest(node.id, sourceNode.id, node.id);
+            const expectedScope = captureUserScope();
+            const capturedProjectId = projectId;
+            const isCurrent = () => projectIdRef.current === capturedProjectId && !controller.signal.aborted && userScopeMatches(expectedScope);
             let submittedInput: CanvasGenerationFailureInput = { ...context, prompt: mediaPrompt };
             const runAndConsumeRetry = async (input: Parameters<typeof runBackendCanvasGenerationTask>[0]) => {
                 submittedInput = input;
@@ -234,10 +240,11 @@ export function useCanvasGenerationRetry({
                     : { clientOperationId: crypto.randomUUID() };
                 setNodes((current) => current.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined, generationErrorCode: undefined, resourceReloadAvailable: undefined, failedPromptFingerprint: undefined, failedInputFingerprint: undefined } } : item)));
                 await runCanvasGenerationTaskToConsumer(
-                    { ...input, ...retryContext },
+                    { ...input, ...retryContext, expectedScope },
                     {
                         bindTask: (task) => bindGenerationTask(node.id, task),
                         consumeTask: (task) => applyGenerationTaskResult(node.id, task),
+                        isCurrent,
                     },
                 );
             };

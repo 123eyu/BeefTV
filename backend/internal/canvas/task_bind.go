@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"infinite-canvas/backend/internal/assets"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/repository"
 )
@@ -91,6 +92,7 @@ func (s *Service) bindTaskOutputOnce(userID string, patch TaskOutputBind) (TaskO
 	}
 	applyGenerationBindMetadata(metadata, patch)
 	node["metadata"] = metadata
+	s.reconcileBoundCanvasDocMediaAssets(userID, doc)
 	expected := canvasRevisionValue(doc)
 	if expected <= 0 {
 		expected = 1
@@ -100,6 +102,269 @@ func (s *Service) bindTaskOutputOnce(userID string, patch TaskOutputBind) (TaskO
 		return TaskOutputBindResult{}, err
 	}
 	return TaskOutputBindResult{Revision: summary.Revision, Node: cloneNode(node)}, nil
+}
+
+func (s *Service) reconcileBoundCanvasDocMediaAssets(userID string, doc map[string]any) {
+	if s == nil || s.repo == nil || doc == nil {
+		return
+	}
+	nodes := canvasDocNodes(doc)
+	nodeByID := make(map[string]map[string]any, len(nodes))
+	for _, rawNode := range nodes {
+		if item, ok := rawNode.(map[string]any); ok {
+			if id, _ := item["id"].(string); strings.TrimSpace(id) != "" {
+				nodeByID[strings.TrimSpace(id)] = item
+			}
+		}
+	}
+	propagateBatchRoots := func() {
+		for _, rawNode := range nodes {
+			item, ok := rawNode.(map[string]any)
+			if !ok {
+				continue
+			}
+			meta := nodeMetadata(item)
+			if isBatchRoot, _ := meta["isBatchRoot"].(bool); !isBatchRoot || nodeString(meta, "assetId") != "" {
+				continue
+			}
+			primaryID := nodeString(meta, "primaryImageId")
+			primary, exists := nodeByID[primaryID]
+			if !exists {
+				continue
+			}
+			primaryMeta := nodeMetadata(primary)
+			primaryAssetID := nodeString(primaryMeta, "assetId")
+			if primaryAssetID == "" {
+				continue
+			}
+			rootResID := firstDocResourceID(nodeString(meta, "storageKey"), nodeString(meta, "content"))
+			primaryResID := firstDocResourceID(nodeString(primaryMeta, "storageKey"), nodeString(primaryMeta, "content"))
+			if rootResID != "" && rootResID == primaryResID {
+				meta["assetId"] = primaryAssetID
+				item["metadata"] = meta
+			}
+		}
+	}
+	propagateBatchRoots()
+
+	resourceSet := map[string]struct{}{}
+	declaredAssetIDSet := map[string]struct{}{}
+	hasMissingAssetID := false
+	for _, rawNode := range nodes {
+		item, ok := rawNode.(map[string]any)
+		if !ok || !isDocMediaKind(canvasNodeType(item)) {
+			continue
+		}
+		meta := nodeMetadata(item)
+		resID := firstDocResourceID(nodeString(meta, "storageKey"), nodeString(meta, "content"))
+		if resID == "" {
+			continue
+		}
+		resourceSet[resID] = struct{}{}
+		if assetID := nodeString(meta, "assetId"); assetID != "" {
+			declaredAssetIDSet[assetID] = struct{}{}
+		} else {
+			hasMissingAssetID = true
+		}
+	}
+	if timeline, ok := doc["timeline"].(map[string]any); ok {
+		if clips, ok := timeline["clips"].([]any); ok {
+			for _, rawClip := range clips {
+				clip, ok := rawClip.(map[string]any)
+				if !ok {
+					continue
+				}
+				media, ok := clip["directMedia"].(map[string]any)
+				if !ok || !isDocMediaKind(nodeString(media, "kind")) {
+					continue
+				}
+				resID := firstDocResourceID(nodeString(media, "storageKey"), nodeString(media, "url"), nodeString(media, "dataUrl"), nodeString(media, "content"))
+				if resID == "" {
+					continue
+				}
+				resourceSet[resID] = struct{}{}
+				if assetID := nodeString(media, "assetId"); assetID != "" {
+					declaredAssetIDSet[assetID] = struct{}{}
+				} else {
+					hasMissingAssetID = true
+				}
+			}
+		}
+	}
+	if len(resourceSet) == 0 {
+		return
+	}
+
+	declaredAssetRefs := make(map[string]map[string]struct{}, len(declaredAssetIDSet))
+	if len(declaredAssetIDSet) > 0 {
+		declaredAssets, err := s.repo.AssetsForUserIDs(userID, assets.SortedIDs(declaredAssetIDSet))
+		if err == nil {
+			for _, asset := range declaredAssets {
+				refs := map[string]struct{}{}
+				_ = assets.CollectOwnedDocumentReferences(asset.PayloadJSON, refs)
+				declaredAssetRefs[asset.ID] = refs
+			}
+		}
+	}
+	isDeclaredAssetPositivelyMismatched := func(assetID, resID string) bool {
+		if assetID == "" || resID == "" {
+			return false
+		}
+		refs, loaded := declaredAssetRefs[assetID]
+		if !loaded || len(refs) == 0 {
+			return false
+		}
+		_, matches := refs[resID]
+		return !matches
+	}
+
+	needsFallbackScan := hasMissingAssetID
+	if !needsFallbackScan {
+		for _, rawNode := range nodes {
+			item, ok := rawNode.(map[string]any)
+			if !ok || !isDocMediaKind(canvasNodeType(item)) {
+				continue
+			}
+			meta := nodeMetadata(item)
+			resID := firstDocResourceID(nodeString(meta, "storageKey"), nodeString(meta, "content"))
+			if resID != "" && isDeclaredAssetPositivelyMismatched(nodeString(meta, "assetId"), resID) {
+				needsFallbackScan = true
+				break
+			}
+		}
+	}
+	if !needsFallbackScan {
+		if timeline, ok := doc["timeline"].(map[string]any); ok {
+			if clips, ok := timeline["clips"].([]any); ok {
+				for _, rawClip := range clips {
+					clip, ok := rawClip.(map[string]any)
+					if !ok {
+						continue
+					}
+					media, ok := clip["directMedia"].(map[string]any)
+					if !ok || !isDocMediaKind(nodeString(media, "kind")) {
+						continue
+					}
+					resID := firstDocResourceID(nodeString(media, "storageKey"), nodeString(media, "url"), nodeString(media, "dataUrl"), nodeString(media, "content"))
+					if resID != "" && isDeclaredAssetPositivelyMismatched(nodeString(media, "assetId"), resID) {
+						needsFallbackScan = true
+						break
+					}
+				}
+			}
+		}
+	}
+	if !needsFallbackScan {
+		return
+	}
+
+	ownedAssets, err := s.repo.Assets(userID)
+	if err != nil || len(ownedAssets) == 0 {
+		return
+	}
+	uniqueAssetIDByResource := make(map[string]string, len(resourceSet))
+	resourceMatchCount := make(map[string]int, len(resourceSet))
+	for _, asset := range ownedAssets {
+		allRefs := map[string]struct{}{}
+		_ = assets.CollectOwnedDocumentReferences(asset.PayloadJSON, allRefs)
+		declaredAssetRefs[asset.ID] = allRefs
+		primaryResID := assetPrimaryResourceID(asset.PayloadJSON)
+		if primaryResID == "" {
+			continue
+		}
+		if _, relevant := resourceSet[primaryResID]; !relevant {
+			continue
+		}
+		resourceMatchCount[primaryResID]++
+		if resourceMatchCount[primaryResID] == 1 {
+			uniqueAssetIDByResource[primaryResID] = asset.ID
+		} else {
+			delete(uniqueAssetIDByResource, primaryResID)
+		}
+	}
+	for _, rawNode := range nodes {
+		item, ok := rawNode.(map[string]any)
+		if !ok || !isDocMediaKind(canvasNodeType(item)) {
+			continue
+		}
+		meta := nodeMetadata(item)
+		resID := firstDocResourceID(nodeString(meta, "storageKey"), nodeString(meta, "content"))
+		if resID == "" {
+			continue
+		}
+		currentAssetID := nodeString(meta, "assetId")
+		if currentAssetID != "" && !isDeclaredAssetPositivelyMismatched(currentAssetID, resID) {
+			continue
+		}
+		if fallbackID := uniqueAssetIDByResource[resID]; fallbackID != "" {
+			meta["assetId"] = fallbackID
+			item["metadata"] = meta
+		}
+	}
+	propagateBatchRoots()
+	if timeline, ok := doc["timeline"].(map[string]any); ok {
+		if clips, ok := timeline["clips"].([]any); ok {
+			for _, rawClip := range clips {
+				clip, ok := rawClip.(map[string]any)
+				if !ok {
+					continue
+				}
+				media, ok := clip["directMedia"].(map[string]any)
+				if !ok || !isDocMediaKind(nodeString(media, "kind")) {
+					continue
+				}
+				resID := firstDocResourceID(nodeString(media, "storageKey"), nodeString(media, "url"), nodeString(media, "dataUrl"), nodeString(media, "content"))
+				if resID == "" {
+					continue
+				}
+				currentAssetID := nodeString(media, "assetId")
+				if currentAssetID != "" && !isDeclaredAssetPositivelyMismatched(currentAssetID, resID) {
+					continue
+				}
+				if fallbackID := uniqueAssetIDByResource[resID]; fallbackID != "" {
+					media["assetId"] = fallbackID
+					clip["directMedia"] = media
+				}
+			}
+		}
+	}
+}
+
+func assetPrimaryResourceID(payloadJSON string) string {
+	if strings.TrimSpace(payloadJSON) == "" {
+		return ""
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(payloadJSON), &payload); err != nil {
+		return ""
+	}
+	data, _ := payload["data"].(map[string]any)
+	meta, _ := payload["metadata"].(map[string]any)
+	return firstDocResourceID(
+		nodeString(data, "storageKey"),
+		nodeString(data, "url"),
+		nodeString(data, "dataUrl"),
+		nodeString(meta, "resourceKey"),
+		nodeString(payload, "coverUrl"),
+	)
+}
+
+func firstDocResourceID(values ...string) string {
+	for _, value := range values {
+		if id := assets.ResourceID(value); id != "" {
+			return id
+		}
+	}
+	return ""
+}
+
+func isDocMediaKind(kind string) bool {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "image", "video", "audio":
+		return true
+	default:
+		return false
+	}
 }
 
 func canBindPendingDepthNode(node map[string]any, patch TaskOutputBind) bool {

@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { App } from "antd";
 
 import { generationTaskCanReloadResource, generationTaskNodeId } from "@/lib/canvas/canvas-generation-task-sync";
+import { canvasNodeResourceId } from "@/lib/canvas/canvas-resource-id";
 import { bindBackendCanvasGenerationResult, CanvasGenerationDurableAckError, CanvasGenerationMaterializationError } from "@/services/canvas-generation-consumer";
 import { captureUserScope, isUserScopeAbandonedError, userScopeMatches } from "@/lib/user-scope-guard";
 import { ensureCanvasNodeAsset, retryCanvasAssetSyncAfterRateLimit } from "@/services/project-asset-sync";
@@ -433,25 +434,39 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                           const primary = children.find((item) => item.id === node.metadata?.primaryImageId && item.metadata?.content) || children.find((item) => item.metadata?.content);
                           const loading = children.some((item) => item.metadata?.status === NODE_STATUS_LOADING);
                           const failed = children.find((item) => item.metadata?.status === NODE_STATUS_ERROR);
-                          return {
-                              ...node,
-                              metadata: {
-                                  ...node.metadata,
-                                  ...(primary
-                                      ? {
-                                            content: primary.metadata?.content,
-                                            storageKey: primary.metadata?.storageKey,
-                                            mimeType: primary.metadata?.mimeType,
-                                            bytes: primary.metadata?.bytes,
-                                            naturalWidth: primary.metadata?.naturalWidth,
-                                            naturalHeight: primary.metadata?.naturalHeight,
-                                            primaryImageId: primary.id,
-                                        }
-                                      : {}),
-                                  status: primary ? NODE_STATUS_SUCCESS : loading ? NODE_STATUS_LOADING : NODE_STATUS_ERROR,
-                                  errorDetails: primary ? undefined : failed?.metadata?.errorDetails || "全部图片生成失败",
-                              },
+                          const nextMetadata: NonNullable<CanvasNodeData["metadata"]> = {
+                              ...node.metadata,
+                              ...(primary
+                                  ? {
+                                        content: primary.metadata?.content,
+                                        storageKey: primary.metadata?.storageKey,
+                                        mimeType: primary.metadata?.mimeType,
+                                        bytes: primary.metadata?.bytes,
+                                        naturalWidth: primary.metadata?.naturalWidth,
+                                        naturalHeight: primary.metadata?.naturalHeight,
+                                        primaryImageId: primary.id,
+                                    }
+                                  : {
+                                        content: undefined,
+                                        storageKey: undefined,
+                                        mimeType: undefined,
+                                        bytes: undefined,
+                                        naturalWidth: undefined,
+                                        naturalHeight: undefined,
+                                        primaryImageId: undefined,
+                                    }),
+                              status: primary ? NODE_STATUS_SUCCESS : loading ? NODE_STATUS_LOADING : NODE_STATUS_ERROR,
+                              errorDetails: primary ? undefined : failed?.metadata?.errorDetails || "全部图片生成失败",
                           };
+                          const nextNode: CanvasNodeData = { ...node, metadata: nextMetadata };
+                          const primaryResourceId = primary ? canvasNodeResourceId(primary) : "";
+                          const rootResourceId = canvasNodeResourceId(nextNode);
+                          if (primary?.metadata?.assetId && primaryResourceId && rootResourceId && primaryResourceId === rootResourceId) {
+                              nextMetadata.assetId = primary.metadata.assetId;
+                          } else {
+                              delete nextMetadata.assetId;
+                          }
+                          return nextNode;
                       })
                     : current,
             );

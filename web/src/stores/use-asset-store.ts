@@ -48,6 +48,8 @@ type AssetBase<T extends AssetKind> = {
     note?: string;
     arkAssetId?: string;
     portraitCertified?: boolean;
+    pendingRemoteUpload?: boolean;
+    remoteUploadError?: string;
     createdAt: string;
     updatedAt: string;
     metadata?: Record<string, unknown>;

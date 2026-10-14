@@ -233,6 +233,7 @@ export async function executeImageGeneration({
                     {
                         bindTask: (task) => bindGenerationTask(targetId, task),
                         consumeTask: (task) => applyGenerationTaskResult(targetId, task),
+                        isCurrent,
                     },
                 );
                 if (!isCurrent()) return false;
