@@ -1,5 +1,5 @@
 import { type ReactNode } from "react";
-import type { SeedanceSettingsConstraints } from "@/lib/seedance-task-constraints";
+import type { VideoSettingsConstraints } from "@/lib/video-settings-constraints";
 import { Switch } from "@/components/ui/base/switch";
 
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
@@ -20,7 +20,7 @@ const sizeOptions = [
 ];
 
 type VideoSettingsPanelProps = {
-    taskConstraints?: SeedanceSettingsConstraints;
+    taskConstraints?: VideoSettingsConstraints;
     config: AiConfig;
     onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark" | "videoArkPrivateAssetUpload", value: string) => void;
     theme: CanvasTheme;
@@ -62,7 +62,14 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                     </SettingGroup>
                 ) : null}
                 {sizeSupported ? (
-                    <SettingGroup title="尺寸" color={theme.node.muted}>
+                    <SettingGroup title={taskConstraints?.ratioLabel ? "比例" : "尺寸"} color={theme.node.muted}>
+                        {taskConstraints?.ratioLabel ? (
+                            <div className="rounded-md px-2.5 py-2" style={{ background: theme.toolbar.itemHover }}>
+                                <p className="text-[length:var(--fs-body)] font-medium">{taskConstraints.ratioLabel}</p>
+                                {taskConstraints.ratioHelp ? <p className="mt-1 text-[length:var(--fs-caption)] leading-relaxed" style={{ color: theme.node.muted }}>{taskConstraints.ratioHelp}</p> : null}
+                            </div>
+                        ) : <>
+                        {taskConstraints?.ratioHelp ? <p className="text-[length:var(--fs-caption)] leading-relaxed" style={{ color: theme.node.muted }}>{taskConstraints.ratioHelp}</p> : null}
                         {dimensions ? (
                             <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-1.5">
                                 <DimensionValue prefix="W" value={dimensions.width} theme={theme} />
@@ -85,6 +92,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                                 </button>
                             ))}
                         </div>
+                        </>}
                     </SettingGroup>
                 ) : null}
                 <SettingGroup title="秒数" color={theme.node.muted}>
