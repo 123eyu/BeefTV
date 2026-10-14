@@ -38,7 +38,7 @@ export function h3GenerationControls(model: string, options?: H3VideoOptions): H
         if (options?.damage_level && (!vhs || !["light", "medium", "heavy"].includes(options.damage_level))) throw new Error("所选风格不支持该磁带磨损设置");
         return { ...(options?.seed !== undefined ? { seed: options.seed } : {}), ...(vhs ? { damage_level: options?.damage_level || "medium" } : {}) };
     }
-    const value = { prompt_expansion_mode: "balanced" as const, ...options };
+    const value = { prompt_expansion_mode: "balanced" as const, ...options, enable_safety_checker: true, sync_mode: false };
     if (value.seed !== undefined && !Number.isSafeInteger(value.seed)) throw new Error("随机种子须为整数");
     if (value.prompt_expansion_mode === "fast" && model.split("::").at(-1) !== "minimax-h3") throw new Error("当前模型不支持快速提示词增强，请选择均衡或高质量");
     if (!value.prompt_expansion_mode || !["disabled", "fast", "balanced", "quality"].includes(value.prompt_expansion_mode)) throw new Error("提示词增强设置无效");

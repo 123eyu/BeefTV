@@ -1,5 +1,4 @@
 import { Button, InputNumber, Select } from "antd";
-import { Switch } from "@/components/ui/base/switch";
 import { isH3Style, type H3VideoOptions } from "@/lib/h3-video";
 import type { CanvasNodeMetadata } from "@/types/canvas";
 
@@ -16,8 +15,8 @@ export function CanvasH3Controls({ model, value = {}, onChange, duration, onDura
         vhs = model.split("::").at(-1) === "minimax-h3-max-style-vhs";
     const modes = [{ value: "balanced", label: "均衡" }, { value: "quality", label: "高质量" }, ...(base ? [{ value: "fast", label: "快速" }] : []), { value: "disabled", label: "关闭" }];
     return (
-        <details className="rounded-lg border border-[var(--color-border)] px-3 py-2" data-canvas-no-zoom>
-            <summary className="cursor-pointer text-[var(--fs-label)]">H3 高级设置</summary>
+        <details className="rounded-lg px-3 py-2" data-canvas-no-zoom>
+            <summary className="cursor-pointer text-[var(--fs-label)]">MiniMax H3 高级设置</summary>
             <div className="mt-3 flex flex-col gap-3 text-[var(--fs-label)]">
                 {!base && !style && onDurationChange ? (
                     <label className="flex min-w-0 items-center justify-between gap-3">
@@ -46,7 +45,7 @@ export function CanvasH3Controls({ model, value = {}, onChange, duration, onDura
                     <InputNumber
                         aria-label="随机种子"
                         size="small"
-                        className="!w-36"
+                        className="!w-28"
                         precision={0}
                         min={-Number.MAX_SAFE_INTEGER}
                         max={Number.MAX_SAFE_INTEGER}
@@ -70,18 +69,6 @@ export function CanvasH3Controls({ model, value = {}, onChange, duration, onDura
                             ]}
                             onChange={(damage_level) => onChange({ ...value, damage_level })}
                         />
-                    </label>
-                ) : null}
-                {!style ? (
-                    <label className="flex min-w-0 items-center justify-between gap-3">
-                        <span>内容安全检查</span>
-                        <Switch aria-label="内容安全检查" checked={value.enable_safety_checker !== false} onChange={(enabled) => onChange({ ...value, enable_safety_checker: enabled })} />
-                    </label>
-                ) : null}
-                {!style ? (
-                    <label className="flex min-w-0 items-center justify-between gap-3">
-                        <span>直接返回视频数据</span>
-                        <Switch aria-label="直接返回视频数据" checked={value.sync_mode === true} onChange={(enabled) => onChange({ ...value, sync_mode: enabled })} />
                     </label>
                 ) : null}
             </div>

@@ -23,7 +23,7 @@ test("fractional catalog survives server ingestion and canvas normalization", ()
 
 test("H3 exact fractional seconds and explicit false/zero survive controls", () => {
     expect(h3Duration("minimax-h3-max", "0.925")).toBe("0.925");
-    expect(h3GenerationControls("minimax-h3-max", { seed: 0, enable_safety_checker: false, sync_mode: true })).toMatchObject({ seed: 0, enable_safety_checker: false, sync_mode: true, prompt_expansion_mode: "balanced" });
+    expect(h3GenerationControls("minimax-h3-max", { seed: 0, enable_safety_checker: false, sync_mode: true })).toMatchObject({ seed: 0, enable_safety_checker: true, sync_mode: false, prompt_expansion_mode: "balanced" });
     expect(() => h3Duration("minimax-h3", "5.5")).toThrow();
     expect(() => h3Duration("minimax-h3-max", "0.91")).toThrow();
     expect(() => h3GenerationControls("minimax-h3-max", { prompt_expansion_mode: "fast" })).toThrow();

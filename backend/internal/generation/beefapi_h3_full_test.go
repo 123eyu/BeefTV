@@ -11,7 +11,7 @@ func TestBeefAPIH3FullReferenceOrderControlsAndFrames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if body["seed"] != float64(0) || body["enable_safety_checker"] != false || body["sync_mode"] != true || body["middle_frame_time"] != 2.5 || body["reference_image_urls"] != nil {
+	if body["seed"] != float64(0) || body["enable_safety_checker"] != true || body["sync_mode"] != false || body["middle_frame_time"] != 2.5 || body["reference_image_urls"] != nil {
 		t.Fatalf("controls or frames lost: %#v", body)
 	}
 	want := []map[string]string{{"type": "audio", "url": "https://example.com/audio.wav"}, {"type": "image", "url": "https://example.com/subject.png"}}

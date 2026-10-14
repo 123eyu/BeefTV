@@ -51,6 +51,10 @@ func beefAPIH3VideoBody(input Input) (map[string]interface{}, error) {
 		return nil, fmt.Errorf("所选分辨率不受当前 H3 模型支持")
 	}
 	body := map[string]interface{}{"model": name, "prompt": strings.TrimSpace(input.Prompt), "seconds": seconds, "resolution": resolution}
+	if !styled {
+		body["enable_safety_checker"] = true
+		body["sync_mode"] = false
+	}
 	if err := h3Controls(body, input.Metadata, base, style, styled); err != nil {
 		return nil, err
 	}
@@ -250,13 +254,9 @@ func h3Controls(body, metadata map[string]interface{}, base bool, style string, 
 			}
 			body[k] = s
 		case "enable_safety_checker", "sync_mode":
-			if styled {
-				continue
-			}
-			if _, ok := v.(bool); !ok {
-				return fmt.Errorf("H3 开关设置无效")
-			}
-			body[k] = v
+			// These settings are fixed for BeefTV's task-based video pipeline.
+			// Ignore values persisted by older clients instead of re-enabling them.
+			continue
 		case "damage_level":
 			if style != "vhs" {
 				continue
