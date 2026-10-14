@@ -20,6 +20,7 @@ const (
 	ReasonNotOpen       = "turn_not_open"
 	ReasonIdentity      = "turn_identity_required"
 	ReasonStore         = "turn_store_unavailable"
+	ReasonUndone        = "turn_undone"
 )
 
 const (
@@ -94,6 +95,9 @@ type Scope struct {
 	CanvasIDs      []string
 	TaskIDs        []string
 	SkillPins      []skills.Pin
+	// SessionSkillPins are pins of earlier rounds of the same Durable
+	// conversation and owner. Their bodies are already in that transcript.
+	SessionSkillPins []skills.Pin
 }
 
 // HistoryState supplements pi conversation history with business receipts.
@@ -102,6 +106,7 @@ type HistoryState struct {
 	PermissionMode string
 	Change         *Change
 	Undone         bool
+	SkillPins      []skills.Pin
 }
 
 // Record is the in-memory business round. Document is the pre-turn canvas
@@ -141,7 +146,7 @@ func (r Record) sameBeginScope(userID, canvasID string, input Input) bool {
 		equalStringLists(r.SelectedNodeIDs, uniqueSorted(input.SelectedNodeIDs)) &&
 		equalStringLists(r.ReferencedAssetIDs, uniqueSorted(input.AssetIDs)) &&
 		equalStringLists(r.ReferencedCanvasIDs, uniqueSorted(input.CanvasIDs)) &&
-		reflect.DeepEqual(SortedSkillPins(r.SkillPins), SortedSkillPins(input.SkillPins))
+		reflect.DeepEqual(skillPinIdentities(r.SkillPins), skillPinIdentities(input.SkillPins))
 }
 
 const (
@@ -167,6 +172,16 @@ func ValidMode(value string) bool {
 type CanvasSnapshot struct {
 	RevisionBefore int64           `json:"revisionBefore"`
 	Document       json.RawMessage `json:"document"`
+}
+
+// skillPinIdentities ignores display labels: a skill renamed between a
+// replayed Begin and the stored round is still the same pinned package.
+func skillPinIdentities(pins []skills.Pin) []skills.Pin {
+	result := make([]skills.Pin, 0, len(pins))
+	for _, pin := range SortedSkillPins(pins) {
+		result = append(result, pin.Identity())
+	}
+	return result
 }
 
 func SortedSkillPins(pins []skills.Pin) []skills.Pin {
