@@ -8343,6 +8343,11 @@ html:not(.dark) .creation-studio-control:hover,
         border-color: #78716c !important;
     }
 
+    /* H3 选项会 portal 到 body，必须高于承载控件的设置面板。 */
+    .canvas-h3-option-popup {
+        z-index: calc(var(--z-dialog-popover) + 1) !important;
+    }
+
     .canvas-image-settings-popover .ant-popover-inner {
         border-radius: 18px;
         box-shadow: 0 18px 54px rgba(28, 25, 23, 0.16);
