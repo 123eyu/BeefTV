@@ -1,4 +1,4 @@
-Unicode true
+﻿Unicode true
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
 !include "StrFunc.nsh"
@@ -13,7 +13,6 @@ SetCompressor /SOLID lzma
 InstallDir "$LOCALAPPDATA\Programs\BeefTV"
 # Upgrades default to the previous location; the user can still choose another folder.
 InstallDirRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\BeefTV" "InstallLocation"
-Var StageDir
 Var BackupDir
 Var CleanDir
 Var InstallParent
@@ -32,20 +31,17 @@ VIProductVersion "${VERSION}.0"
 VIAddVersionKey "ProductName" "BeefTV"
 VIAddVersionKey "FileVersion" "${VERSION}"
 VIAddVersionKey "FileDescription" "BeefTV Setup"
-!define MUI_ABORTWARNING
-!insertmacro MUI_PAGE_WELCOME
-!insertmacro MUI_PAGE_COMPONENTS
+VIAddVersionKey "LegalCopyright" "BeefTV"
 !define MUI_PAGE_CUSTOMFUNCTION_LEAVE DirectoryPageLeave
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
+!define MUI_FINISHPAGE_RUN "$INSTDIR\BeefTV.exe"
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
 !insertmacro MUI_LANGUAGE "SimpChinese"
 
-LangString BEEFTV_DIR_ROOT ${LANG_ENGLISH} "Choose a folder on a drive, not the drive root itself."
-LangString BEEFTV_DIR_ROOT ${LANG_SIMPCHINESE} "请选择硬盘上的一个文件夹，而不是盘符根目录。"
 LangString BEEFTV_DIR_FOREIGN ${LANG_ENGLISH} "This folder already holds other files and is not a BeefTV installation. Choose an empty folder or the current BeefTV location."
 LangString BEEFTV_DIR_FOREIGN ${LANG_SIMPCHINESE} "这个文件夹里已有其他文件，不是 BeefTV 安装位置。请选择一个空文件夹，或当前的 BeefTV 安装位置。"
 LangString BEEFTV_DIR_WRITE ${LANG_ENGLISH} "BeefTV cannot write here. Administrator rights are required, so choose another folder."
@@ -91,8 +87,7 @@ Function WriteInstallLog
 FunctionEnd
 
 # MoveFileW exposes the actual Windows error; NSIS Rename only exposes a flag.
-# Brief file scanner/shutdown locks get a bounded automatic retry. The user can
-# release a persistent lock without unpacking the entire payload again.
+# Brief file scanner/shutdown locks get a bounded automatic retry.
 Function MoveInstallFolder
   move_retry:
   StrCpy $MoveAttempt 0
@@ -107,7 +102,7 @@ Function MoveInstallFolder
   StrCpy $LogLine 'error=$MoveError moving "$MoveFrom" -> "$MoveTo"'
   Call WriteInstallLog
   IntOp $MoveAttempt $MoveAttempt + 1
-  ${If} $MoveAttempt < 5
+  ${If} $MoveAttempt < 20
     ${If} $MoveError == 5
     ${OrIf} $MoveError == 32
     ${OrIf} $MoveError == 33
@@ -119,10 +114,11 @@ Function MoveInstallFolder
   StrCpy $0 0
 FunctionEnd
 
-# Appends a dedicated BeefTV subfolder to the chosen location, then validates
-# that final folder. Choosing D:\Apps therefore installs to D:\Apps\BeefTV and
-# never mixes the payload with the user's other files. Sets $0 to 0 when valid,
-# or 1 (drive root), 2 (foreign folder), 3 (not writable).
+# Appends a dedicated BeefTV subfolder to the chosen location (including drive
+# roots like D:\ or E:\), then validates that final folder. Choosing E:\ or
+# D:\Apps therefore installs to E:\BeefTV or D:\Apps\BeefTV and never mixes the
+# payload with the user's other files. Sets $0 to 0 when valid, or 2 (foreign
+# folder), 3 (not writable).
 Function PrepareInstallDir
   StrCpy $0 0
   ${If} $INSTDIR == ""
@@ -140,21 +136,21 @@ Function PrepareInstallDir
         Goto PrepareInstallDir_trim
       ${EndIf}
     ${EndIf}
-  # A drive or share root is not an application folder.
   ${GetRoot} "$1" $2
   ${If} $2 == "$1"
-    StrCpy $0 1
-    Return
-  ${EndIf}
-  ${GetFileName} "$1" $2
-  ${If} $2 != "BeefTV"
     StrCpy $1 "$1\BeefTV"
+  ${Else}
+    ${GetFileName} "$1" $2
+    ${If} $2 != "BeefTV"
+      StrCpy $1 "$1\BeefTV"
+    ${EndIf}
   ${EndIf}
   # An existing final folder is only reused when it is a previous BeefTV
-  # install or empty.
+  # install (or portable BeefTV directory) or empty.
   StrCpy $5 ""
   ${If} ${FileExists} "$1\*.*"
     ${IfNot} ${FileExists} "$1\.installed-root-files.txt"
+    ${AndIfNot} ${FileExists} "$1\BeefTV.exe"
       StrCpy $3 ""
       FindFirst $2 $4 "$1\*"
       PrepareInstallDir_scan:
@@ -200,9 +196,7 @@ Function PrepareInstallDir
 FunctionEnd
 
 Function ShowInstallDirError
-  ${If} $0 == 1
-    MessageBox MB_OK|MB_ICONSTOP "$(BEEFTV_DIR_ROOT)" /SD IDOK
-  ${ElseIf} $0 == 2
+  ${If} $0 == 2
     MessageBox MB_OK|MB_ICONSTOP "$(BEEFTV_DIR_FOREIGN)" /SD IDOK
   ${ElseIf} $0 == 3
     MessageBox MB_OK|MB_ICONSTOP "$(BEEFTV_DIR_WRITE)" /SD IDOK
@@ -220,6 +214,8 @@ FunctionEnd
 !macro RequireClosed PREFIX
 Function ${PREFIX}RequireClosed
   retry_closed_${PREFIX}:
+  StrCpy $3 0
+  check_closed_${PREFIX}:
   nsExec::ExecToStack '"$SYSDIR\tasklist.exe" /FI "IMAGENAME eq BeefTV.exe" /NH'
   Pop $0
   Pop $1
@@ -235,12 +231,40 @@ Function ${PREFIX}RequireClosed
     ${StrStr} $2 $1 "beeftv.exe"
 !endif
   ${EndIf}
-  ${If} $0 != 0
-  ${OrIf} $2 != ""
-    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(BEEFTV_CLOSE)" /SD IDCANCEL IDRETRY retry_closed_${PREFIX}
-    SetErrorLevel 2
-    Abort
+  ${If} $0 == 0
+  ${AndIf} $2 == ""
+    ${If} $3 > 0
+      # Allow child WebView2 / runtime processes a brief moment to release handles.
+      Sleep 500
+    ${EndIf}
+    Return
   ${EndIf}
+  IntOp $3 $3 + 1
+  ${If} $3 == 1
+    # Ask BeefTV's main window to close cleanly first so SQLite and WebView2
+    # flush state before exiting.
+    nsExec::Exec '"$SYSDIR\taskkill.exe" /IM BeefTV.exe'
+    Pop $0
+    Sleep 500
+    Goto check_closed_${PREFIX}
+  ${ElseIf} $3 <= 10
+    Sleep 500
+    Goto check_closed_${PREFIX}
+  ${ElseIf} $3 == 11
+    # Force-terminate any remaining BeefTV or CLI process tree.
+    nsExec::Exec '"$SYSDIR\taskkill.exe" /F /IM BeefTV.exe /T'
+    Pop $0
+    nsExec::Exec '"$SYSDIR\taskkill.exe" /F /IM beeftv.exe /T'
+    Pop $0
+    Sleep 500
+    Goto check_closed_${PREFIX}
+  ${ElseIf} $3 <= 20
+    Sleep 500
+    Goto check_closed_${PREFIX}
+  ${EndIf}
+  MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(BEEFTV_CLOSE)" /SD IDCANCEL IDRETRY retry_closed_${PREFIX}
+  SetErrorLevel 2
+  Abort
 FunctionEnd
 !macroend
 !insertmacro RequireClosed ""
@@ -278,6 +302,7 @@ Function ${PREFIX}RemovePayload
     done_${PREFIX}:
     FileClose $0
   ${EndIf}
+  Delete "$CleanDir\BeefTV.exe"
   Delete "$CleanDir\.installed-root-files.txt"
   Delete "$CleanDir\Uninstall.exe"
   RMDir /r "$CleanDir\agent-host"
@@ -336,54 +361,35 @@ FunctionEnd
 
 Section "BeefTV (required)" SEC_APP
   SectionIn RO
+  Call RequireClosed
   StrCpy $InstallPhase "prepare"
-  # Stage and backup must live on the same volume as $INSTDIR for Rename to work.
   ${GetParent} "$INSTDIR" $InstallParent
   StrCpy $0 "$InstallParent" 1 -1
   ${If} $0 != "\"
     StrCpy $InstallParent "$InstallParent\"
   ${EndIf}
+  ${IfNot} ${FileExists} "$InstallParent*.*"
+    ClearErrors
+    CreateDirectory "$InstallParent"
+    IfErrors prepare_failed
+  ${EndIf}
+  SetOutPath "$InstallParent"
+  StrCpy $OldMoved 0
+  StrCpy $BackupDir ""
+  IfFileExists "$INSTDIR\*.*" 0 install_new
   ClearErrors
-  CreateDirectory "$InstallParent"
-  GetTempFileName $StageDir "$InstallParent"
-  IfErrors prepare_failed
-  Delete "$StageDir"
-  IfErrors prepare_failed
   GetTempFileName $BackupDir "$InstallParent"
   IfErrors prepare_failed
   Delete "$BackupDir"
   IfErrors prepare_failed
-  Goto stage_ready
+  Goto backup_existing
   prepare_failed:
-  StrCpy $LogLine 'could not prepare staging folders beside "$INSTDIR"'
+  StrCpy $LogLine 'could not prepare installation beside "$INSTDIR"'
   Call WriteInstallLog
   MessageBox MB_OK|MB_ICONSTOP "$(BEEFTV_STOPPED)" /SD IDOK
   SetErrorLevel 1
   Abort
-  stage_ready:
-  StrCpy $InstallPhase "extract"
-  StrCpy $LogLine 'stage="$StageDir" backup="$BackupDir" destination="$INSTDIR"'
-  Call WriteInstallLog
-  ClearErrors
-  SetOutPath "$StageDir"
-  IfErrors prepare_failed
-  File /r "${PAYLOAD}\*"
-  File /oname=.installed-root-files.txt "${ROOTFILES}"
-  WriteUninstaller "$StageDir\Uninstall.exe"
-  ${If} ${Errors}
-    StrCpy $LogLine 'payload extraction or uninstaller write failed in "$StageDir"'
-    Call WriteInstallLog
-    SetOutPath "$InstallParent"
-    RMDir /r "$StageDir"
-    MessageBox MB_OK|MB_ICONSTOP "$(BEEFTV_STOPPED)" /SD IDOK
-    SetErrorLevel 1
-    Abort
-  ${EndIf}
-  # Directory renames stay on the same volume. No old payload is removed until
-  # all new files have been extracted successfully.
-  SetOutPath "$InstallParent"
-  StrCpy $OldMoved 0
-  IfFileExists "$INSTDIR\*.*" 0 install_new
+  backup_existing:
   StrCpy $InstallPhase "backup"
   StrCpy $MoveFrom "$INSTDIR"
   StrCpy $MoveTo "$BackupDir"
@@ -393,15 +399,53 @@ Section "BeefTV (required)" SEC_APP
   ${EndIf}
   StrCpy $OldMoved 1
   install_new:
-  StrCpy $InstallPhase "activate"
-  StrCpy $MoveFrom "$StageDir"
-  StrCpy $MoveTo "$INSTDIR"
-  Call MoveInstallFolder
-  ${If} $0 == 0
+  # Extract directly into $INSTDIR so newly written executables never require a
+  # post-extraction directory rename while antivirus scanners hold read handles.
+  StrCpy $InstallPhase "extract"
+  StrCpy $LogLine 'backup="$BackupDir" destination="$INSTDIR"'
+  Call WriteInstallLog
+  ClearErrors
+  SetOutPath "$INSTDIR"
+  IfErrors extract_failed
+  File /r "${PAYLOAD}\*"
+  File /oname=.installed-root-files.txt "${ROOTFILES}"
+  WriteUninstaller "$INSTDIR\Uninstall.exe"
+  ${If} ${Errors}
+    extract_failed:
+    StrCpy $LogLine 'payload extraction or uninstaller write failed in "$INSTDIR"'
+    Call WriteInstallLog
+    SetOutPath "$InstallParent"
+    StrCpy $CleanDir "$INSTDIR"
+    Call RemovePayload
+    RMDir /r "$INSTDIR"
     Goto install_restore
   ${EndIf}
-  StrCpy $CleanDir "$BackupDir"
-  Call RemovePayload
+  StrCpy $InstallPhase "activate"
+  StrCpy $LogLine 'moved "$BackupDir" -> "$INSTDIR"'
+  Call WriteInstallLog
+  ${If} $OldMoved == 1
+    SetOutPath "$InstallParent"
+    StrCpy $CleanDir "$BackupDir"
+    Call RemovePayload
+    ${If} ${FileExists} "$BackupDir\*.*"
+      FindFirst $2 $4 "$BackupDir\*"
+      preserve_user_files:
+        ${If} $4 == ""
+          Goto preserve_user_files_done
+        ${EndIf}
+        ${If} $4 != "."
+        ${AndIf} $4 != ".."
+          ${IfNot} ${FileExists} "$INSTDIR\$4"
+            Rename "$BackupDir\$4" "$INSTDIR\$4"
+          ${EndIf}
+        ${EndIf}
+        FindNext $2 $4
+        Goto preserve_user_files
+      preserve_user_files_done:
+      FindClose $2
+      RMDir "$BackupDir"
+    ${EndIf}
+  ${EndIf}
   Goto install_registered
   install_restore:
   ${If} $OldMoved == 1
@@ -418,7 +462,6 @@ Section "BeefTV (required)" SEC_APP
     ${EndIf}
   ${EndIf}
   install_failed:
-  RMDir /r "$StageDir"
   ${If} ${FileExists} "$INSTDIR\*.*"
     MessageBox MB_OK|MB_ICONSTOP "$(BEEFTV_PRESERVED)" /SD IDOK
   ${Else}
@@ -427,9 +470,11 @@ Section "BeefTV (required)" SEC_APP
   SetErrorLevel 1
   Abort
   install_registered:
+  SetOutPath "$INSTDIR"
   CreateDirectory "$SMPROGRAMS\BeefTV"
   CreateShortcut "$SMPROGRAMS\BeefTV\BeefTV.lnk" "$INSTDIR\BeefTV.exe"
   CreateShortcut "$SMPROGRAMS\BeefTV\Uninstall.lnk" "$INSTDIR\Uninstall.exe"
+  CreateShortcut "$DESKTOP\BeefTV.lnk" "$INSTDIR\BeefTV.exe"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\BeefTV" "DisplayName" "BeefTV"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\BeefTV" "DisplayVersion" "${VERSION}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\BeefTV" "UninstallString" '$\"$INSTDIR\Uninstall.exe$\"'
@@ -446,13 +491,10 @@ Section "BeefTV (required)" SEC_APP
     StrCpy $CleanDir "$PreviousInstallDir"
     Call RemovePayload
   ${EndIf}
+  SetOutPath "$INSTDIR"
   StrCpy $InstallPhase "registered"
   StrCpy $LogLine 'installed="$INSTDIR"'
   Call WriteInstallLog
-SectionEnd
-
-Section /o "Desktop shortcut" SEC_DESKTOP
-  CreateShortcut "$DESKTOP\BeefTV.lnk" "$INSTDIR\BeefTV.exe"
 SectionEnd
 
 Section "Uninstall"
