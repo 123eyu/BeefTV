@@ -29,6 +29,12 @@ const receipt = JSON.parse(readFileSync(`docs/release-evidence/${version}.json`,
 const fail = message => { throw new Error(`Real generation release gate: ${message}`); };
 const nonempty = value => typeof value === 'string' && value.trim() !== '';
 if (receipt.version !== version || receipt.sourceDigest !== sourceDigest) fail('receipt does not match this release source');
+if (version === 'v1.7.22') {
+  const { validateVideoUnifiedDeliveryRelease, releaseVideoProtocolIds } = await import('./video-unified-delivery-release-contract.mjs');
+  validateVideoUnifiedDeliveryRelease(receipt, sourceDigest, releaseVideoProtocolIds('plugin-packages'));
+  console.log('v1.7.22 original-task video retrieval acceptance; zero new paid submissions, current-source native display, review and protocol checks; full matrix and assistant suite NOT run; four-platform package gates pending.');
+  process.exit(0);
+}
 if (version === 'v1.7.21') {
   validateVideoDirectDeliveryRelease(receipt, sourceDigest);
   console.log('v1.7.21 single native video delivery acceptance; one settled generation, current-source review and recovery checks; full matrix and assistant suite NOT run; four-platform package gates pending.');
