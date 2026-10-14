@@ -9,6 +9,11 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.7.23
+
+- 修复画布内旧版未入库媒体节点拦截新生成结果回写，以及点击「继续取回」闪一下又退回报错的问题；生成完成或继续取回时自动补齐画布素材绑定。
+- Windows 安装向导简化为一键安装，默认创建桌面快捷方式并在完成后打开软件；直写目标目录消除杀毒软件扫描临时目录导致的“错误 32”，支持直接选盘符根目录、自动关闭运行中的旧版进程，并修复安装界面中文乱码。
+
 ## v1.7.22
 
 - 所有视频渠道统一优先取回上游结果；下载中断或链接失效时刷新原任务链接，内置 BeefAPI 还可切换备用文件，无需重新生成。
