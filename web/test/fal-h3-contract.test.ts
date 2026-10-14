@@ -74,7 +74,7 @@ test("H3 direct transport keeps end-only roles, 768p and local media", async () 
     expect(calls[0]).toMatchObject({body: {model, last_frame_url: image.dataUrl, resolution: "768p", seconds: "5"}});
     const payload = (calls[0] as {body: Record<string, unknown>}).body;
     expect(payload.first_frame_url).toBeUndefined(); expect(payload.generate_audio).toBeUndefined(); expect(payload.image_urls).toBeUndefined();
-    await expect(createVideoGenerationsTask(deps, config, model, "test", [image], [], [], {videoEndFrameNodeId: "missing"})).rejects.toThrow("首帧或尾帧");
+    await expect(createVideoGenerationsTask(deps, config, model, "test", [image], [], [], {videoEndFrameNodeId: "missing"})).rejects.toThrow("关键帧");
     expect(calls).toHaveLength(1);
     await createVideoGenerationsTask(deps,{...config,size:"9:16"},model,"Text.",[],[],[]);
     expect(calls[1]).toMatchObject({body:{aspect_ratio:"9:16"}});
