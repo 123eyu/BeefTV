@@ -158,7 +158,7 @@ func runningHubOutputs(value interface{}) []runningHubOutput {
 		switch item := current.(type) {
 		case string:
 			item = strings.TrimSpace(item)
-			if strings.HasPrefix(item, "http://") || strings.HasPrefix(item, "https://") || strings.HasPrefix(item, "data:") || (strings.HasPrefix(item, "/") && !strings.HasPrefix(item, "//")) || runningHubRelativeOutputPath(item) {
+			if runningHubIsOutputURL(item) {
 				if !seen[item] {
 					seen[item] = true
 					result = append(result, runningHubOutput{URL: item, ID: id, Field: field, Owner: owner})
@@ -214,10 +214,16 @@ func runningHubHasOutputURL(item map[string]interface{}) bool {
 	for key := range item {
 		switch strings.ToLower(strings.TrimSpace(key)) {
 		case "fileurl", "file_url", "url", "downloadurl", "download_url", "src":
-			return true
+			if value, ok := item[key].(string); ok && runningHubIsOutputURL(strings.TrimSpace(value)) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+func runningHubIsOutputURL(value string) bool {
+	return strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") || strings.HasPrefix(value, "data:") || (strings.HasPrefix(value, "/") && !strings.HasPrefix(value, "//")) || runningHubRelativeOutputPath(value)
 }
 
 func validateRunningHubQueryTaskID(response map[string]any, taskID string) error {

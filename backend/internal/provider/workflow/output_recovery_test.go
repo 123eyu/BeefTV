@@ -226,7 +226,7 @@ func TestRunningHubRenewalKeepsDistinctAliasURLsAndActualMIME(t *testing.T) {
 }
 
 func TestRunningHubWrongTaskIDRejectsAllOutputReads(t *testing.T) {
-	for _, identity := range []string{`"taskId":"other"`, `"task_id":"other"`, `"taskID":"other"`, `"id":"other"`} {
+	for _, identity := range []string{`"taskId":"other"`, `"task_id":"other"`, `"taskID":"other"`, `"id":"other"`, `"id":"other","url":null`} {
 		t.Run(identity, func(t *testing.T) {
 			exec := &scriptedExecutor{handler: func(req Request) ([]byte, string, error) {
 				if req.Kind != "poll" {
@@ -244,17 +244,19 @@ func TestRunningHubWrongTaskIDRejectsAllOutputReads(t *testing.T) {
 }
 
 func TestRunningHubOutputObjectIDIsNotTaskIDAndResolvedURLsDeduplicate(t *testing.T) {
-	reads := 0
-	exec := &scriptedExecutor{handler: func(req Request) ([]byte, string, error) {
-		if req.Kind == "poll" {
-			return []byte(`{"code":0,"data":[{"id":"artifact","fileUrl":"/output/video.mp4","downloadUrl":"https://workflow.example/output/video.mp4"}]}`), "application/json", nil
+	for _, data := range []string{`{"id":"artifact","fileUrl":"/output/video.mp4","downloadUrl":"https://workflow.example/output/video.mp4"}`, `[{"id":"artifact","fileUrl":"/output/video.mp4","downloadUrl":"https://workflow.example/output/video.mp4"}]`} {
+		reads := 0
+		exec := &scriptedExecutor{handler: func(req Request) ([]byte, string, error) {
+			if req.Kind == "poll" {
+				return []byte(`{"code":0,"data":` + data + `}`), "application/json", nil
+			}
+			reads++
+			return []byte("video fixture"), "video/mp4", nil
+		}}
+		result, _, err := productionClient(exec).QueryVideo(context.Background(), outputRecoveryConfig(), "https://workflow.example", "original")
+		if err != nil || result["mode"] != "video" || reads != 1 {
+			t.Fatalf("result=%v err=%v reads=%d", result, err, reads)
 		}
-		reads++
-		return []byte("video fixture"), "video/mp4", nil
-	}}
-	result, _, err := productionClient(exec).QueryVideo(context.Background(), outputRecoveryConfig(), "https://workflow.example", "original")
-	if err != nil || result["mode"] != "video" || reads != 1 {
-		t.Fatalf("result=%v err=%v reads=%d", result, err, reads)
 	}
 }
 
