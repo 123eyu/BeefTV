@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -328,12 +329,143 @@ func TestVideoProviderStatusAuthenticationFailureStopsRenewal(t *testing.T) {
 			}))
 			defer server.Close()
 			config := Config{BaseURL: server.URL, APIKey: "provider-key"}
-			renew := videoTaskURLResolver(config, "/tasks/original", func(map[string]interface{}) (string, string) { return "completed", server.URL })
+			renew := videoTaskURLResolver(config, "original", "/tasks/original", func(map[string]interface{}) (string, string) { return "completed", server.URL })
 			_, _, err := RunVideoDownload(context.Background(), "original", DefaultVideoPollPolicy(), videoResultDownloader(config, server.URL+"/private-video?signature=expired", "original", renew))
 			if err == nil || reads != 1 || queries != 1 {
 				t.Fatalf("reads=%d queries=%d err=%v", reads, queries, err)
 			}
 		})
+	}
+}
+
+func TestHandwrittenVideoPollRejectsDifferentOriginalTask(t *testing.T) {
+	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
+	runners := map[string]func(context.Context, Input, VideoPollPolicy) (map[string]interface{}, error){
+		"newapi": RunVideoTaskWithPolicy,
+		"flat":   RunSeedanceVideosTask,
+		"ark":    RunSeedanceAgentPlanVideoTask,
+	}
+	for name, run := range runners {
+		for _, mismatch := range []string{"outer", "inner", "alias"} {
+			t.Run(name+"/"+mismatch, func(t *testing.T) {
+				var queries, media, creates atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Method != http.MethodGet {
+						creates.Add(1)
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					if r.URL.Path == "/wrong.mp4" || r.URL.Path == "/v1/videos/original/content" {
+						media.Add(1)
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					queries.Add(1)
+					state := map[string]interface{}{"id": "original", "status": "succeeded", "video_url": "/wrong.mp4", "content": map[string]interface{}{"video_url": "/wrong.mp4"}}
+					switch mismatch {
+					case "outer":
+						state = map[string]interface{}{"id": "different", "data": state}
+					case "inner":
+						state["id"] = "different"
+						state = map[string]interface{}{"id": "original", "data": state}
+					case "alias":
+						state["task_id"] = "different"
+					}
+					_ = json.NewEncoder(w).Encode(state)
+				}))
+				defer server.Close()
+				policy := DefaultVideoPollPolicy()
+				policy.Sleep = func(context.Context, time.Duration) error { return nil }
+				result, err := run(WithCallMeta(context.Background(), CallMeta{ProviderRequestID: "original"}), Input{Mode: "video", Config: Config{BaseURL: server.URL + "/v1", Model: "unlisted-video"}}, policy)
+				if err == nil || result != nil || queries.Load() != 1 || media.Load() != 0 || creates.Load() != 0 {
+					t.Fatalf("result=%v err=%v queries=%d media=%d creates=%d", result, err, queries.Load(), media.Load(), creates.Load())
+				}
+			})
+		}
+	}
+}
+
+func TestHandwrittenVideoRenewalRejectsDifferentOriginalTask(t *testing.T) {
+	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
+	for _, ark := range []bool{false, true} {
+		t.Run(fmt.Sprint("ark=", ark), func(t *testing.T) {
+			var queries, media, creates atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					creates.Add(1)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				if r.URL.Path == "/expired.mp4" {
+					w.WriteHeader(http.StatusForbidden)
+					return
+				}
+				if r.URL.Path == "/wrong.mp4" {
+					media.Add(1)
+					return
+				}
+				queries.Add(1)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"id": "different", "status": "succeeded", "video_url": "/wrong.mp4", "content": map[string]interface{}{"video_url": "/wrong.mp4"}})
+			}))
+			defer server.Close()
+			config := Config{BaseURL: server.URL + "/v1"}
+			renew := newAPIVideoURLResolver(config, "original")
+			if ark {
+				renew = videoTaskURLResolver(config, "original", "/contents/generations/tasks/original", func(state map[string]interface{}) (string, string) {
+					content, _ := state["content"].(map[string]interface{})
+					return stringField(state, "status"), stringField(content, "video_url")
+				})
+			}
+			_, _, err := RunVideoDownload(context.Background(), "original", DefaultVideoPollPolicy(), videoResultDownloader(config, server.URL+"/expired.mp4", "original", renew))
+			if err == nil || queries.Load() != 1 || media.Load() != 0 || creates.Load() != 0 {
+				t.Fatalf("queries=%d media=%d creates=%d err=%v", queries.Load(), media.Load(), creates.Load(), err)
+			}
+		})
+	}
+}
+
+func TestNewAPIVideoSuccessWithoutURLRenewsOriginalContent(t *testing.T) {
+	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
+	payload := unifiedVideoPayload(t)
+	for _, status := range []string{"success", "done"} {
+		for name, run := range map[string]func(context.Context, Input, VideoPollPolicy) (map[string]interface{}, error){"newapi": RunVideoTaskWithPolicy, "flat": RunSeedanceVideosTask} {
+			t.Run(status+"/"+name, func(t *testing.T) {
+				var queries, reads, creates atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Method != http.MethodGet {
+						creates.Add(1)
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					switch r.URL.Path {
+					case "/v1/videos/original":
+						queries.Add(1)
+						_ = json.NewEncoder(w).Encode(map[string]interface{}{"data": map[string]interface{}{"id": "original", "status": status}})
+					case "/v1/videos/original/content":
+						if reads.Add(1) == 1 {
+							w.WriteHeader(http.StatusServiceUnavailable)
+							return
+						}
+						w.Header().Set("Content-Type", "video/mp4")
+						_, _ = w.Write(payload)
+					default:
+						t.Errorf("wrong task route %s", r.URL.Path)
+						w.WriteHeader(http.StatusBadRequest)
+					}
+				}))
+				defer server.Close()
+				policy := DefaultVideoPollPolicy()
+				policy.Sleep = func(context.Context, time.Duration) error { return nil }
+				result, err := run(WithCallMeta(context.Background(), CallMeta{ProviderRequestID: "original"}), Input{Mode: "video", Config: Config{BaseURL: server.URL + "/v1", Model: "unlisted-video"}}, policy)
+				if err != nil {
+					t.Fatal(err)
+				}
+				unifiedVideoResult(t, result, payload)
+				if queries.Load() != 2 || reads.Load() != 2 || creates.Load() != 0 {
+					t.Fatalf("queries=%d reads=%d creates=%d", queries.Load(), reads.Load(), creates.Load())
+				}
+			})
+		}
 	}
 }
 

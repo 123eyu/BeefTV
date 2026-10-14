@@ -8,6 +8,33 @@ import (
 	"strings"
 )
 
+// ValidateVideoTaskState checks every task envelope before exposing its result.
+// Providers without a task ID in their status reply remain supported.
+func ValidateVideoTaskState(taskID string, state map[string]interface{}) (map[string]interface{}, error) {
+	for {
+		for _, field := range []string{"id", "task_id", "taskId"} {
+			id, err := firstJSONString(state, field)
+			if err != nil || (id != "" && id != strings.TrimSpace(taskID)) {
+				return nil, errors.New("上游返回的任务 ID 与原视频任务不一致")
+			}
+		}
+		nested, ok := state["data"].(map[string]interface{})
+		if !ok {
+			return state, nil
+		}
+		state = nested
+	}
+}
+
+func VideoTaskSucceeded(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "completed", "succeeded", "success", "done":
+		return true
+	default:
+		return false
+	}
+}
+
 // QueryHandwrittenVideoTask reads an existing legacy task only. The caller must
 // not route an explicitly configured but unavailable plugin through this path.
 func QueryHandwrittenVideoTask(ctx context.Context, input Input, taskID string) (map[string]interface{}, string, error) {
@@ -30,16 +57,10 @@ func QueryHandwrittenVideoTask(ctx context.Context, input Input, taskID string) 
 		if err := GetJSON(WithRequestKind(ctx, "poll"), input.Config, path, &state); err != nil {
 			return VideoResultSource{}, "", err
 		}
-		for {
-			id, err := firstJSONString(state, "id", "task_id", "taskId")
-			if err != nil || (id != "" && id != taskID) {
-				return VideoResultSource{}, "", errors.New("上游返回的任务 ID 与原视频任务不一致")
-			}
-			nested, ok := state["data"].(map[string]interface{})
-			if !ok {
-				break
-			}
-			state = nested
+		var err error
+		state, err = ValidateVideoTaskState(taskID, state)
+		if err != nil {
+			return VideoResultSource{}, "", err
 		}
 		status, rawURL := SeedancePollStatusAndURL(state)
 		status = strings.TrimSpace(status)
@@ -53,13 +74,13 @@ func QueryHandwrittenVideoTask(ctx context.Context, input Input, taskID string) 
 		if status == "failed" || status == "cancelled" || status == "expired" {
 			return VideoResultSource{}, status, errors.New(defaultString(SeedanceErrorMessage(state), "原视频任务未成功，无法取回结果"))
 		}
-		if status != "completed" && status != "succeeded" && status != "success" && status != "done" {
+		if !VideoTaskSucceeded(status) {
 			return VideoResultSource{}, status, nil
 		}
 		if rawURL == "" && !IsArkPlanVideoConfig(input.Config) {
 			rawURL = APIURL(input.Config.BaseURL, path+"/content")
 		}
-		rawURL, err := videoResultURL(status, rawURL)
+		rawURL, err = videoResultURL(status, rawURL)
 		return videoURLSource(input.Config, rawURL), status, err
 	}
 	source, status, err := query(ctx)

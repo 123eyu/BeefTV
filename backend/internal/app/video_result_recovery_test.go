@@ -204,6 +204,29 @@ func TestVideoRecoveryBeefAPIQueryUsesOnlyGet(t *testing.T) {
 	}
 }
 
+func TestVideoRecoveryBeefAPIRejectsDifferentTaskBeforeDownload(t *testing.T) {
+	allowLoopbackProviderTest(t)
+	queries, downloads, creates := 0, 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			creates++
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if r.URL.Path == "/v1/videos/original/content" {
+			downloads++
+			return
+		}
+		queries++
+		_, _ = io.WriteString(w, `{"id":"original","data":{"task_id":"different","status":"completed"}}`)
+	}))
+	defer server.Close()
+	result, _, err := queryBeefAPIVideoResult(context.Background(), canvasGenerationInput{Config: providerConfig{BaseURL: server.URL + "/v1", APIKey: "test-key"}}, "original")
+	if err == nil || result != nil || queries != 1 || downloads != 0 || creates != 0 {
+		t.Fatalf("result=%v err=%v queries=%d downloads=%d creates=%d", result, err, queries, downloads, creates)
+	}
+}
+
 func TestVideoRecoveryTaskLogsExplainFailureWithoutRawPayload(t *testing.T) {
 	svc, db := newTimelineTaskTestService(t)
 	log := model.TaskLog{ID: "log-recovery", UserID: "owner", TaskID: "task-recovery", Level: "error", Message: "任务处理失败", Payload: "视频结果下载失败：EOF https://private.example/result?token=secret-value"}

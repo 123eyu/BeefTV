@@ -180,14 +180,16 @@ func queryBeefAPIVideoResult(ctx context.Context, input canvasGenerationInput, i
 	if err := getJSON(ctx, input.Config, "/videos/"+id, &state); err != nil {
 		return nil, "", err
 	}
-	if nested, ok := state["data"].(map[string]interface{}); ok {
-		state = nested
+	var err error
+	state, err = generation.ValidateVideoTaskState(id, state)
+	if err != nil {
+		return nil, "", err
 	}
 	status, videoURL := seedancePollStatusAndURL(state)
 	if status == "failed" || status == "cancelled" || status == "expired" {
 		return nil, status, errors.New(defaultString(seedanceErrorMessage(state), "视频生成失败"))
 	}
-	if status != "completed" && status != "succeeded" {
+	if !generation.VideoTaskSucceeded(status) {
 		return nil, status, nil
 	}
 	if videoURL == "" {

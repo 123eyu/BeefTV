@@ -127,11 +127,13 @@ func RunVideoTaskWithPolicy(ctx context.Context, input Input, pollPolicy VideoPo
 		if err := GetJSON(ctx, input.Config, "/videos/"+id, &state); err != nil {
 			return VideoPollOutcome{}, err
 		}
-		if data, ok := state["data"].(map[string]interface{}); ok {
-			state = data
+		var err error
+		state, err = ValidateVideoTaskState(id, state)
+		if err != nil {
+			return VideoPollOutcome{}, err
 		}
 		status := strings.ToLower(stringField(state, "status"))
-		if status == "completed" || status == "succeeded" || status == "success" || status == "done" {
+		if VideoTaskSucceeded(status) {
 			if videoURL := NewAPIVideoResultURL(state); videoURL != "" {
 				data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, videoResultDownloader(input.Config, videoURL, id, newAPIVideoURLResolver(input.Config, id)))
 				if err != nil {
@@ -259,11 +261,13 @@ func RunSeedanceVideosTask(ctx context.Context, input Input, pollPolicy VideoPol
 		if err := GetJSON(ctx, input.Config, "/videos/"+id, &state); err != nil {
 			return VideoPollOutcome{}, err
 		}
-		if data, ok := state["data"].(map[string]interface{}); ok {
-			state = data
+		var err error
+		state, err = ValidateVideoTaskState(id, state)
+		if err != nil {
+			return VideoPollOutcome{}, err
 		}
 		status, videoURL := SeedancePollStatusAndURL(state)
-		if status == "completed" || status == "succeeded" {
+		if VideoTaskSucceeded(status) {
 			if videoURL != "" {
 				data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, videoResultDownloader(input.Config, videoURL, id, newAPIVideoURLResolver(input.Config, id)))
 				if err != nil {
@@ -524,8 +528,10 @@ func RunSeedanceAgentPlanVideoTask(ctx context.Context, input Input, pollPolicy 
 		if err := GetJSON(ctx, input.Config, "/contents/generations/tasks/"+id, &state); err != nil {
 			return VideoPollOutcome{}, err
 		}
-		if data, ok := state["data"].(map[string]interface{}); ok {
-			state = data
+		var err error
+		state, err = ValidateVideoTaskState(id, state)
+		if err != nil {
+			return VideoPollOutcome{}, err
 		}
 		status := strings.ToLower(strings.TrimSpace(stringField(state, "status")))
 		if status == "succeeded" {
@@ -534,7 +540,7 @@ func RunSeedanceAgentPlanVideoTask(ctx context.Context, input Input, pollPolicy 
 			if videoURL == "" {
 				return VideoPollOutcome{}, fmt.Errorf("%s任务成功但没有返回视频 URL", providerName)
 			}
-			renew := videoTaskURLResolver(input.Config, "/contents/generations/tasks/"+id, func(state map[string]interface{}) (string, string) {
+			renew := videoTaskURLResolver(input.Config, id, "/contents/generations/tasks/"+id, func(state map[string]interface{}) (string, string) {
 				content, _ := state["content"].(map[string]interface{})
 				return stringField(state, "status"), stringField(content, "video_url")
 			})
@@ -553,23 +559,28 @@ func RunSeedanceAgentPlanVideoTask(ctx context.Context, input Input, pollPolicy 
 }
 
 func newAPIVideoURLResolver(config Config, id string) videoResultURLResolver {
-	return videoTaskURLResolver(config, "/videos/"+id, func(state map[string]interface{}) (string, string) {
+	return videoTaskURLResolver(config, id, "/videos/"+id, func(state map[string]interface{}) (string, string) {
 		status, rawURL := SeedancePollStatusAndURL(state)
-		if rawURL == "" && (status == "completed" || status == "succeeded") {
+		if rawURL == "" {
+			rawURL = NewAPIVideoResultURL(state)
+		}
+		if rawURL == "" && VideoTaskSucceeded(status) {
 			rawURL = APIURL(config.BaseURL, "/videos/"+id+"/content")
 		}
 		return status, rawURL
 	})
 }
 
-func videoTaskURLResolver(config Config, path string, extract func(map[string]interface{}) (string, string)) videoResultURLResolver {
+func videoTaskURLResolver(config Config, taskID, path string, extract func(map[string]interface{}) (string, string)) videoResultURLResolver {
 	return func(ctx context.Context) (string, error) {
 		var state map[string]interface{}
 		if err := GetJSON(WithRequestKind(ctx, "poll"), config, path, &state); err != nil {
 			return "", err
 		}
-		if nested, ok := state["data"].(map[string]interface{}); ok {
-			state = nested
+		var err error
+		state, err = ValidateVideoTaskState(taskID, state)
+		if err != nil {
+			return "", err
 		}
 		return videoResultURL(extract(state))
 	}
