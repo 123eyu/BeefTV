@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -38,22 +39,22 @@ func recoveryTestAdapter(t *testing.T) protocol.Adapter {
 
 func TestVideoRecoveryLostReceiptNeverResubmits(t *testing.T) {
 	allowLoopbackProviderTest(t)
-	creates, polls := 0, 0
+	var creates, polls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
-			creates++
+			creates.Add(1)
 			_, _ = io.Copy(io.Discard, r.Body)
 			conn, _, _ := w.(http.Hijacker).Hijack()
 			_ = conn.Close()
 			return
 		}
-		polls++
+		polls.Add(1)
 	}))
 	defer server.Close()
 	result, err := runProtocolAdapterTaskWithPolicy(context.Background(), canvasGenerationInput{Mode: "video", Prompt: "test", Config: providerConfig{BaseURL: server.URL, Model: "seedance-2.0-mini", InterfaceType: "newapi-channel-2"}}, recoveryTestAdapter(t), fastVideoPollPolicy())
 	var unknown providerSubmissionUnknownError
-	if creates != 1 || polls != 0 || result != nil || !errors.As(err, &unknown) {
-		t.Fatalf("creates=%d polls=%d result=%v err=%v", creates, polls, result, err)
+	if creates.Load() != 1 || polls.Load() != 0 || result != nil || !errors.As(err, &unknown) {
+		t.Fatalf("creates=%d polls=%d result=%v err=%v", creates.Load(), polls.Load(), result, err)
 	}
 	if !persistedFailureBlocksRetry(persistableTaskFailureMessage(err), "submission_unknown") {
 		t.Fatal("lost receipt permits a paid retry")
@@ -77,22 +78,22 @@ func TestVideoRecoverySubmissionClassification(t *testing.T) {
 
 func TestVideoRecoverySocketResetNeverResubmits(t *testing.T) {
 	allowLoopbackProviderTest(t)
-	creates, polls, downloads := 0, 0, 0
+	var creates, polls, downloads atomic.Int32
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
-			creates++
+			creates.Add(1)
 			_, _ = io.WriteString(w, `{"code":"success","data":{"task_id":"original-paid-task","status":"IN_PROGRESS"}}`)
 			return
 		}
 		if r.URL.Path == "/result.mp4" {
-			downloads++
+			downloads.Add(1)
 			w.Header().Set("Content-Type", "video/mp4")
 			_, _ = w.Write([]byte("test-video"))
 			return
 		}
-		polls++
-		if polls == 1 {
+		n := polls.Add(1)
+		if n == 1 {
 			conn, _, err := w.(http.Hijacker).Hijack()
 			if err != nil {
 				t.Error(err)
@@ -111,8 +112,8 @@ func TestVideoRecoverySocketResetNeverResubmits(t *testing.T) {
 	defer server.Close()
 	input := canvasGenerationInput{Mode: "video", Prompt: "test", Config: providerConfig{BaseURL: server.URL, Model: "seedance-2.0-mini", InterfaceType: "newapi-channel-2"}}
 	result, err := runProtocolAdapterTaskWithPolicy(context.Background(), input, recoveryTestAdapter(t), fastVideoPollPolicy())
-	if err != nil || result == nil || creates != 1 || polls != 2 || downloads != 1 {
-		t.Fatalf("creates=%d polls=%d downloads=%d result=%v err=%v", creates, polls, downloads, result, err)
+	if err != nil || result == nil || creates.Load() != 1 || polls.Load() != 2 || downloads.Load() != 1 {
+		t.Fatalf("creates=%d polls=%d downloads=%d result=%v err=%v", creates.Load(), polls.Load(), downloads.Load(), result, err)
 	}
 }
 
@@ -120,18 +121,18 @@ func TestVideoRecoveryDownloadDisconnectKeepsOriginalTask(t *testing.T) {
 	for _, alwaysBroken := range []bool{false, true} {
 		t.Run(fmt.Sprint(alwaysBroken), func(t *testing.T) {
 			allowLoopbackProviderTest(t)
-			creates, polls, downloads := 0, 0, 0
+			var creates, polls, downloads atomic.Int32
 			var server *httptest.Server
 			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				if r.Method == http.MethodPost {
-					creates++
+					creates.Add(1)
 					_, _ = io.WriteString(w, `{"code":"success","data":{"task_id":"original-paid-task","status":"IN_PROGRESS"}}`)
 					return
 				}
 				if r.URL.Path == "/result.mp4" {
-					downloads++
-					if alwaysBroken || downloads == 1 {
+					n := downloads.Add(1)
+					if alwaysBroken || n == 1 {
 						conn, _, _ := w.(http.Hijacker).Hijack()
 						_ = conn.Close()
 						return
@@ -143,14 +144,14 @@ func TestVideoRecoveryDownloadDisconnectKeepsOriginalTask(t *testing.T) {
 				if r.URL.Path != "/v1/video/generations/original-paid-task" {
 					t.Error("download renewal changed original task identity")
 				}
-				polls++
+				polls.Add(1)
 				_, _ = fmt.Fprintf(w, `{"code":"success","data":{"task_id":"original-paid-task","status":"SUCCESS","result_url":%q}}`, server.URL+"/result.mp4")
 			}))
 			defer server.Close()
 			input := canvasGenerationInput{Mode: "video", Prompt: "test", Config: providerConfig{BaseURL: server.URL, Model: "seedance-2.0-mini", InterfaceType: "newapi-channel-2"}}
 			result, err := runProtocolAdapterTaskWithPolicy(context.Background(), input, recoveryTestAdapter(t), fastVideoPollPolicy())
-			if creates != 1 || polls < 1 || polls > 4 || downloads < 2 || (alwaysBroken && polls < 2) {
-				t.Fatalf("creates=%d polls=%d downloads=%d", creates, polls, downloads)
+			if creates.Load() != 1 || polls.Load() < 1 || polls.Load() > 4 || downloads.Load() < 2 || (alwaysBroken && polls.Load() < 2) {
+				t.Fatalf("creates=%d polls=%d downloads=%d", creates.Load(), polls.Load(), downloads.Load())
 			}
 			if !alwaysBroken {
 				if err != nil || result == nil {
@@ -178,7 +179,7 @@ func TestVideoRecoveryDownloadDisconnectKeepsOriginalTask(t *testing.T) {
 
 func TestVideoRecoveryBeefAPIQueryUsesOnlyGet(t *testing.T) {
 	allowLoopbackProviderTest(t)
-	queries, downloads := 0, 0
+	var queries, downloads atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			t.Errorf("unsafe method %s", r.Method)
@@ -189,41 +190,41 @@ func TestVideoRecoveryBeefAPIQueryUsesOnlyGet(t *testing.T) {
 			t.Error("missing query authentication")
 		}
 		if r.URL.Path == "/v1/videos/original/content" {
-			downloads++
+			downloads.Add(1)
 			w.Header().Set("Content-Type", "video/mp4")
 			_, _ = w.Write([]byte("test-video"))
 			return
 		}
-		queries++
+		queries.Add(1)
 		_, _ = io.WriteString(w, `{"data":{"id":"original","status":"completed"}}`)
 	}))
 	defer server.Close()
 	result, _, err := queryBeefAPIVideoResult(context.Background(), canvasGenerationInput{Config: providerConfig{BaseURL: server.URL + "/v1", APIKey: "test-key"}}, "original")
-	if err != nil || result == nil || queries != 1 || downloads != 1 {
-		t.Fatalf("result=%v err=%v queries=%d downloads=%d", result, err, queries, downloads)
+	if err != nil || result == nil || queries.Load() != 1 || downloads.Load() != 1 {
+		t.Fatalf("result=%v err=%v queries=%d downloads=%d", result, err, queries.Load(), downloads.Load())
 	}
 }
 
 func TestVideoRecoveryBeefAPIRejectsDifferentTaskBeforeDownload(t *testing.T) {
 	allowLoopbackProviderTest(t)
-	queries, downloads, creates := 0, 0, 0
+	var queries, downloads, creates atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			creates++
+			creates.Add(1)
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 		if r.URL.Path == "/v1/videos/original/content" {
-			downloads++
+			downloads.Add(1)
 			return
 		}
-		queries++
+		queries.Add(1)
 		_, _ = io.WriteString(w, `{"id":"original","data":{"task_id":"different","status":"completed"}}`)
 	}))
 	defer server.Close()
 	result, _, err := queryBeefAPIVideoResult(context.Background(), canvasGenerationInput{Config: providerConfig{BaseURL: server.URL + "/v1", APIKey: "test-key"}}, "original")
-	if err == nil || result != nil || queries != 1 || downloads != 0 || creates != 0 {
-		t.Fatalf("result=%v err=%v queries=%d downloads=%d creates=%d", result, err, queries, downloads, creates)
+	if err == nil || result != nil || queries.Load() != 1 || downloads.Load() != 0 || creates.Load() != 0 {
+		t.Fatalf("result=%v err=%v queries=%d downloads=%d creates=%d", result, err, queries.Load(), downloads.Load(), creates.Load())
 	}
 }
 
@@ -252,24 +253,24 @@ func TestFailedBeefAPIVideoRecoveryUsesFreshBackupAndKeepsOriginalTask(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	creates, polls, primary, backups, mediaDownloads := 0, 0, 0, 0, 0
+	var creates, polls, primary, backups, mediaDownloads atomic.Int32
 	media := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "" || r.Header.Get("X-Gateway-Secret") != "" || r.Header.Get("X-Beeftv-Video-Delivery") != "" {
 			t.Error("gateway credentials reached external media")
 		}
 		if r.URL.Path == "/tos.mp4" {
-			primary++
+			primary.Add(1)
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
-		mediaDownloads++
+		mediaDownloads.Add(1)
 		w.Header().Set("Content-Type", "application/octet-stream")
 		_, _ = w.Write(payload)
 	}))
 	defer media.Close()
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			creates++
+			creates.Add(1)
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
@@ -277,7 +278,7 @@ func TestFailedBeefAPIVideoRecoveryUsesFreshBackupAndKeepsOriginalTask(t *testin
 			t.Error("gateway request lost authentication")
 		}
 		if r.URL.Path == "/v1/videos/original" {
-			polls++
+			polls.Add(1)
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "completed", "metadata": map[string]any{"url": media.URL + "/tos.mp4?signature=expired"}})
 			return
 		}
@@ -286,8 +287,8 @@ func TestFailedBeefAPIVideoRecoveryUsesFreshBackupAndKeepsOriginalTask(t *testin
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		backups++
-		if backups == 1 {
+		n := backups.Add(1)
+		if n == 1 {
 			w.Header().Set("Retry-After", "1")
 			w.WriteHeader(http.StatusServiceUnavailable)
 			_, _ = w.Write([]byte(`{"error":{"code":"video_delivery_pending"}}`))
@@ -316,8 +317,8 @@ func TestFailedBeefAPIVideoRecoveryUsesFreshBackupAndKeepsOriginalTask(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !recovered.Recovered || recovered.Task.ID != task.ID || recovered.Task.ProviderRequestID != "original" || recovered.Task.Status != model.TaskStatusSucceeded || creates != 0 || polls != 1 || primary != 1 || backups != 2 || mediaDownloads != 1 {
-		t.Fatalf("recovered=%+v creates=%d polls=%d primary=%d backups=%d media=%d", recovered, creates, polls, primary, backups, mediaDownloads)
+	if !recovered.Recovered || recovered.Task.ID != task.ID || recovered.Task.ProviderRequestID != "original" || recovered.Task.Status != model.TaskStatusSucceeded || creates.Load() != 0 || polls.Load() != 1 || primary.Load() != 1 || backups.Load() != 2 || mediaDownloads.Load() != 1 {
+		t.Fatalf("recovered=%+v creates=%d polls=%d primary=%d backups=%d media=%d", recovered, creates.Load(), polls.Load(), primary.Load(), backups.Load(), mediaDownloads.Load())
 	}
 	var stored model.Task
 	if err := db.First(&stored, "id = ?", task.ID).Error; err != nil {
@@ -349,16 +350,16 @@ func TestFailedThirdPartyVideoRecoveryRenewsOriginalTaskAndMaterializes(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	expired := 0
+	var expired atomic.Int32
 	media := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		expired++
+		expired.Add(1)
 		if r.Header.Get("Authorization") != "" || r.Header.Get("x-goog-api-key") != "" {
 			t.Error("provider credential leaked to media")
 		}
 		w.WriteHeader(http.StatusForbidden)
 	}))
 	defer media.Close()
-	polls, downloads := 0, 0
+	var polls, downloads atomic.Int32
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.Header.Get("x-goog-api-key") != "provider-fixture" || r.Header.Get("Authorization") != "" || r.URL.Query().Get("delivery") != "" || r.Header.Get("X-Beeftv-Video-Delivery") != "" {
 			t.Error("third-party recovery changed auth or attempted generation/BeefAPI backup")
@@ -366,7 +367,7 @@ func TestFailedThirdPartyVideoRecoveryRenewsOriginalTaskAndMaterializes(t *testi
 			return
 		}
 		if r.URL.Path == "/fresh.mp4" {
-			downloads++
+			downloads.Add(1)
 			w.Header().Set("Content-Type", "application/octet-stream")
 			_, _ = w.Write(payload)
 			return
@@ -374,9 +375,9 @@ func TestFailedThirdPartyVideoRecoveryRenewsOriginalTaskAndMaterializes(t *testi
 		if r.URL.Path != "/v1beta/original" {
 			t.Errorf("wrong original task query %s", r.URL.Path)
 		}
-		polls++
+		n := polls.Add(1)
 		url := media.URL + "?signature=expired"
-		if polls > 1 {
+		if n > 1 {
 			url = "/fresh.mp4"
 		}
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"name": "original", "done": true, "response": map[string]interface{}{"generatedVideos": []interface{}{map[string]interface{}{"video": map[string]interface{}{"uri": url}}}}})
@@ -397,8 +398,8 @@ func TestFailedThirdPartyVideoRecoveryRenewsOriginalTaskAndMaterializes(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Recovered || result.Task.ID != task.ID || result.Task.ProviderRequestID != "original" || result.Task.ResultState != "READY" || len(result.Task.Outputs) != 1 || result.Task.Outputs[0].MaterializedAssetID == "" || polls != 2 || downloads != 1 || expired != 1 {
-		t.Fatalf("recovered=%v state=%s polls=%d downloads=%d expired=%d", result.Recovered, result.Task.ResultState, polls, downloads, expired)
+	if !result.Recovered || result.Task.ID != task.ID || result.Task.ProviderRequestID != "original" || result.Task.ResultState != "READY" || len(result.Task.Outputs) != 1 || result.Task.Outputs[0].MaterializedAssetID == "" || polls.Load() != 2 || downloads.Load() != 1 || expired.Load() != 1 {
+		t.Fatalf("recovered=%v state=%s polls=%d downloads=%d expired=%d", result.Recovered, result.Task.ResultState, polls.Load(), downloads.Load(), expired.Load())
 	}
 	var resource model.Resource
 	if err := db.First(&resource, "id = ?", result.Task.Outputs[0].ResourceID).Error; err != nil || resource.Kind != "video" || resource.MimeType != "video/mp4" {
@@ -416,13 +417,13 @@ func TestFailedRunningHubVideoRecoveryRenewsOriginalTaskAndMaterializes(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	polls, reads := 0, 0
+	var polls, reads atomic.Int32
 	media := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		reads++
+		n := reads.Add(1)
 		if r.Header.Get("Authorization") != "" || r.Header.Get("X-Private-Channel") != "" || r.URL.Query().Get("apiKey") != "" {
 			t.Error("workflow credentials leaked to media")
 		}
-		if reads == 1 {
+		if n == 1 {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
@@ -441,7 +442,7 @@ func TestFailedRunningHubVideoRecoveryRenewsOriginalTaskAndMaterializes(t *testi
 		if body["taskId"] != "original" || body["apiKey"] != "provider-key" {
 			t.Error("original workflow query identity/auth lost")
 		}
-		polls++
+		polls.Add(1)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"code": 0, "data": []interface{}{map[string]interface{}{"fileUrl": media.URL + "/video?apiKey=provider-key&signature=media-signature"}}})
 	}))
 	defer provider.Close()
@@ -468,8 +469,8 @@ func TestFailedRunningHubVideoRecoveryRenewsOriginalTaskAndMaterializes(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Recovered || result.Task.ID != task.ID || result.Task.ProviderRequestID != "original" || result.Task.ResultState != "READY" || len(result.Task.Outputs) != 1 || result.Task.Outputs[0].MaterializedAssetID == "" || polls != 2 || reads != 2 {
-		t.Fatalf("recovered=%v state=%s polls=%d reads=%d", result.Recovered, result.Task.ResultState, polls, reads)
+	if !result.Recovered || result.Task.ID != task.ID || result.Task.ProviderRequestID != "original" || result.Task.ResultState != "READY" || len(result.Task.Outputs) != 1 || result.Task.Outputs[0].MaterializedAssetID == "" || polls.Load() != 2 || reads.Load() != 2 {
+		t.Fatalf("recovered=%v state=%s polls=%d reads=%d", result.Recovered, result.Task.ResultState, polls.Load(), reads.Load())
 	}
 	var resource model.Resource
 	if err := db.First(&resource, "id = ?", result.Task.Outputs[0].ResourceID).Error; err != nil || resource.Kind != "video" || resource.MimeType != "video/mp4" {
@@ -504,9 +505,9 @@ func TestFailedHandwrittenVideoRecoveryQueriesOriginalTaskWithoutCreating(t *tes
 		{name: "missing custom plugin refused", model: "unlisted-future-video", interfaceType: "removed-custom-video-plugin", shape: "nested", unsupported: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			polls, creates, downloads, expiredReads := 0, 0, 0, 0
+			var polls, creates, downloads, expiredReads atomic.Int32
 			expired := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				expiredReads++
+				expiredReads.Add(1)
 				if r.Header.Get("Authorization") != "" || r.Header.Get("X-Private-Channel") != "" {
 					t.Error("provider credentials leaked to external original media")
 				}
@@ -516,7 +517,7 @@ func TestFailedHandwrittenVideoRecoveryQueriesOriginalTaskWithoutCreating(t *tes
 			var provider *httptest.Server
 			provider = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != http.MethodGet {
-					creates++
+					creates.Add(1)
 					t.Error("manual original-task retrieval attempted a write")
 					w.WriteHeader(http.StatusBadRequest)
 					return
@@ -525,7 +526,7 @@ func TestFailedHandwrittenVideoRecoveryQueriesOriginalTaskWithoutCreating(t *tes
 					t.Error("legacy original-task retrieval changed provider authentication")
 				}
 				if r.URL.Path == "/fresh.mp4" {
-					downloads++
+					downloads.Add(1)
 					w.Header().Set("Content-Type", "application/octet-stream")
 					_, _ = w.Write(payload)
 					return
@@ -539,15 +540,15 @@ func TestFailedHandwrittenVideoRecoveryQueriesOriginalTaskWithoutCreating(t *tes
 					w.WriteHeader(http.StatusNotFound)
 					return
 				}
-				polls++
+				n := polls.Add(1)
 				id, status, rawURL := "original", "succeeded", expired.URL+"/original.mp4"
-				if polls > 1 {
+				if n > 1 {
 					rawURL = provider.URL + "/fresh.mp4"
 				}
 				if tc.pending {
 					status = "processing"
 				}
-				if tc.wrongTask || (tc.wrongRenew && polls > 1) {
+				if tc.wrongTask || (tc.wrongRenew && n > 1) {
 					id = "another-task"
 				}
 				state := map[string]interface{}{"id": id, "status": status}
@@ -587,16 +588,16 @@ func TestFailedHandwrittenVideoRecoveryQueriesOriginalTaskWithoutCreating(t *tes
 			if err := db.First(&savedTask, "id = ?", task.ID).Error; err != nil {
 				t.Fatal(err)
 			}
-			if creates != 0 || savedTask.ID != task.ID || savedTask.ProviderRequestID != task.ProviderRequestID {
-				t.Fatalf("original task changed or created: creates=%d task=%s provider=%s", creates, savedTask.ID, savedTask.ProviderRequestID)
+			if creates.Load() != 0 || savedTask.ID != task.ID || savedTask.ProviderRequestID != task.ProviderRequestID {
+				t.Fatalf("original task changed or created: creates=%d task=%s provider=%s", creates.Load(), savedTask.ID, savedTask.ProviderRequestID)
 			}
 			var wrongReceiptCount int64
 			if err := db.Model(&model.ApiCallLog{}).Where("task_id = ? AND provider_request_id <> ?", task.ID, task.ProviderRequestID).Count(&wrongReceiptCount).Error; err != nil || wrongReceiptCount != 0 {
 				t.Fatalf("original request identity changed in audit receipts: count=%d err=%v", wrongReceiptCount, err)
 			}
 			if tc.unsupported || tc.wrongTask || tc.wrongRenew || tc.pending {
-				if (tc.pending && (queryErr != nil || result == nil || result.Recovered)) || (!tc.pending && queryErr == nil) || savedTask.Status != model.TaskStatusFailed || downloads != 0 || (tc.unsupported && polls != 0) {
-					t.Fatalf("rejected/pending original: result=%v err=%v status=%s polls=%d downloads=%d", result, queryErr, savedTask.Status, polls, downloads)
+				if (tc.pending && (queryErr != nil || result == nil || result.Recovered)) || (!tc.pending && queryErr == nil) || savedTask.Status != model.TaskStatusFailed || downloads.Load() != 0 || (tc.unsupported && polls.Load() != 0) {
+					t.Fatalf("rejected/pending original: result=%v err=%v status=%s polls=%d downloads=%d", result, queryErr, savedTask.Status, polls.Load(), downloads.Load())
 				}
 				var resourceCount int64
 				if err := db.Model(&model.Resource{}).Count(&resourceCount).Error; err != nil || resourceCount != 0 {
@@ -604,8 +605,8 @@ func TestFailedHandwrittenVideoRecoveryQueriesOriginalTaskWithoutCreating(t *tes
 				}
 				return
 			}
-			if queryErr != nil || result == nil || !result.Recovered || result.Task.ID != task.ID || result.Task.ResultState != "READY" || len(result.Task.Outputs) != 1 || result.Task.Outputs[0].MaterializedAssetID == "" || polls != 2 || downloads != 1 || expiredReads != 1 {
-				t.Fatalf("original recovery result=%v err=%v polls=%d downloads=%d expired=%d", result, queryErr, polls, downloads, expiredReads)
+			if queryErr != nil || result == nil || !result.Recovered || result.Task.ID != task.ID || result.Task.ResultState != "READY" || len(result.Task.Outputs) != 1 || result.Task.Outputs[0].MaterializedAssetID == "" || polls.Load() != 2 || downloads.Load() != 1 || expiredReads.Load() != 1 {
+				t.Fatalf("original recovery result=%v err=%v polls=%d downloads=%d expired=%d", result, queryErr, polls.Load(), downloads.Load(), expiredReads.Load())
 			}
 			var resource model.Resource
 			if err := db.First(&resource, "id = ?", result.Task.Outputs[0].ResourceID).Error; err != nil || resource.Kind != "video" || resource.MimeType != "video/mp4" {
@@ -623,9 +624,9 @@ func TestVideoRequestReceiptPreservesOriginalIdentityExceptCreate(t *testing.T) 
 	allowLoopbackProviderTest(t)
 	for _, kind := range []string{"create", "poll", "workflow-poll", "download"} {
 		t.Run(kind, func(t *testing.T) {
-			requests := 0
+			var requests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				requests++
+				requests.Add(1)
 				id := "wrong-response-task"
 				if kind == "create" {
 					id = "created-original-task"
@@ -662,8 +663,8 @@ func TestVideoRequestReceiptPreservesOriginalIdentityExceptCreate(t *testing.T) 
 			case "download":
 				_, _, requestErr = generation.GetProviderExternalBinary(generation.WithRequestKind(ctx, "download"), config, server.URL+"/v1/videos/original/content")
 			}
-			if requestErr != nil || requests != 1 {
-				t.Fatalf("receipt fixture requests=%d err=%v", requests, requestErr)
+			if requestErr != nil || requests.Load() != 1 {
+				t.Fatalf("receipt fixture requests=%d err=%v", requests.Load(), requestErr)
 			}
 			wantID, wantKind := "original", kind
 			if kind == "create" {
