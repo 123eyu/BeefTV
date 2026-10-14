@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { validateH3FamilyRelease } from './h3-family-release-contract.mjs';
+import { validateVideoDirectDeliveryRelease } from './video-direct-delivery-release-contract.mjs';
 import {
   REQUIRED_AGENT_CHECK_IDS,
   DETERMINISTIC_FAULT_CHECK_IDS,
@@ -28,6 +29,11 @@ const receipt = JSON.parse(readFileSync(`docs/release-evidence/${version}.json`,
 const fail = message => { throw new Error(`Real generation release gate: ${message}`); };
 const nonempty = value => typeof value === 'string' && value.trim() !== '';
 if (receipt.version !== version || receipt.sourceDigest !== sourceDigest) fail('receipt does not match this release source');
+if (version === 'v1.7.21') {
+  validateVideoDirectDeliveryRelease(receipt, sourceDigest);
+  console.log('v1.7.21 single native video delivery acceptance; one settled generation, current-source review and recovery checks; full matrix and assistant suite NOT run; four-platform package gates pending.');
+  process.exit(0);
+}
 if (version === 'v1.7.20') {
   validateH3FamilyRelease(receipt, sourceDigest);
   // Release Actions checks out a shallow squash commit, so the executed branch

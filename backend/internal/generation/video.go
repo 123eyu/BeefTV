@@ -36,6 +36,7 @@ func RunVideoTask(ctx context.Context, input Input) (map[string]interface{}, err
 }
 
 func RunVideoTaskWithPolicy(ctx context.Context, input Input, pollPolicy VideoPollPolicy) (map[string]interface{}, error) {
+	pollPolicy = videoPollPolicyForConfig(ctx, input.Config, pollPolicy)
 	// BeefAPI exposes its flat /v1/videos contract. Route it before
 	// protocol adapters so stale persisted channel metadata cannot select an
 	// incompatible legacy multipart or flat request shape.
@@ -132,18 +133,14 @@ func RunVideoTaskWithPolicy(ctx context.Context, input Input, pollPolicy VideoPo
 		status := strings.ToLower(stringField(state, "status"))
 		if status == "completed" || status == "succeeded" || status == "success" || status == "done" {
 			if videoURL := NewAPIVideoResultURL(state); videoURL != "" {
-				data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, func(ctx context.Context) ([]byte, string, error) {
-					return getVideoResultWithGatewayFallback(ctx, input.Config, videoURL, id)
-				})
+				data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, videoResultDownloader(input.Config, videoURL, id))
 				if err != nil {
 					return VideoPollOutcome{}, fmt.Errorf("视频结果下载失败（任务 %s）：%w", id, err)
 				}
 				mimeType = NormalizedMediaMIMEType(mimeType, data)
 				return VideoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video", "video": map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}}}, nil
 			}
-			data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, func(ctx context.Context) ([]byte, string, error) {
-				return getVideoResultWithGatewayFallback(ctx, input.Config, APIURL(input.Config.BaseURL, "/videos/"+id+"/content"), id)
-			})
+			data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, videoResultDownloader(input.Config, APIURL(input.Config.BaseURL, "/videos/"+id+"/content"), id))
 			if err != nil {
 				return VideoPollOutcome{}, err
 			}
@@ -213,6 +210,7 @@ func GrokVideoBody(input Input) (map[string]interface{}, error) {
 }
 
 func RunSeedanceVideosTask(ctx context.Context, input Input, pollPolicy VideoPollPolicy) (map[string]interface{}, error) {
+	pollPolicy = videoPollPolicyForConfig(ctx, input.Config, pollPolicy)
 	// 恢复任务已有 provider ID 时只能继续查询，绝不能重新 create，否则会产生第二个上游任务。
 	// create 成功后的 poll/download 任一失败都保留失败或结果未知语义，不降级成“成功但无内容”。
 	id := ResumedProviderRequestID(ctx)
@@ -267,23 +265,18 @@ func RunSeedanceVideosTask(ctx context.Context, input Input, pollPolicy VideoPol
 		status, videoURL := SeedancePollStatusAndURL(state)
 		if status == "completed" || status == "succeeded" {
 			if videoURL != "" {
-				data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, func(ctx context.Context) ([]byte, string, error) {
-					// Enterprise BeefAPI result URLs require the same channel
-					// credential as the poll request; an anonymous external fetch
-					// returns 401 even though generation itself succeeded.
-					return getVideoResultWithGatewayFallback(ctx, input.Config, videoURL, id)
-				})
+				data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, videoResultDownloader(input.Config, videoURL, id))
 				if err != nil {
 					return VideoPollOutcome{}, fmt.Errorf("视频结果下载失败：%w", err)
 				}
+				mimeType = NormalizedMediaMIMEType(mimeType, data)
 				return VideoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video", "video": map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}}}, nil
 			}
-			data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, func(ctx context.Context) ([]byte, string, error) {
-				return getVideoResultWithGatewayFallback(ctx, input.Config, APIURL(input.Config.BaseURL, "/videos/"+id+"/content"), id)
-			})
+			data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, videoResultDownloader(input.Config, APIURL(input.Config.BaseURL, "/videos/"+id+"/content"), id))
 			if err != nil {
 				return VideoPollOutcome{}, fmt.Errorf("视频任务成功但未返回视频 URL，备用内容下载失败：%w", err)
 			}
+			mimeType = NormalizedMediaMIMEType(mimeType, data)
 			return VideoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video", "video": map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}}}, nil
 		}
 		if status == "failed" || status == "cancelled" || status == "expired" {

@@ -73,6 +73,7 @@ func GetJSON(ctx context.Context, config Config, path string, target interface{}
 	}
 	req.Header.Set("Authorization", "Bearer "+config.APIKey)
 	outbound.ApplyOutboundHeaders(req, config.Headers)
+	applyBeefAPIVideoDeliveryHeader(ctx, config, req)
 	return DoJSON(req, target)
 }
 
@@ -312,6 +313,27 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 	}
 	outbound.ApplyDefaultOutboundHeaders(req)
 	client := outbound.OutboundHTTPClient(requestTimeout)
+	videoIdleTimeout, _ := req.Context().Value(videoDeliveryRequestContext{}).(time.Duration)
+	if videoIdleTimeout > 0 {
+		checkRedirect := client.CheckRedirect
+		client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+			if err := checkRedirect(next, via); err != nil {
+				return err
+			}
+			if !SameProviderOrigin(req.URL.String(), next.URL.String()) {
+				// Signed media URLs carry their own authorization. Even a
+				// same-host redirect to another port must not inherit gateway
+				// credentials or custom channel headers.
+				userAgent, accept := next.Header.Get("User-Agent"), next.Header.Get("Accept")
+				next.Header = make(http.Header)
+				next.Header.Set("User-Agent", userAgent)
+				if accept != "" {
+					next.Header.Set("Accept", accept)
+				}
+			}
+			return nil
+		}
+	}
 	if noRedirect, _ := req.Context().Value(binaryNoRedirectContext{}).(bool); noRedirect {
 		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	}
@@ -322,6 +344,21 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 		if err := admit(); err != nil {
 			return nil, "", err
 		}
+	}
+	var videoIdleTimer *time.Timer
+	if videoIdleTimeout > 0 {
+		// Start after slot admission: local queueing is not a stalled transfer.
+		parentCtx := req.Context()
+		downloadCtx, cancel := context.WithCancelCause(parentCtx)
+		videoIdleTimer = time.AfterFunc(videoIdleTimeout, func() { cancel(context.DeadlineExceeded) })
+		req = req.WithContext(downloadCtx)
+		defer func() {
+			videoIdleTimer.Stop()
+			if resultErr != nil && errors.Is(context.Cause(downloadCtx), context.DeadlineExceeded) && parentCtx.Err() == nil {
+				resultErr = context.DeadlineExceeded
+			}
+			cancel(nil)
+		}()
 	}
 	observation.Dispatched = true
 	resp, err := client.Do(req)
@@ -354,6 +391,9 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 		readCount, readErr := reader.Read(chunk)
 		observation.ReceivedBytes += int64(readCount)
 		if readCount > 0 {
+			if videoIdleTimer != nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				videoIdleTimer.Reset(videoIdleTimeout)
+			}
 			if int64(buffered.Len()+readCount) > responseLimit {
 				observation.Outcome = "response_limit"
 				return nil, "", fmt.Errorf("上游响应超过 %s 限制", formatStorageLimit(responseLimit))
@@ -387,6 +427,9 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 			IdempotencyReplayed: strings.EqualFold(resp.Header.Get("Idempotency-Replayed"), "true"),
 		}
 		observation.StatusCode = resp.StatusCode
+		if videoIdleTimeout > 0 && !SameProviderOrigin(req.URL.String(), resp.Request.URL.String()) && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
+			return nil, "", videoBackupLinkExpiredError{cause: httpErr}
+		}
 		return nil, "", httpErr
 	}
 	observation.StatusCode = resp.StatusCode

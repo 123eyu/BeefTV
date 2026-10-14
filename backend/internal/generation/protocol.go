@@ -59,6 +59,9 @@ func DeclarativeProtocolPollPolicy(mode string) VideoPollPolicy {
 }
 
 func RunProtocolAdapterTaskWithPolicy(ctx context.Context, input Input, adapter protocol.Adapter, policy VideoPollPolicy) (map[string]interface{}, error) {
+	if input.Mode == "video" {
+		policy = videoPollPolicyForConfig(ctx, input.Config, policy)
+	}
 	// create、poll、download 是同一个外部任务的三个阶段：任一阶段失败都向上返回真实错误，
 	// 不把“已提交但结果未知”伪装成成功，也不把下载失败降级成空结果。
 	request := ProtocolRequestFromInput(input)
@@ -465,6 +468,7 @@ func ExecuteProtocolBinaryRequestWithConsumer(ctx context.Context, config Config
 	if err := ApplyProtocolAuth(req, config, spec.Auth); err != nil {
 		return nil, "", err
 	}
+	applyBeefAPIVideoDeliveryHeader(ctx, config, req)
 	if consume != nil {
 		req.Header.Set("Accept", "text/event-stream")
 		return DoBinaryWithConsumer(req, consume)
@@ -877,6 +881,9 @@ func AppendProtocolQuery(rawURL string, values map[string][]string) (string, err
 }
 
 func FinishProtocolResult(ctx context.Context, config Config, mode string, taskID string, result *protocol.Result, pollPolicy VideoPollPolicy) (map[string]interface{}, error) {
+	if mode == "video" {
+		pollPolicy = videoPollPolicyForConfig(ctx, config, pollPolicy)
+	}
 	if result == nil {
 		return nil, errors.New("声明式协议已完成但没有返回结果")
 	}
@@ -907,15 +914,20 @@ func FinishProtocolResult(ctx context.Context, config Config, mode string, taskI
 		var mimeType string
 		var err error
 		if mode == "video" {
-			data, mimeType, err = RunVideoDownload(ctx, taskID, pollPolicy, func(ctx context.Context) ([]byte, string, error) {
+			download := func(ctx context.Context) ([]byte, string, error) {
 				return ProtocolMediaBytesOnce(ctx, config, reference)
-			})
+			}
+			if strings.TrimSpace(reference.DataURL) == "" && strings.TrimSpace(reference.URL) != "" {
+				download = videoResultDownloader(config, reference.URL, taskID)
+			}
+			data, mimeType, err = RunVideoDownload(ctx, taskID, pollPolicy, download)
 		} else {
 			data, mimeType, err = ProtocolMediaBytes(ctx, config, reference)
 		}
 		if err != nil {
 			return nil, err
 		}
+		mimeType = NormalizedMediaMIMEType(mimeType, data)
 		item := map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}
 		items = append(items, item)
 	}
@@ -933,6 +945,9 @@ func FinishProtocolResult(ctx context.Context, config Config, mode string, taskI
 // 空响应或下载失败必须向上失败，不能生成伪素材；application/octet-stream 仅表示传输层未知类型，
 // 不会把未知内容伪装成具体图片、视频或音频 MIME。
 func FinishProtocolAdapterResult(ctx context.Context, input Input, adapter protocol.Adapter, request protocol.GenerationRequest, taskID string, result *protocol.Result, pollPolicy VideoPollPolicy) (map[string]interface{}, error) {
+	if input.Mode == "video" {
+		pollPolicy = videoPollPolicyForConfig(ctx, input.Config, pollPolicy)
+	}
 	if ProtocolResultHasOutput(input.Mode, result) {
 		return FinishProtocolResult(ctx, input.Config, input.Mode, taskID, result, pollPolicy)
 	}
@@ -947,6 +962,13 @@ func FinishProtocolAdapterResult(ctx context.Context, input Input, adapter proto
 	}
 	download := func(ctx context.Context) ([]byte, string, error) {
 		return ExecuteProtocolBinaryRequest(WithRequestKind(ctx, "download"), input.Config, spec)
+	}
+	if input.Mode == "video" && IsBeefAPIVideoConfig(ctx, input.Config) && strings.EqualFold(spec.Method, http.MethodGet) {
+		resultURL, urlErr := ProtocolRequestURL(input.Config.BaseURL, spec)
+		if urlErr != nil {
+			return nil, urlErr
+		}
+		download = videoResultDownloader(input.Config, resultURL, taskID)
 	}
 	var data []byte
 	var mimeType string

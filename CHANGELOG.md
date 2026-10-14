@@ -9,6 +9,11 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.7.21
+
+- 视频生成完成后优先下载上游结果，减少取回等待；下载失败时自动取回同一视频的备用文件，不重新生成。
+- 下载中断或长时间没有进展时及时切换备用地址；取消取回会停止当前下载。
+
 ## v1.7.20
 
 - 新增 MiniMax H3 和 H3 Max，与 H3 Max Turbo 一起提供人民币报价。
