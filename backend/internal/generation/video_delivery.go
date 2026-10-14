@@ -37,7 +37,6 @@ func applyBeefAPIVideoDeliveryHeader(ctx context.Context, config Config, req *ht
 
 type videoDeliveryRequestContext struct{}
 type videoProtocolAuthContext struct{}
-type videoCredentialQueryContext struct{}
 type videoCredentialContext struct{}
 
 type videoProviderCredentials struct {
@@ -79,32 +78,68 @@ func withVideoCredentials(ctx context.Context, config Config, extra []string) co
 }
 
 func stripVideoCredentialQuery(target *url.URL, values []string) {
-	query := target.Query()
+	pairs := strings.Split(target.RawQuery, "&")
+	keep := make([]string, 0, len(pairs))
 	changed := false
-	for name, items := range query {
-		keep := make([]string, 0, len(items))
-		for _, item := range items {
-			secret := false
+	for _, pair := range pairs {
+		_, encoded, _ := strings.Cut(pair, "=")
+		decoded, err := url.QueryUnescape(encoded)
+		secret := false
+		if err == nil {
 			for _, value := range values {
-				if value != "" && item == value {
+				if value != "" && decoded == value {
 					secret = true
 					break
 				}
 			}
-			if secret {
-				changed = true
-			} else {
-				keep = append(keep, item)
-			}
 		}
-		if len(keep) == 0 {
-			delete(query, name)
+		if secret {
+			changed = true
 		} else {
-			query[name] = keep
+			keep = append(keep, pair)
 		}
 	}
 	if changed {
-		target.RawQuery = query.Encode()
+		// Signatures may cover the original spelling and ordering of query
+		// pairs. Remove only credential pairs; never re-encode the survivors.
+		target.RawQuery = strings.Join(keep, "&")
+	}
+}
+
+func setVideoCredentialQuery(target *url.URL, name, value string) {
+	pairs := strings.Split(target.RawQuery, "&")
+	if target.RawQuery == "" {
+		pairs = nil
+	}
+	keep := make([]string, 0, len(pairs)+1)
+	found, changed := false, false
+	encoded := url.QueryEscape(name) + "=" + url.QueryEscape(value)
+	for _, pair := range pairs {
+		key, rawValue, _ := strings.Cut(pair, "=")
+		decodedKey, keyErr := url.QueryUnescape(key)
+		if keyErr != nil || decodedKey != name {
+			keep = append(keep, pair)
+			continue
+		}
+		if found {
+			changed = true
+			continue
+		}
+		found = true
+		decodedValue, valueErr := url.QueryUnescape(rawValue)
+		if valueErr == nil && decodedValue == value {
+			keep = append(keep, pair)
+		} else {
+			keep = append(keep, encoded)
+			changed = true
+		}
+	}
+	if !found {
+		keep = append(keep, encoded)
+		changed = true
+	}
+	if changed {
+		target.RawQuery = strings.Join(keep, "&")
 	}
 }
 
@@ -164,7 +199,7 @@ func VideoResultDownloader(config Config, taskID string, primary VideoResultSour
 		}
 		ctx = withVideoCredentials(ctx, config, append(append([]string{}, primary.CredentialValues...), fresh.CredentialValues...))
 		data, mimeType, err := fresh.Read(context.WithValue(ctx, videoDeliveryRequestContext{}, videoDeliveryIdleTimeout))
-		if videoExternalLinkExpired(config, fresh.URL, err) {
+		if videoMediaLinkRejected(ctx, config, fresh.URL, err) {
 			err = videoBackupLinkExpiredError{cause: err}
 		}
 		return data, mimeType, err
@@ -183,7 +218,7 @@ func VideoResultDownloader(config Config, taskID string, primary VideoResultSour
 			return nil, "", ctx.Err()
 		}
 		retry, _ := RetryableVideoPollError(ctx, err)
-		if !retry && !videoExternalLinkExpired(config, primary.URL, err) {
+		if !retry && !videoMediaLinkRejected(ctx, config, primary.URL, err) {
 			return nil, "", err
 		}
 		if strings.TrimSpace(taskID) == "" || (!IsBeefAPIVideoConfig(ctx, config) && renew == nil) {
@@ -194,9 +229,14 @@ func VideoResultDownloader(config Config, taskID string, primary VideoResultSour
 	}
 }
 
-func videoExternalLinkExpired(config Config, rawURL string, err error) bool {
+func videoMediaLinkRejected(ctx context.Context, config Config, rawURL string, err error) bool {
 	var httpErr HTTPError
-	return !SameProviderOrigin(config.BaseURL, ProviderDownloadURL(config.BaseURL, rawURL)) && errors.As(err, &httpErr) && (httpErr.StatusCode == http.StatusUnauthorized || httpErr.StatusCode == http.StatusForbidden)
+	if !errors.As(err, &httpErr) || (httpErr.StatusCode != http.StatusUnauthorized && httpErr.StatusCode != http.StatusForbidden) {
+		return false
+	}
+	// A third-party media link may expire on its own provider origin. The
+	// original task query verifies provider auth; rejection there still stops.
+	return !SameProviderOrigin(config.BaseURL, ProviderDownloadURL(config.BaseURL, rawURL)) || !IsBeefAPIVideoConfig(ctx, config)
 }
 
 func videoResultURL(status, rawURL string) (string, error) {

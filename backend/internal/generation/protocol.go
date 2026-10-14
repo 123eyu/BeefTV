@@ -654,12 +654,13 @@ func ApplyProtocolAuth(req *http.Request, config Config, auth protocol.ManifestA
 		if name == "" {
 			return errors.New("插件 query 鉴权缺少参数名")
 		}
+		if idle, _ := req.Context().Value(videoDeliveryRequestContext{}).(time.Duration); idle > 0 {
+			setVideoCredentialQuery(req.URL, name, auth.Prefix+credential)
+			return nil
+		}
 		query := req.URL.Query()
 		query.Set(name, auth.Prefix+credential)
 		req.URL.RawQuery = query.Encode()
-		if idle, _ := req.Context().Value(videoDeliveryRequestContext{}).(time.Duration); idle > 0 {
-			*req = *req.WithContext(context.WithValue(req.Context(), videoCredentialQueryContext{}, map[string]string{name: auth.Prefix + credential}))
-		}
 		return nil
 	case "basic":
 		username := auth.Username
@@ -968,7 +969,11 @@ func FinishProtocolAdapterResult(ctx context.Context, input Input, adapter proto
 		}
 	}
 	renew := func(ctx context.Context, index int) (VideoResultSource, error) {
-		return queryProtocolVideoSource(ctx, input, adapter, request, taskID, index)
+		referenceID := ""
+		if result != nil && index < len(result.Videos) {
+			referenceID = strings.TrimSpace(result.Videos[index].ID)
+		}
+		return queryProtocolVideoSource(ctx, input, adapter, request, taskID, index, referenceID)
 	}
 	if ProtocolResultHasOutput(input.Mode, result) {
 		return finishProtocolResult(ctx, input.Config, input.Mode, taskID, result, pollPolicy, renew)
@@ -1034,7 +1039,7 @@ func protocolVideoRequestSource(config Config, spec protocol.RequestSpec) (Video
 	}}, nil
 }
 
-func queryProtocolVideoSource(ctx context.Context, input Input, adapter protocol.Adapter, request protocol.GenerationRequest, taskID string, index int) (VideoResultSource, error) {
+func queryProtocolVideoSource(ctx context.Context, input Input, adapter protocol.Adapter, request protocol.GenerationRequest, taskID string, index int, referenceID string) (VideoResultSource, error) {
 	pollContext := protocol.PollContext{BaseURL: input.Config.BaseURL, Model: request.Model, Request: request, TaskID: taskID}
 	spec, err := adapter.BuildPoll(ctx, pollContext)
 	if err != nil {
@@ -1048,6 +1053,9 @@ func queryProtocolVideoSource(ctx context.Context, input Input, adapter protocol
 	if err != nil {
 		return VideoResultSource{}, err
 	}
+	if returnedID := strings.TrimSpace(state.TaskID); returnedID != "" && returnedID != strings.TrimSpace(taskID) {
+		return VideoResultSource{}, errors.New("查询结果与原视频任务不一致，已停止取回")
+	}
 	if state.Status == protocol.StatusFailed || state.Status == protocol.StatusCancelled {
 		return VideoResultSource{}, ProtocolResultError(state.Message, taskID, body)
 	}
@@ -1055,10 +1063,28 @@ func queryProtocolVideoSource(ctx context.Context, input Input, adapter protocol
 		_, err := videoResultURL(string(state.Status), "")
 		return VideoResultSource{}, err
 	}
-	if state.Result != nil && index < len(state.Result.Videos) {
-		reference := state.Result.Videos[index]
+	var reference protocol.MediaReference
+	found := false
+	if state.Result != nil {
+		if referenceID != "" {
+			for _, candidate := range state.Result.Videos {
+				if strings.TrimSpace(candidate.ID) == referenceID {
+					if found {
+						return VideoResultSource{}, errors.New("原视频任务返回重复的产物 ID，已停止取回")
+					}
+					reference, found = candidate, true
+				}
+			}
+		} else if index >= 0 && index < len(state.Result.Videos) {
+			reference, found = state.Result.Videos[index], true
+		}
+	}
+	if found {
 		rawURL, err := videoResultURL("succeeded", defaultString(reference.DataURL, reference.URL))
 		return videoURLSource(input.Config, rawURL), err
+	}
+	if referenceID != "" || index != 0 {
+		return VideoResultSource{}, errors.New("原视频任务没有返回对应视频产物，已停止取回")
 	}
 	resultAdapter, ok := adapter.(protocol.ResultAdapter)
 	capability, capable := adapter.(protocol.ResultCapability)

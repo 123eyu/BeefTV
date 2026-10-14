@@ -96,7 +96,9 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	adapter, declarative := declarativeProtocolAdapterForContext(ctx, config.InterfaceType)
 	beefVideo := isBeefAPIVideoConfig(ctx, config)
 	workflowVideo := workflow.IsProviderInterface(config.InterfaceType)
-	if !declarative && !beefVideo && !workflowVideo {
+	_, officialVideo := generation.OfficialDeclarativeVideoInterface(config.InterfaceType)
+	legacyVideo := !officialVideo && (strings.TrimSpace(config.InterfaceType) == "" || isArkPlanVideoConfig(config))
+	if !declarative && !beefVideo && !workflowVideo && !legacyVideo {
 		return nil, BadAuthRequest("该任务的请求协议不支持安全查询上游状态")
 	}
 	input.Config = config
@@ -132,6 +134,8 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 		result, providerStatus, err = queryBeefAPIVideoResult(queryCtx, input, providerRequestID)
 	} else if workflowVideo {
 		result, providerStatus, err = s.workflowClient(nil).QueryVideo(queryCtx, workflowConfigFromProvider(config), workflow.RootURL(config.BaseURL), providerRequestID)
+	} else if !declarative && legacyVideo {
+		result, providerStatus, err = generation.QueryHandwrittenVideoTask(queryCtx, input, providerRequestID)
 	} else {
 		result, providerStatus, err = queryProtocolAdapterVideoTask(queryCtx, input, adapter, providerRequestID)
 	}

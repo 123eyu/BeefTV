@@ -342,15 +342,6 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 				next.Header = make(http.Header)
 				outbound.ApplyDefaultOutboundHeaders(next)
 				stripVideoCredentialQuery(next.URL, credentials.Values)
-				if credentials, ok := req.Context().Value(videoCredentialQueryContext{}).(map[string]string); ok {
-					query := next.URL.Query()
-					for key, value := range credentials {
-						if query.Get(key) == value {
-							query.Del(key)
-						}
-					}
-					next.URL.RawQuery = query.Encode()
-				}
 			}
 			return nil
 		}

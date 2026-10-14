@@ -20,6 +20,7 @@ import (
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/outbound"
 	"infinite-canvas/backend/internal/protocol"
+	"infinite-canvas/backend/internal/provider/workflow"
 )
 
 func recoveryTestAdapter(t *testing.T) protocol.Adapter {
@@ -454,5 +455,207 @@ func TestFailedRunningHubVideoRecoveryRenewsOriginalTaskAndMaterializes(t *testi
 	data, err := os.ReadFile(filepath.Join(svc.dataDir, "resources", filepath.FromSlash(resource.ObjectKey)))
 	if err != nil || !bytes.Equal(data, payload) {
 		t.Fatalf("saved video differs: bytes=%d err=%v", len(data), err)
+	}
+}
+
+func TestFailedHandwrittenVideoRecoveryQueriesOriginalTaskWithoutCreating(t *testing.T) {
+	allowLoopbackProviderTest(t)
+	payload, err := os.ReadFile("testdata/reference-fragmented-30fps.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, model, interfaceType, shape           string
+		pending, wrongTask, wrongRenew, unsupported bool
+	}{
+		{name: "empty interface generic nested result", model: "unlisted-future-video", shape: "nested"},
+		{name: "empty interface Seedance metadata", model: "seedance-2.0-mini", shape: "metadata"},
+		{name: "empty interface Grok nested result", model: "grok-imagine-video", shape: "nested"},
+		{name: "empty interface Ark Plan", model: "unlisted-future-video", shape: "ark"},
+		{name: "legacy Ark Plan interface", model: "unlisted-future-video", interfaceType: "legacy-agent-plan", shape: "ark"},
+		{name: "pending original remains failed locally", model: "unlisted-future-video", shape: "nested", pending: true},
+		{name: "wrong initial task refused", model: "unlisted-future-video", shape: "nested", wrongTask: true},
+		{name: "wrong task after URL expiry refused", model: "unlisted-future-video", shape: "nested", wrongRenew: true},
+		{name: "missing explicit official Ark plugin refused", model: "unlisted-future-video", interfaceType: "volcengine-ark-agent-plan-video", shape: "ark", unsupported: true},
+		{name: "missing explicit official video plugin refused", model: "unlisted-future-video", interfaceType: "minimax-video", shape: "nested", unsupported: true},
+		{name: "missing custom plugin refused", model: "unlisted-future-video", interfaceType: "removed-custom-video-plugin", shape: "nested", unsupported: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			polls, creates, downloads, expiredReads := 0, 0, 0, 0
+			expired := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				expiredReads++
+				if r.Header.Get("Authorization") != "" || r.Header.Get("X-Private-Channel") != "" {
+					t.Error("provider credentials leaked to external original media")
+				}
+				w.WriteHeader(http.StatusForbidden)
+			}))
+			defer expired.Close()
+			var provider *httptest.Server
+			provider = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					creates++
+					t.Error("manual original-task retrieval attempted a write")
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				if r.Header.Get("Authorization") != "Bearer provider-fixture" || r.Header.Get("X-Private-Channel") != "private-fixture" || r.URL.Query().Get("delivery") != "" || r.Header.Get("X-Beeftv-Video-Delivery") != "" {
+					t.Error("legacy original-task retrieval changed provider authentication")
+				}
+				if r.URL.Path == "/fresh.mp4" {
+					downloads++
+					w.Header().Set("Content-Type", "application/octet-stream")
+					_, _ = w.Write(payload)
+					return
+				}
+				wantPath := "/v1/videos/original"
+				if tc.shape == "ark" {
+					wantPath = "/api/plan/v3/contents/generations/tasks/original"
+				}
+				if r.URL.Path != wantPath {
+					t.Errorf("unexpected original task path %s", r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				polls++
+				id, status, rawURL := "original", "succeeded", expired.URL+"/original.mp4"
+				if polls > 1 {
+					rawURL = provider.URL + "/fresh.mp4"
+				}
+				if tc.pending {
+					status = "processing"
+				}
+				if tc.wrongTask || (tc.wrongRenew && polls > 1) {
+					id = "another-task"
+				}
+				state := map[string]interface{}{"id": id, "status": status}
+				switch tc.shape {
+				case "ark":
+					state["content"] = map[string]interface{}{"video_url": rawURL}
+				case "metadata":
+					state["status"] = "processing"
+					state["metadata"] = map[string]interface{}{"generation_status": status, "url": rawURL}
+				default:
+					state["result"] = map[string]interface{}{"video": map[string]interface{}{"url": rawURL}}
+					state = map[string]interface{}{"data": state}
+				}
+				_ = json.NewEncoder(w).Encode(state)
+			}))
+			defer provider.Close()
+			svc, db := openDBRuntimeMatrix(t, t.TempDir())
+			defer closeDBRuntimeMatrix(t, svc, db)
+			if tc.unsupported {
+				svc.pluginRuntime = pluginRuntimeFromRecords(map[string]pluginRecord{})
+			}
+			baseURL := provider.URL
+			if tc.shape == "ark" {
+				baseURL += "/api/plan/v3"
+			}
+			inputJSON, err := json.Marshal(canvasGenerationInput{Mode: "video", Config: providerConfig{BaseURL: baseURL, APIKey: "provider-fixture", APIFormat: "openai", InterfaceType: tc.interfaceType, Model: tc.model, Headers: []outbound.OutboundHeader{{Name: "X-Private-Channel", Value: "private-fixture"}}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now()
+			task := model.Task{ID: "failed-handwritten-original", UserID: "local", Type: "canvas_video", Status: model.TaskStatusFailed, ProviderRequestID: "original", InputJSON: string(inputJSON), CreatedAt: now, UpdatedAt: now}
+			if err := db.Create(&task).Error; err != nil {
+				t.Fatal(err)
+			}
+			result, queryErr := svc.QueryFailedVideoTask(context.Background(), task.UserID, task.ID)
+			var savedTask model.Task
+			if err := db.First(&savedTask, "id = ?", task.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if creates != 0 || savedTask.ID != task.ID || savedTask.ProviderRequestID != task.ProviderRequestID {
+				t.Fatalf("original task changed or created: creates=%d task=%s provider=%s", creates, savedTask.ID, savedTask.ProviderRequestID)
+			}
+			var wrongReceiptCount int64
+			if err := db.Model(&model.ApiCallLog{}).Where("task_id = ? AND provider_request_id <> ?", task.ID, task.ProviderRequestID).Count(&wrongReceiptCount).Error; err != nil || wrongReceiptCount != 0 {
+				t.Fatalf("original request identity changed in audit receipts: count=%d err=%v", wrongReceiptCount, err)
+			}
+			if tc.unsupported || tc.wrongTask || tc.wrongRenew || tc.pending {
+				if (tc.pending && (queryErr != nil || result == nil || result.Recovered)) || (!tc.pending && queryErr == nil) || savedTask.Status != model.TaskStatusFailed || downloads != 0 || (tc.unsupported && polls != 0) {
+					t.Fatalf("rejected/pending original: result=%v err=%v status=%s polls=%d downloads=%d", result, queryErr, savedTask.Status, polls, downloads)
+				}
+				var resourceCount int64
+				if err := db.Model(&model.Resource{}).Count(&resourceCount).Error; err != nil || resourceCount != 0 {
+					t.Fatalf("unconfirmed original materialized: resources=%d err=%v", resourceCount, err)
+				}
+				return
+			}
+			if queryErr != nil || result == nil || !result.Recovered || result.Task.ID != task.ID || result.Task.ResultState != "READY" || len(result.Task.Outputs) != 1 || result.Task.Outputs[0].MaterializedAssetID == "" || polls != 2 || downloads != 1 || expiredReads != 1 {
+				t.Fatalf("original recovery result=%v err=%v polls=%d downloads=%d expired=%d", result, queryErr, polls, downloads, expiredReads)
+			}
+			var resource model.Resource
+			if err := db.First(&resource, "id = ?", result.Task.Outputs[0].ResourceID).Error; err != nil || resource.Kind != "video" || resource.MimeType != "video/mp4" {
+				t.Fatalf("saved video kind=%s mime=%s err=%v", resource.Kind, resource.MimeType, err)
+			}
+			data, err := os.ReadFile(filepath.Join(svc.dataDir, "resources", filepath.FromSlash(resource.ObjectKey)))
+			if err != nil || !bytes.Equal(data, payload) {
+				t.Fatalf("saved original bytes changed: bytes=%d err=%v", len(data), err)
+			}
+		})
+	}
+}
+
+func TestVideoRequestReceiptPreservesOriginalIdentityExceptCreate(t *testing.T) {
+	allowLoopbackProviderTest(t)
+	for _, kind := range []string{"create", "poll", "workflow-poll", "download"} {
+		t.Run(kind, func(t *testing.T) {
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				id := "wrong-response-task"
+				if kind == "create" {
+					id = "created-original-task"
+					if r.Method != http.MethodPost || r.URL.Path != "/v1/videos" {
+						t.Error("fixture did not exercise create")
+					}
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "status": "completed"})
+			}))
+			defer server.Close()
+			svc, db := openDBRuntimeMatrix(t, t.TempDir())
+			defer closeDBRuntimeMatrix(t, svc, db)
+			providerID := "original"
+			if kind == "create" {
+				providerID = ""
+			}
+			now := time.Now()
+			task := model.Task{ID: "receipt-video-task", UserID: "local", Type: "canvas_video", Status: model.TaskStatusFailed, ProviderRequestID: providerID, CreatedAt: now, UpdatedAt: now}
+			if err := db.Create(&task).Error; err != nil {
+				t.Fatal(err)
+			}
+			ctx := withProviderAnalytics(context.Background(), svc, task)
+			config := providerConfig{BaseURL: server.URL, APIKey: "provider-fixture"}
+			var requestErr error
+			var state map[string]interface{}
+			switch kind {
+			case "create":
+				requestErr = generation.PostJSON(ctx, config, "/videos", map[string]interface{}{"model": "fixture"}, &state)
+			case "poll":
+				_, requestErr = generation.ExecuteProtocolRequest(generation.WithRequestKind(ctx, "poll"), config, protocol.RequestSpec{Method: http.MethodGet, Path: "/v1/videos/original"})
+			case "workflow-poll":
+				_, _, requestErr = (workflowRequestExecutor{}).Execute(withProviderRequestKind(ctx, "poll"), workflow.Request{Kind: "poll", Method: http.MethodPost, URL: server.URL + "/task/openapi/outputs", ContentType: "application/json", Body: []byte(`{"taskId":"original"}`)})
+			case "download":
+				_, _, requestErr = generation.GetProviderExternalBinary(generation.WithRequestKind(ctx, "download"), config, server.URL+"/v1/videos/original/content")
+			}
+			if requestErr != nil || requests != 1 {
+				t.Fatalf("receipt fixture requests=%d err=%v", requests, requestErr)
+			}
+			wantID, wantKind := "original", kind
+			if kind == "create" {
+				wantID = "created-original-task"
+			} else if kind == "workflow-poll" {
+				wantKind = "poll"
+			}
+			var savedTask model.Task
+			if err := db.First(&savedTask, "id = ?", task.ID).Error; err != nil || savedTask.ProviderRequestID != wantID {
+				t.Fatalf("persisted task identity=%s want=%s err=%v", savedTask.ProviderRequestID, wantID, err)
+			}
+			var logs []model.ApiCallLog
+			if err := db.Where("task_id = ?", task.ID).Find(&logs).Error; err != nil || len(logs) != 1 || logs[0].ProviderRequestID != wantID || logs[0].RequestKind != wantKind {
+				t.Fatalf("receipt identity differs: logs=%v want=%s kind=%s err=%v", logs, wantID, wantKind, err)
+			}
+		})
 	}
 }

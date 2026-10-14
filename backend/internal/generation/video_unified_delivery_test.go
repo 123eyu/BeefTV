@@ -310,13 +310,17 @@ func TestThirdPartyVideoCancellationDoesNotRenew(t *testing.T) {
 	}
 }
 
-func TestVideoProviderAuthenticationFailureDoesNotRenew(t *testing.T) {
+func TestVideoProviderStatusAuthenticationFailureStopsRenewal(t *testing.T) {
 	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
 	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
-			reads, renewals := 0, 0
+			reads, queries := 0, 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				reads++
+				if r.URL.Path == "/v1/tasks/original" {
+					queries++
+				} else {
+					reads++
+				}
 				if r.Header.Get("Authorization") != "Bearer provider-key" {
 					t.Error("same-origin credential missing")
 				}
@@ -324,9 +328,10 @@ func TestVideoProviderAuthenticationFailureDoesNotRenew(t *testing.T) {
 			}))
 			defer server.Close()
 			config := Config{BaseURL: server.URL, APIKey: "provider-key"}
-			_, _, err := RunVideoDownload(context.Background(), "original", DefaultVideoPollPolicy(), videoResultDownloader(config, server.URL+"/private-video", "original", func(context.Context) (string, error) { renewals++; return server.URL, nil }))
-			if err == nil || reads != 1 || renewals != 0 {
-				t.Fatalf("reads=%d renewals=%d err=%v", reads, renewals, err)
+			renew := videoTaskURLResolver(config, "/tasks/original", func(map[string]interface{}) (string, string) { return "completed", server.URL })
+			_, _, err := RunVideoDownload(context.Background(), "original", DefaultVideoPollPolicy(), videoResultDownloader(config, server.URL+"/private-video?signature=expired", "original", renew))
+			if err == nil || reads != 1 || queries != 1 {
+				t.Fatalf("reads=%d queries=%d err=%v", reads, queries, err)
 			}
 		})
 	}
