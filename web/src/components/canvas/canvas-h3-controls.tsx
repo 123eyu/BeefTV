@@ -4,7 +4,7 @@ import type { CanvasNodeMetadata } from "@/types/canvas";
 
 export function CanvasH3UnsupportedFrames({ model, metadata, onChange }: { model: string; metadata?: CanvasNodeMetadata; onChange: (patch: Partial<CanvasNodeMetadata>) => void }) {
     const endUnsupported = isH3Style(model) && metadata?.videoEndFrameNodeId;
-    const middleUnsupported = model.split("::").at(-1) !== "minimax-h3-max" && (metadata?.videoMiddleFrameNodeId || metadata?.videoMiddleFrameTime !== undefined);
+    const middleUnsupported = Boolean(metadata?.videoMiddleFrameNodeId || metadata?.videoMiddleFrameTime !== undefined);
     if (!endUnsupported && !middleUnsupported) return null;
     return <div className="mt-2 flex flex-col gap-2 rounded-lg border border-[var(--color-border)] px-3 py-2 text-[var(--fs-label)]"><span>当前模型不支持此前选择的尾帧或中间帧。</span><Button size="small" onClick={() => onChange({ ...(endUnsupported ? { videoEndFrameNodeId: undefined } : {}), videoMiddleFrameNodeId: undefined, videoMiddleFrameTime: undefined })}>清除不支持的帧设置</Button></div>;
 }

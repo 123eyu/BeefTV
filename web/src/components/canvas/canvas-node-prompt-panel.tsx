@@ -148,7 +148,6 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
             <CanvasVideoPromptTools
                 metadata={node.metadata}
                 frameOptions={videoFrameOptions}
-                middleFrameSupported={modelOptionName(config.model) === "minimax-h3-max"}
                 endFrameSupported={!isH3Style(config.model)}
                 referenceLabel={h3Model ? "参考生成" : undefined}
                 referenceMode={modelOptionName(config.model) === "minimax-h3" && h3VideoOperation(config.model, requirements.input!, node.metadata?.videoEditOperation) === "reference_to_video" ? "all" : "frames"}

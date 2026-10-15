@@ -188,7 +188,6 @@ export function CanvasConfigComposer({ value, inputs, skillReferences = [], gene
                 <div className="mb-3 rounded-lg px-2 py-2" style={{ background: theme.node.fill }}>
                     <CanvasVideoPromptTools
                         metadata={metadata}
-                        middleFrameSupported={model.split("::").at(-1)==="minimax-h3-max"}
                         endFrameSupported={!isH3Style(model)}
                         referenceLabel={workflowVideoReferenceMode?"工作流参考":"参考生成"}
                         frameOptions={videoFrameOptions}
