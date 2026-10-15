@@ -39,6 +39,7 @@ const (
 	CategoryConcurrency         FailureCategory = "concurrency"
 	CategoryProviderUnavailable FailureCategory = "provider_unavailable"
 	CategoryNetwork             FailureCategory = "network"
+	CategoryRequestNotSent      FailureCategory = "request_not_sent"
 	CategoryTimeout             FailureCategory = "timeout"
 	CategorySubmissionUncertain FailureCategory = "submission_uncertain"
 	CategoryAsyncFailed         FailureCategory = "async_failed"
@@ -103,6 +104,7 @@ var categoryCopies = map[FailureCategory]categoryCopy{
 	CategoryConcurrency:         {Reason: "同时进行的生成过多", Action: "请等待已有任务完成后再试"},
 	CategoryProviderUnavailable: {Reason: "模型服务暂时不可用", Action: "请稍后重试"},
 	CategoryNetwork:             {Reason: "网络连接失败", Action: "请检查网络并核对原任务状态后，再决定是否重新生成"},
+	CategoryRequestNotSent:      {Reason: "未能连接服务，本次请求尚未提交", Action: "请检查网络或代理后重试"},
 	CategoryTimeout:             {Reason: "模型服务响应超时", Action: "请稍后查询原任务，不要立即重新提交"},
 	CategorySubmissionUncertain: {Reason: "提交结果尚未确认，上游任务可能仍在执行", Action: "请先查询原任务状态，不要立即重新提交"},
 	CategoryAsyncFailed:         {Reason: "生成任务没有完成", Action: "请查看详情后决定是否重试"},
@@ -302,7 +304,7 @@ func (f Failure) BlocksAutomaticRetry() bool {
 		return true
 	}
 	switch f.Category {
-	case CategoryThrottled, CategoryConcurrency, CategoryProviderUnavailable, CategoryCancelled:
+	case CategoryThrottled, CategoryConcurrency, CategoryProviderUnavailable, CategoryCancelled, CategoryRequestNotSent:
 		return false
 	default:
 		return true
@@ -431,6 +433,10 @@ func ClassifyError(err error) Failure {
 	}
 	if errors.Is(err, context.Canceled) {
 		return normalizeFailure(Failure{Category: CategoryCancelled})
+	}
+	var notSent RequestNotSentError
+	if errors.As(err, &notSent) {
+		return normalizeFailure(Failure{Category: CategoryRequestNotSent})
 	}
 	var preparation RequestPreparationError
 	if errors.As(err, &preparation) {
@@ -1445,7 +1451,7 @@ func sanitizeProviderText(value string) string {
 
 func applyRetryable(failure *Failure) {
 	switch failure.Category {
-	case CategoryThrottled, CategoryProviderUnavailable, CategoryNetwork, CategoryTimeout, CategoryConcurrency:
+	case CategoryThrottled, CategoryProviderUnavailable, CategoryNetwork, CategoryTimeout, CategoryConcurrency, CategoryRequestNotSent:
 		failure.Retryable = !failure.Uncertain
 	default:
 		failure.Retryable = false

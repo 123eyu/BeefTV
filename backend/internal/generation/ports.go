@@ -64,6 +64,8 @@ type TransportObservation struct {
 	Err                   error
 	ResponseLimitBytes    int64
 	Dispatched            bool
+	TransportPhase        string
+	TransportRoute        string
 	HTTPStatus            int
 	DeclaredResponseBytes int64
 	ReceivedBytes         int64

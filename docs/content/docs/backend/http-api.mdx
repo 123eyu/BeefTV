@@ -194,6 +194,10 @@ NewAPI Channel 2 与 BeefAPI 视频的暂时下载断连会保留原任务 ID �
 
 远程下载保留临时文件用于续传；鉴权过期的 401/403 不删除已有字节。签名参数变化时，仅同源同路径且持有强 ETag 的文件尝试续传，并核对响应 ETag 与总大小；不匹配时重新下载。供应商不支持 Range、缺少可靠校验标识或更换文件路径时可能从头下载。此能力不代表自动刷新供应商的过期签名链接。
 
+连接阶段确认整次 HTTP 请求（含重定向）都未取得可发送请求的连接时，失败类别为 `request_not_sent`，允许重试。已经取得连接、提交后丢失响应或重定向后失败，仍按提交结果未确认处理。旧任务缺少连接证据时，不会仅凭 `TLS handshake timeout` 文本自动解除重试保护。
+
+请求诊断增加 `transportPhase`（`connect`、`tls`、`request`、`response_wait`、`response`）和 `transportRoute`（`direct`、`proxy`），不记录代理地址或凭据。`dispatched` 表示已取得可发送 HTTP 请求的连接，不证明服务端已经收件；`requestBytes` 是请求体声明长度，不是实际发送量。诊断中的模型优先取任务执行快照，避免节点后来切换模型造成误判。
+
 ## 明确不存在的端点
 
 `/auth/*`、`/admin/*`、`/payments/*`、`/wallet/*`、`/public/canvas-shares/*` 以及云存储配置端点不属于本地产品合同。

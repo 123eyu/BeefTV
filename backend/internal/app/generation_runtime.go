@@ -130,6 +130,8 @@ func (p appReceiptPort) Observe(observation generation.TransportObservation) {
 		StartedAt:             observation.StartedAt.Format(time.RFC3339Nano),
 		ResponseLimitBytes:    observation.ResponseLimitBytes,
 		Dispatched:            observation.Dispatched,
+		TransportPhase:        observation.TransportPhase,
+		TransportRoute:        observation.TransportRoute,
 		HTTPStatus:            observation.HTTPStatus,
 		DeclaredResponseBytes: observation.DeclaredResponseBytes,
 		ReceivedBytes:         observation.ReceivedBytes,

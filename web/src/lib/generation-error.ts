@@ -28,6 +28,7 @@ export const GENERATION_ERROR_CATEGORIES = [
     "concurrency",
     "provider_unavailable",
     "network",
+    "request_not_sent",
     "timeout",
     "submission_uncertain",
     "async_failed",
@@ -85,7 +86,7 @@ export type GenerationFailureDiagnostics = {
     platform?: string;
     executionResult?: string;
     omittedRequests?: number;
-    requests?: { operation: string; method: string; dispatched: boolean; outcome: string; httpStatus?: number; requestId?: string; providerCode?: string; summary?: string; startedAt: string; durationMs: number; requestBytes?: number; receivedBytes?: number; declaredResponseBytes?: number; responseLimitBytes?: number }[];
+    requests?: { operation: string; method: string; dispatched: boolean; transportPhase?: string; transportRoute?: string; outcome: string; httpStatus?: number; requestId?: string; providerCode?: string; summary?: string; startedAt: string; durationMs: number; requestBytes?: number; receivedBytes?: number; declaredResponseBytes?: number; responseLimitBytes?: number }[];
     input?: { protocol?: string; model?: string; size?: string; quality?: string; count?: string; promptChars: number; imageCount: number; videoCount: number; audioCount: number; images?: { bytes: number; width: number; height: number }[]; imageLimitsRecorded?: boolean; maxImages?: number; maxImageBytes?: number };
     summary?: string;
     providerCode?: string;
@@ -128,6 +129,7 @@ const CATEGORY_COPY: Record<GenerationErrorCategory, CategoryCopy> = {
     concurrency: { reason: "同时进行的生成过多", action: "请等待已有任务完成后再试" },
     provider_unavailable: { reason: "模型服务暂时不可用", action: "请稍后重试" },
     network: { reason: "网络连接失败", action: "请检查网络并核对原任务状态后，再决定是否重新生成" },
+    request_not_sent: { reason: "未能连接服务，本次请求尚未提交", action: "请检查网络或代理后重试" },
     timeout: { reason: "模型服务响应超时", action: "请稍后查询原任务，不要立即重新提交" },
     submission_uncertain: { reason: "提交结果尚未确认，上游任务可能仍在执行", action: "请先查询原任务状态，不要立即重新提交" },
     async_failed: { reason: "生成任务没有完成", action: "请查看详情后决定是否重试" },
@@ -297,7 +299,7 @@ export function explainGenerationError(error: unknown, context: GenerationFailur
         taskId: sanitizeDebugId(classified.taskId || context.taskId) || undefined,
         retryable: Boolean(classified.retryable) && !uncertain && !moderation,
         uncertain,
-        blockAutomaticRetry: uncertain || moderation || !["throttled", "concurrency", "provider_unavailable", "cancelled"].includes(classified.category),
+        blockAutomaticRetry: uncertain || moderation || !["throttled", "concurrency", "provider_unavailable", "cancelled", "request_not_sent"].includes(classified.category),
         moderation,
     };
 }
@@ -377,7 +379,7 @@ export function formatGenerationDiagnostics(explanation: GenerationFailureExplan
     const evidence = context.failureDiagnostics;
     const taskId = sanitizeDebugId(context.taskId) || sanitizeDebugId(explanation.taskId);
     const requestId = sanitizeDebugId(evidence?.requestId) || sanitizeDebugId(explanation.requestId);
-    const model = sanitizeProviderCode(context.model || "");
+    const model = sanitizeProviderCode(evidence?.input?.model || context.model || "");
     const createdAt = context.createdAt && /^\d{4}-\d{2}-\d{2}[T ][\d:.+Z-]{5,35}$/.test(context.createdAt) ? context.createdAt : "";
     const lines = [
         "排查信息版本：2",
@@ -416,10 +418,13 @@ function formatExecutionEvidence(evidence?: GenerationFailureDiagnostics): strin
         if (input.imageLimitsRecorded) lines.push(`本地参考图限制：最多 ${number(input.maxImages)} 张，单图字节上限=${number(input.maxImageBytes)}（字节上限为 0 表示未设置大小限制）`);
         input.images?.slice(0, 16).forEach((media, i) => lines.push(`参考图 ${i + 1}：${number(media.width)}×${number(media.height)}，${number(media.bytes)} 字节`));
     }
-    const outcomes: Record<string, string> = { response_received: "收到响应（业务结果另判）", transport_error: "传输或读取失败", not_dispatched: "本地拦截，未发送", http_error: "HTTP 错误", cancelled: "取消", timeout: "超时", business_error: "业务错误", response_limit: "本地响应大小限制" };
+    const outcomes: Record<string, string> = { response_received: "收到响应（业务结果另判）", transport_error: "传输或读取失败", not_dispatched: "请求未发送", http_error: "HTTP 错误", cancelled: "取消", timeout: "超时", business_error: "业务错误", response_limit: "本地响应大小限制" };
+    const phases: Record<string, string> = { connect: "建立连接", tls: "TLS 握手", request: "发送请求", response_wait: "等待响应", response: "读取响应" };
+    const routes: Record<string, string> = { direct: "直连", proxy: "代理" };
     evidence?.requests?.slice(0, 8).forEach((request, i) => {
         lines.push(`请求 ${i + 1}：${sanitizeProviderCode(request.operation)}；${outcomes[request.outcome] || "未知"}；已发起=${request.dispatched === true ? "是" : "否"}；HTTP=${number(request.httpStatus)}；ID=${sanitizeDebugId(request.requestId) || "未记录"}；耗时=${number(request.durationMs)}ms`);
-        lines.push(`请求 ${i + 1} 字节：提交=${number(request.requestBytes)}；响应声明=${number(request.declaredResponseBytes)}；已读=${number(request.receivedBytes)}；响应上限=${number(request.responseLimitBytes)}`);
+        lines.push(`请求 ${i + 1} 字节：请求体大小=${number(request.requestBytes)}（不代表已发送）；响应声明=${number(request.declaredResponseBytes)}；已读=${number(request.receivedBytes)}；响应上限=${number(request.responseLimitBytes)}`);
+        if (phases[request.transportPhase || ""]) lines.push(`请求 ${i + 1} 连接：${routes[request.transportRoute || ""] || "未记录"}；阶段=${phases[request.transportPhase!]}`);
         if (/^\d{4}-\d{2}-\d{2}[T ][\d:.+Z-]{5,35}$/.test(request.startedAt)) lines.push(`请求 ${i + 1} 时间：${request.startedAt}`);
         if (sanitizeProviderCode(request.providerCode || "")) lines.push(`请求 ${i + 1} 上游代码：${sanitizeProviderCode(request.providerCode || "")}`);
         if (request.summary) lines.push(`请求 ${i + 1} 摘要：${sanitizeProviderText(request.summary)}`);
@@ -1020,7 +1025,7 @@ function isModerationCategory(value: string) {
 }
 
 function retryableCategory(category: GenerationErrorCategory) {
-    return category === "throttled" || category === "provider_unavailable" || category === "network" || category === "timeout" || category === "concurrency";
+    return category === "throttled" || category === "provider_unavailable" || category === "network" || category === "timeout" || category === "concurrency" || category === "request_not_sent";
 }
 
 function isNetworkText(value: string) {

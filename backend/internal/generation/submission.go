@@ -11,6 +11,13 @@ import (
 
 type SubmissionUnknownError struct{ Cause error }
 
+// RequestNotSentError is created only from transport evidence: no HTTP
+// connection was acquired during this request, including any redirects.
+type RequestNotSentError struct{ Cause error }
+
+func (e RequestNotSentError) Error() string { return e.Cause.Error() }
+func (e RequestNotSentError) Unwrap() error { return e.Cause }
+
 // RequestPreparationError proves that the create request was not dispatched.
 // Reference downloads may fail after their own HTTP calls, before a paid POST.
 type RequestPreparationError struct{ Cause error }
@@ -44,6 +51,11 @@ func SafeRouteRejection(err error) bool {
 }
 
 func UncertainVideoSubmission(ctx context.Context, err error) error {
+	var notSent RequestNotSentError
+	var unknown SubmissionUnknownError
+	if errors.As(err, &notSent) || errors.As(err, &unknown) {
+		return err
+	}
 	var preparation RequestPreparationError
 	if errors.As(err, &preparation) {
 		return err

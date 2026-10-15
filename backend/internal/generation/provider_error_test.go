@@ -368,7 +368,7 @@ func TestCanonicalCategoriesRoundTripAndRetryPolicy(t *testing.T) {
 		generation.CategoryInvalidParams, generation.CategoryContextTooLong,
 		generation.CategoryInputInaccessible, generation.CategoryInputTooLarge, generation.CategoryModelMissing,
 		generation.CategoryThrottled, generation.CategoryConcurrency, generation.CategoryProviderUnavailable,
-		generation.CategoryNetwork, generation.CategoryTimeout, generation.CategorySubmissionUncertain,
+		generation.CategoryNetwork, generation.CategoryRequestNotSent, generation.CategoryTimeout, generation.CategorySubmissionUncertain,
 		generation.CategoryAsyncFailed, generation.CategoryCancelled, generation.CategoryPartialSuccess,
 		generation.CategoryDownloadFailed, generation.CategoryResultsMissing,
 		generation.CategoryMalformedResponse, generation.CategoryUnknown,
@@ -384,7 +384,7 @@ func TestCanonicalCategoriesRoundTripAndRetryPolicy(t *testing.T) {
 			if persisted.Category != category {
 				t.Errorf("persisted category = %s, want %s", persisted.Category, category)
 			}
-			allowAutomaticRetry := category == generation.CategoryThrottled || category == generation.CategoryConcurrency || category == generation.CategoryProviderUnavailable || category == generation.CategoryCancelled
+			allowAutomaticRetry := category == generation.CategoryThrottled || category == generation.CategoryConcurrency || category == generation.CategoryProviderUnavailable || category == generation.CategoryCancelled || category == generation.CategoryRequestNotSent
 			if coded.BlocksAutomaticRetry() == allowAutomaticRetry {
 				t.Errorf("automatic retry block = %v, allowed = %v", coded.BlocksAutomaticRetry(), allowAutomaticRetry)
 			}

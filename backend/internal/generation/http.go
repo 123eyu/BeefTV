@@ -372,11 +372,24 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 			cancel(nil)
 		}()
 	}
-	observation.Dispatched = true
+	trace := &transportTrace{}
+	req = trace.attach(req)
+	if transport, ok := client.Transport.(*http.Transport); ok {
+		observation.TransportRoute = "direct"
+		if transport.Proxy != nil {
+			if proxy, proxyErr := transport.Proxy(req); proxyErr == nil && proxy != nil {
+				observation.TransportRoute = "proxy"
+			}
+		}
+	}
 	resp, err := client.Do(req)
+	observation.Dispatched, observation.TransportPhase = trace.result()
 	if err != nil {
 		if usesGenerationCircuit {
 			_ = runtime.Limits.RecordChannelResult(req.Context(), channelID, !errors.Is(err, context.Canceled))
+		}
+		if !observation.Dispatched && resp == nil && (req.Method == http.MethodPost || req.Method == http.MethodPut || req.Method == http.MethodPatch) {
+			return nil, "", RequestNotSentError{Cause: err}
 		}
 		return nil, "", err
 	}

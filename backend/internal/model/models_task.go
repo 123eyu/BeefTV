@@ -76,6 +76,8 @@ type TaskRequestEvidence struct {
 	Operation             string `json:"operation"`
 	Method                string `json:"method"`
 	Dispatched            bool   `json:"dispatched"`
+	TransportPhase        string `json:"transportPhase,omitempty"`
+	TransportRoute        string `json:"transportRoute,omitempty"`
 	Outcome               string `json:"outcome"`
 	HTTPStatus            int    `json:"httpStatus,omitempty"`
 	RequestID             string `json:"requestId,omitempty"`
