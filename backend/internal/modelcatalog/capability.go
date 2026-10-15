@@ -235,6 +235,14 @@ func DefaultModelCapabilityConfigForModel(protocol string, modelName string) *Mo
 			}
 		}
 	}
+	if isNativeDreaminaSeedance(protocol, modelName) {
+		video.Duration.Min = 4
+		video.Duration.Values = []int{-1}
+		video.Ratios = appendUniqueString(video.Ratios, "adaptive")
+		if isSeedance25Model(modelName) {
+			video.Operations = appendUniqueString(appendUniqueString(video.Operations, "inpaint"), "extend")
+		}
+	}
 	return &ModelCapabilityConfig{Version: 1, Text: text, Image: DefaultImageCapabilityConfig(protocol, modelName), Video: video}
 }
 

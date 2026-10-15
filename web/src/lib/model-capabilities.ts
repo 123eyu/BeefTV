@@ -624,6 +624,11 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
             video.duration = { ...video.duration, max: 30 };
         }
     }
+    if (isVolcengineArkVideoProtocol(protocol) && /^dreamina-seedance-2[.-](?:0|5)(?:-|$)/.test(model.trim().toLowerCase().split("/").pop() || "")) {
+        video.duration = { ...video.duration, min: 4, values: [-1] };
+        video.ratios = [...video.ratios, "adaptive"];
+        if (isSeedance25Model(model)) video.operations = [...video.operations, "inpaint", "extend"];
+    }
     return { version: 1, text, image: defaultImageCapabilityConfig(protocol, model), video };
 }
 

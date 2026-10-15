@@ -2,10 +2,27 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 // Bun 直接执行 TypeScript 测试时需要保留扩展名；生产 tsconfig 不包含 test/。
-import { DEFAULT_VIDEO_PROMPT_MAX_CHARS, defaultModelCapabilityConfig, modelCapabilityConfigFor, normalizeVideoValue } from "../src/lib/model-capabilities.ts";
+import { DEFAULT_VIDEO_PROMPT_MAX_CHARS, defaultModelCapabilityConfig, modelCapabilityConfigFor, normalizeVideoValue, videoDurationAllowed } from "../src/lib/model-capabilities.ts";
 import { modelCompatibilityError } from "../src/lib/model-selection.ts";
 import type { AiConfig } from "../src/stores/use-config-store.ts";
 import { seedanceTaskOptions, seedanceOmniTaskType } from "../src/lib/seedance-task-constraints.ts";
+
+test("Dreamina native defaults expose editing and valid duration choices without expanding saved profiles", () => {
+    const model = "dreamina-seedance-2-5-260628";
+    const profile = defaultModelCapabilityConfig("volcengine-ark-video", model).video!;
+    assert.ok(profile.operations.includes("inpaint") && profile.operations.includes("extend"));
+    assert.ok(profile.ratios.includes("adaptive"));
+    for (const value of [-1, 4, 30]) assert.ok(videoDurationAllowed(profile, value));
+    for (const value of [1, 3, 31]) assert.equal(videoDurationAllowed(profile, value), false);
+    const config = { channels: [{ id: "custom", models: [model], modelProfiles: [{ model, protocol: "volcengine-ark-video" }] }] } as AiConfig;
+    for (const operation of ["inpaint", "extend"]) assert.equal(modelCompatibilityError(config, `custom::${model}`, { capability: "video", videoSeconds: "6", videoOperation: operation as "inpaint" | "extend", input: { textCount: 1, imageCount: 0, characterCount: 0, videoCount: 1, audioCount: 0 } }), "");
+    config.channels[0].modelProfiles![0].capabilityConfig = { version: 1, video: { ...profile, operations: ["text_to_video"], duration: { ...profile.duration, min: 5 }, ratios: ["16:9"] } };
+    assert.deepEqual(modelCapabilityConfigFor(config, `custom::${model}`).video!.operations, ["text_to_video"]);
+    assert.equal(modelCapabilityConfigFor(config, `custom::${model}`).video!.duration.min, 5);
+    assert.deepEqual(modelCapabilityConfigFor(config, `custom::${model}`).video!.ratios, ["16:9"]);
+    assert.equal(defaultModelCapabilityConfig("volcengine-ark-video", "doubao-seedance-2-5-260628").video!.duration.min, 1);
+    assert.equal(defaultModelCapabilityConfig("newapi", model).video!.duration.min, 1);
+});
 
 test("Dreamina 2.5 enables audio-only and keeps edit and extension task constraints", () => {
     const model = "dreamina-seedance-2-5-260628";
