@@ -70,6 +70,12 @@ export function h3ResolvedReferenceOrder(order: string[] | undefined, media: Arr
 }
 type H3FrameOptions = { videoEditOperation?: string; videoStartFrameNodeId?: string; videoEndFrameNodeId?: string; videoMiddleFrameNodeId?: string; videoMiddleFrameTime?: number; videoReferenceOrder?: string[] };
 
+export function h3ReferenceMode(model: string, input: { imageCount: number; videoCount: number; audioCount: number }, options: H3FrameOptions = {}): boolean {
+    const base = model.split("::").at(-1) === "minimax-h3";
+    const hasFrame = Boolean(options.videoStartFrameNodeId || options.videoEndFrameNodeId || options.videoMiddleFrameNodeId);
+    return !isH3Style(model) && (options.videoEditOperation === "reference_to_video" || Boolean(options.videoMiddleFrameNodeId) || input.videoCount > 0 || input.audioCount > 1 || (base && input.imageCount > 0 && !hasFrame && options.videoEditOperation !== "image_to_video"));
+}
+
 export function h3MediaPayload(model: string, media: H3Media[], options: H3FrameOptions = {}, seconds = 5, resolution = "768p") {
     const name = model.split("::").at(-1),
         base = name === "minimax-h3",
@@ -79,8 +85,7 @@ export function h3MediaPayload(model: string, media: H3Media[], options: H3Frame
     const images = media.filter((m) => m.type === "image"),
         videos = media.filter((m) => m.type === "video"),
         audios = media.filter((m) => m.type === "audio");
-    const referenceMode =
-        !style && (options.videoEditOperation === "reference_to_video" || !!options.videoMiddleFrameNodeId || videos.length > 0 || audios.length > 1 || (base && images.length > 0 && !selected.length && options.videoEditOperation !== "image_to_video"));
+    const referenceMode = h3ReferenceMode(model, { imageCount: images.length, videoCount: videos.length, audioCount: audios.length }, options);
     if (referenceMode && selected.length && !max) throw new Error("当前 H3 参考模式不能同时指定关键帧");
     if (options.videoMiddleFrameNodeId || options.videoMiddleFrameTime !== undefined) {
         const time = options.videoMiddleFrameTime,

@@ -8,11 +8,11 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { modelCapabilityConfigFor, resolveVideoRatioValue, resolveVideoResolutionValue } from "@/lib/model-capabilities";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import type { AiConfig } from "@/stores/use-config-store";
-import type { SeedanceSettingsConstraints } from "@/lib/seedance-task-constraints";
+import type { VideoSettingsConstraints } from "@/lib/video-settings-constraints";
 
 type CanvasVideoSettingsPopoverProps = {
     children?: ReactNode;
-    taskConstraints?: SeedanceSettingsConstraints;
+    taskConstraints?: VideoSettingsConstraints;
     config: AiConfig;
     onConfigChange: (key: keyof AiConfig, value: string) => void;
     buttonClassName?: string;
@@ -85,7 +85,7 @@ function VideoSettingsPortal({
     children,
 }: {
     children?: ReactNode;
-    taskConstraints?: SeedanceSettingsConstraints;
+    taskConstraints?: VideoSettingsConstraints;
     buttonRect: DOMRect;
     panelRef: RefObject<HTMLDivElement | null>;
     placement: CanvasVideoSettingsPopoverProps["placement"];
