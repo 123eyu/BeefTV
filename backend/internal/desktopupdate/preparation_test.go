@@ -37,6 +37,51 @@ func TestExtractionProgressAndCancellation(t *testing.T) {
 	}
 }
 
+func TestFailedPreparationRetainsStageUntilRetry(t *testing.T) {
+	e := &Engine{state: UpdateState{Status: StatusInstalling, Phase: "extracting", CompletedFiles: 37, TotalFiles: 15000}}
+	e.fail(preparationTimeoutMessage(e.snapshot().Phase))
+	failed := e.snapshot()
+	if failed.Phase != "extracting" || failed.CompletedFiles != 37 || !strings.Contains(failed.Error, "解压更新包超时") {
+		t.Fatalf("%+v", failed)
+	}
+	e.set(func(s *UpdateState) { s.Status = StatusInstalling; s.Error = "" })
+	if next := e.snapshot(); next.Phase != "" || next.CompletedFiles != 0 || next.TotalFiles != 0 {
+		t.Fatalf("retry has stale progress: %+v", next)
+	}
+	if !strings.Contains(preparationTimeoutMessage("verifying"), "校验更新包超时") {
+		t.Fatal("lost verification stage")
+	}
+}
+
+func TestInstallTimeoutAfterPreviousFailureResetsActualStage(t *testing.T) {
+	root := t.TempDir()
+	e := &Engine{
+		enabled: true, currentVersion: "v1.7.20", logPath: filepath.Join(root, "update.log"),
+		state:  UpdateState{Status: StatusError, Phase: "extracting", CompletedFiles: 37, TotalFiles: 15000},
+		staged: &stagedUpdate{archive: filepath.Join(root, "update.zip"), platform: "darwin-arm64"},
+		locate: func() (Target, error) {
+			return Target{Path: filepath.Join(root, appBundleName), Platform: "darwin-arm64"}, nil
+		},
+		helper: func(HelperRequest) error { t.Fatal("canceled update must not start helper"); return nil },
+	}
+	if err := os.WriteFile(e.staged.archive, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := e.InstallUpdate(ctx); err == nil {
+		t.Fatal("canceled install succeeded")
+	}
+	state := e.snapshot()
+	if state.Status != StatusError || state.Phase != "verifying" || state.CompletedFiles != 0 || state.TotalFiles != 0 || !strings.Contains(state.Error, "校验更新包超时") {
+		t.Fatalf("stale failure: %+v", state)
+	}
+	log, err := os.ReadFile(e.logPath)
+	if err != nil || !strings.Contains(string(log), "phase=verifying completedFiles=0 totalFiles=0 timeout=true") {
+		t.Fatalf("wrong failure log: %s %v", log, err)
+	}
+}
+
 func TestInvalidLayoutAndCanceledPreparationLeaveOldApplication(t *testing.T) {
 	for _, scenario := range []string{"layout", "canceled", "traversal"} {
 		t.Run(scenario, func(t *testing.T) {

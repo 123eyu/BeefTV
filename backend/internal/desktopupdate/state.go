@@ -56,3 +56,14 @@ var (
 func (s UpdateState) clone() UpdateState {
 	return s
 }
+
+func preparationTimeoutMessage(phase string) string {
+	stage := "准备安装"
+	switch phase {
+	case "verifying":
+		stage = "校验更新包"
+	case "extracting":
+		stage = "解压更新包"
+	}
+	return stage + "超时，当前版本未被替换。请重试；再次失败时请导出诊断包。"
+}

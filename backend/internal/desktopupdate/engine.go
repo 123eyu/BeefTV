@@ -346,9 +346,15 @@ func (e *Engine) InstallUpdate(ctx context.Context) error {
 		state.Error = ""
 	})
 	if err := e.prepareAndStartHelper(ctx, staged); err != nil {
+		state := e.snapshot()
+		e.logf("install failure phase=%s completedFiles=%d totalFiles=%d timeout=%t", state.Phase, state.CompletedFiles, state.TotalFiles, errors.Is(err, ErrPreparationTimeout))
 		e.logf("install preparation failed: %v", err)
-		e.fail(publicInstallError(err))
-		return fmt.Errorf("%s", publicInstallError(err))
+		message := publicInstallError(err)
+		if errors.Is(err, ErrPreparationTimeout) {
+			message = preparationTimeoutMessage(state.Phase)
+		}
+		e.fail(message)
+		return fmt.Errorf("%s", message)
 	}
 	e.set(func(state *UpdateState) { state.InstallPrepared = true })
 	e.setPhase("restarting")
@@ -437,7 +443,7 @@ func (e *Engine) set(fn func(*UpdateState)) {
 	defer e.mu.Unlock()
 	previous := e.state.Status
 	fn(&e.state)
-	if previous != e.state.Status {
+	if previous != e.state.Status && e.state.Status != StatusError {
 		e.state.Phase = ""
 		e.state.CompletedFiles = 0
 		e.state.TotalFiles = 0

@@ -287,6 +287,22 @@
     line-height: 16px;
 }
 
+.app-workspace-update-diagnostics {
+    align-self: flex-start;
+    margin-top: 4px;
+    padding: 3px 0;
+    color: var(--user-accent, var(--primary));
+    font-size: var(--fs-caption);
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+
+.app-workspace-update-diagnostics:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+}
+
 .app-workspace-update-status-name {
     min-width: 0;
     overflow: hidden;

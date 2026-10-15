@@ -51,6 +51,18 @@ func buildZIP(brandName string, bundleID string, manifest manifest, collection *
 			return nil, err
 		}
 	}
+	if collection.UpdateLog != nil {
+		metadata, err := json.MarshalIndent(collection.UpdateLog, "", "  ")
+		if err != nil {
+			return nil, err
+		}
+		if err := writeZipFile(archive, "desktop/update-log.json", metadata); err != nil {
+			return nil, err
+		}
+		if err := writeZipFile(archive, "desktop/update.log", []byte(collection.UpdateLog.Text)); err != nil {
+			return nil, err
+		}
+	}
 	if err := archive.Close(); err != nil {
 		return nil, err
 	}

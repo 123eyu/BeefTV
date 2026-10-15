@@ -18,6 +18,7 @@ import {
     type DesktopUpdateState,
 } from "@/services/desktop-update";
 import { useDesktopUpdate } from "@/hooks/use-desktop-update";
+import DiagnosticsPanel from "@/pages/settings/diagnostics-panel";
 
 import "./workspace-sidebar-update.css";
 
@@ -48,6 +49,7 @@ export function WorkspaceSidebarUpdate({ collapsed }: { collapsed: boolean }) {
     const updater = useDesktopUpdate();
     const { state, persistBusy, actionBusy, runtime } = updater;
     const [saveWarningOpen, setSaveWarningOpen] = useState(false);
+	const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
     useEffect(() => {
         if (updater.canForceInstall) setSaveWarningOpen(true);
     }, [updater.canForceInstall]);
@@ -79,6 +81,7 @@ export function WorkspaceSidebarUpdate({ collapsed }: { collapsed: boolean }) {
     const statusContent = line ? <div className={cn("app-workspace-update-status", line.tone === "paused" && "is-paused")} role="status" aria-live="polite">
         <span className="app-workspace-update-status-title">{line.title}</span>
         <span className="app-workspace-update-status-detail">{line.detail}</span>
+		{state.status === "error" ? <button type="button" className="app-workspace-update-diagnostics" onClick={() => setDiagnosticsOpen(true)}>更新失败排查</button> : null}
         {slow ? <span className="app-workspace-update-status-detail">{persistBusy ? "仍在等待保存完成" : "耗时较长，请保持应用开启"}</span> : null}
         {showBar ? <UpdateProgressBar state={state} percent={barPercent} reducedMotion={Boolean(reducedMotion)} paused={state.status === "error"} /> : null}
     </div> : null;
@@ -95,6 +98,7 @@ export function WorkspaceSidebarUpdate({ collapsed }: { collapsed: boolean }) {
                 </div>
                 </Popover>
                 {!collapsed ? statusContent : null}
+			<DiagnosticsPanel open={diagnosticsOpen} onClose={() => setDiagnosticsOpen(false)} />
             <AppModal
                 open={saveWarningOpen && updater.canForceInstall}
                 title="保存未完成，是否仍然更新？"

@@ -53,12 +53,13 @@ type ExportRequest struct {
 }
 
 type Preview struct {
-	ClientEventLimit int   `json:"clientEventLimit"`
-	TaskCount        int   `json:"taskCount"`
-	TaskLogCount     int   `json:"taskLogCount"`
-	APICallCount     int   `json:"apiCallCount"`
-	EstimatedBytes   int64 `json:"estimatedBytes"`
-	WillTruncate     bool  `json:"willTruncate"`
+	UpdateLog        *updateLogSummary `json:"updateLog,omitempty"`
+	ClientEventLimit int               `json:"clientEventLimit"`
+	TaskCount        int               `json:"taskCount"`
+	TaskLogCount     int               `json:"taskLogCount"`
+	APICallCount     int               `json:"apiCallCount"`
+	EstimatedBytes   int64             `json:"estimatedBytes"`
+	WillTruncate     bool              `json:"willTruncate"`
 }
 
 type Bundle struct {
@@ -73,6 +74,7 @@ type timeWindow struct {
 }
 
 type collection struct {
+	UpdateLog    *updateLogSummary
 	Window       timeWindow
 	Description  string
 	TaskID       string

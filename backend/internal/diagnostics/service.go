@@ -12,19 +12,21 @@ import (
 )
 
 type Dependencies struct {
-	Store  Store
-	Brand  Brand
-	Config ModelConfigProvider
-	Now    func() time.Time
-	NewID  func() string
+	UpdateLogDir string
+	Store        Store
+	Brand        Brand
+	Config       ModelConfigProvider
+	Now          func() time.Time
+	NewID        func() string
 }
 
 type Service struct {
-	store  Store
-	brand  Brand
-	config ModelConfigProvider
-	now    func() time.Time
-	newID  func() string
+	updateLogDir string
+	store        Store
+	brand        Brand
+	config       ModelConfigProvider
+	now          func() time.Time
+	newID        func() string
 }
 
 func New(deps Dependencies) *Service {
@@ -40,7 +42,7 @@ func New(deps Dependencies) *Service {
 	if brand == nil {
 		brand = staticBrand{name: defaultBrandName, slug: defaultBrandSlug}
 	}
-	return &Service{store: deps.Store, brand: brand, config: deps.Config, now: now, newID: newID}
+	return &Service{store: deps.Store, brand: brand, config: deps.Config, now: now, newID: newID, updateLogDir: deps.UpdateLogDir}
 }
 
 func (s *Service) Preview(userID string, req ExportRequest) (*Preview, error) {
@@ -48,10 +50,15 @@ func (s *Service) Preview(userID string, req ExportRequest) (*Preview, error) {
 	if err != nil {
 		return nil, err
 	}
+	updateBytes := 0
+	if collection.UpdateLog != nil {
+		updateBytes = len(collection.UpdateLog.Text) + 256
+	}
 	return &Preview{
+		UpdateLog:        collection.UpdateLog,
 		ClientEventLimit: maxClientEvents,
 		TaskCount:        len(collection.Tasks), TaskLogCount: len(collection.TaskLogs), APICallCount: len(collection.APICalls),
-		EstimatedBytes: int64(2048 + len(collection.ClientEvents)*420 + len(collection.Tasks)*620 + len(collection.TaskLogs)*700 + len(collection.APICalls)*520),
+		EstimatedBytes: int64(2048 + updateBytes + len(collection.ClientEvents)*420 + len(collection.Tasks)*620 + len(collection.TaskLogs)*700 + len(collection.APICalls)*520),
 		WillTruncate:   collection.Truncated,
 	}, nil
 }
@@ -159,6 +166,10 @@ func (s *Service) collect(userID string, req ExportRequest) (*collection, error)
 		if body, readErr := s.config.ReadLocalModelConfig(); readErr == nil {
 			collected.ModelConfig = buildModelConfigSummary(body)
 		}
+	}
+	collected.UpdateLog = collectUpdateLog(s.updateLogDir, window)
+	if collected.UpdateLog != nil && collected.UpdateLog.Truncated {
+		collected.Truncated = true
 	}
 	return collected, nil
 }

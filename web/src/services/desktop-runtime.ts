@@ -38,6 +38,7 @@ export type DesktopRuntimeBinding = {
     SaveOwnedMedia?: (fileName: string, resourceID: string) => Promise<boolean>;
     SaveOwnedArtifact?: (fileName: string, data: string) => Promise<boolean>;
     UpdateStatus?: () => Promise<DesktopUpdateState>;
+	OpenUpdateLogDirectory?: () => Promise<void>;
     CheckForUpdate?: () => Promise<DesktopUpdateState>;
     DownloadUpdate?: () => Promise<DesktopUpdateState>;
     InstallUpdate?: () => Promise<void>;

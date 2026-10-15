@@ -19,6 +19,7 @@ export type DiagnosticExportInput = {
 };
 
 export type DiagnosticPreview = {
+	updateLog?: { status: "available" | "missing" | "unreadable"; lines: number; truncated: boolean };
     clientEventLimit: number;
     taskCount: number;
     taskLogCount: number;
