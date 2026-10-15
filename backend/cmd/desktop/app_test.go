@@ -17,6 +17,8 @@ import (
 	"testing"
 
 	"infinite-canvas/backend/internal/bootstrap"
+
+	"github.com/wailsapp/wails/v2/pkg/options/windows"
 )
 
 // This catches desktop-shell regressions where Wails opens before the local
@@ -170,6 +172,20 @@ func TestDesktopAppBoundMethodsStayTiny(t *testing.T) {
 	sort.Strings(names)
 	if !reflect.DeepEqual(names, []string{"CheckForUpdate", "ChooseStorageDirectory", "CleanupPreviousStorage", "ConfirmUpdateStartup", "DownloadUpdate", "InstallUpdate", "MigrateStorage", "OpenBeefTVGitHub", "OpenBeefTVWebsite", "OpenBeefTVX", "ReferenceStorageSettings", "RuntimeConfig", "SaveOwnedArtifact", "SaveOwnedMedia", "SaveReferenceStorage", "StorageSettings", "UpdateStatus", "UploadReferenceMedia"}) {
 		t.Fatalf("bound methods = %v", names)
+	}
+}
+
+func TestDesktopAppOptionsUseDarkNativeChrome(t *testing.T) {
+	app := newDesktopApp(t.TempDir())
+	opts := desktopAppOptions(app)
+	if opts.BackgroundColour == nil || opts.BackgroundColour.R != 13 || opts.BackgroundColour.G != 15 || opts.BackgroundColour.B != 18 || opts.BackgroundColour.A != 255 {
+		t.Fatalf("background colour = %#v, want dark workspace surface", opts.BackgroundColour)
+	}
+	if opts.Windows == nil || opts.Windows.Theme != windows.Dark || opts.Windows.CustomTheme == nil {
+		t.Fatalf("windows options = %#v, want dark native titlebar theme", opts.Windows)
+	}
+	if opts.Windows.CustomTheme.DarkModeTitleBar != windows.RGB(13, 15, 18) || opts.Windows.CustomTheme.DarkModeTitleBarInactive != windows.RGB(13, 15, 18) {
+		t.Fatalf("windows custom titlebar = %#v, want #0d0f12", opts.Windows.CustomTheme)
 	}
 }
 

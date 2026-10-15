@@ -39,7 +39,7 @@ import { mediaResultMetadata } from "@/lib/canvas/canvas-node-semantics";
 import { attachOwnedDepthCaptureResult, recoverOwnedDepthCaptureNode, recoverOwnedDepthCaptureNodes } from "@/lib/canvas/canvas-depth-recover";
 import { depthCaptureTaskMetadata, depthCaptureWaitFailureMetadata } from "@/lib/canvas/canvas-depth-capture";
 import { persistOwnedCanvasMediaNodes } from "@/lib/canvas/canvas-media-persist";
-import { captureVideoFrames } from "@/lib/canvas/canvas-video-frame";
+import { captureVideoFrames, resolveVideoFramePresetTimeMs } from "@/lib/canvas/canvas-video-frame";
 import { resolveCanvasVideoDurationMs } from "@/lib/canvas/canvas-video-duration";
 import { buildVideoFrameNodes } from "@/lib/canvas/canvas-video-frame-nodes";
 import { mergeVideos, warmFFmpeg, type MergeVideoProgress } from "@/lib/canvas/canvas-video-merge";
@@ -50,7 +50,7 @@ import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { defaultImageParamsForModel } from "@/lib/model-selection";
 import { navigateToSettings } from "@/lib/settings-navigation";
 import { storeGeneratedVideo } from "@/services/api/video";
-import { getMediaBlob, uploadMediaFile } from "@/services/file-storage";
+import { getMediaBlob, resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
@@ -59,7 +59,7 @@ import { openLocalCanvasProjectFromBackend, persistCanvasDocument } from "@/serv
 import { http } from "@/services/api/request";
 import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { queryGenerationTask, type GenerationTask } from "@/services/api/task-center";
-import { ownedResourceIdFromMediaRef } from "@/services/api/resources";
+import { getResourcePlaybackBlob, ownedResourceIdFromMediaRef, resourceStorageKey } from "@/services/api/resources";
 import {
     assertLocalExecutorSession,
     beginLocalExecutorSession,
@@ -596,15 +596,25 @@ export function useCanvasMediaTools({
 
     const extractVideoFrames = useCallback(async (node: CanvasNodeData, params: CanvasVideoFrameParams) => {
         const content = node.metadata?.content;
-        if (!content || extractingVideoFramesNodeIdRef.current || !params.timesMs.length) return;
+        const resourceId = ownedResourceIdFromMediaRef(node.metadata?.storageKey, content);
+        const effectiveStorageKey = node.metadata?.storageKey || (resourceId ? resourceStorageKey(resourceId) : "");
+        if ((!content && !effectiveStorageKey) || extractingVideoFramesNodeIdRef.current || !params.timesMs.length) return;
         const progress = startUploadStatus("关键帧截取", "读取视频资源", params.timesMs.length + 2);
         extractingVideoFramesNodeIdRef.current = node.id;
         setExtractingVideoFramesNodeId(node.id);
         setFrameDialogNodeId(null);
         try {
-            const storedBlob = node.metadata?.storageKey ? await getMediaBlob(node.metadata.storageKey).catch(() => null) : null;
+            const storedBlob = effectiveStorageKey ? await getMediaBlob(effectiveStorageKey).catch(() => null) : null;
+            const resolvedUrl = storedBlob ? "" : await resolveMediaUrl(effectiveStorageKey, content || "").catch(() => content || "");
             progress.update("定位并绘制所选画面", 2);
-            const captured = await captureVideoFrames(storedBlob || content, params.timesMs);
+            let captured: Awaited<ReturnType<typeof captureVideoFrames>>;
+            try {
+                captured = await captureVideoFrames(storedBlob || resolvedUrl, params.timesMs);
+            } catch (captureError) {
+                const playbackBlob = resourceId ? await getResourcePlaybackBlob(resourceStorageKey(resourceId)).catch(() => null) : null;
+                if (!playbackBlob) throw captureError;
+                captured = await captureVideoFrames(playbackBlob, params.timesMs);
+            }
             const uploadedFrames = [];
             const uploadFailures: string[] = [];
             for (let index = 0; index < captured.frames.length; index += 1) {
@@ -633,6 +643,7 @@ export function useCanvasMediaTools({
             const failedCount = captured.failures.length + uploadFailures.length;
             progress.done(failedCount ? `已截取 ${frameNodes.length} 个关键帧，${failedCount} 个失败` : `已截取 ${frameNodes.length} 个关键帧并创建独立图片节点`);
             if (failedCount) message.warning(`${failedCount} 个时间点提取失败，其余画面已创建`);
+            else message.success(`已截取 ${frameNodes.length} 个关键帧，新图片节点已生成在视频右侧`);
         } catch (error) {
             const details = error instanceof Error ? error.message : "视频画面提取失败";
             progress.fail(details);
@@ -645,14 +656,14 @@ export function useCanvasMediaTools({
 
     // 视频节点工具栏的三个快捷取帧动作直接执行，不再打开批量选帧弹窗。
     const extractVideoFrameAt = useCallback((node: CanvasNodeData, preset: "current" | "first" | "last" = "current") => {
-        if (!node.metadata?.content) {
+        if (!node.metadata?.content && !node.metadata?.storageKey) {
             message.warning("视频节点为空，无法进行关键帧截取");
             return;
         }
         const video = document.querySelector<HTMLVideoElement>(`[data-node-id="${CSS.escape(node.id)}"] video`);
-        const durationMs = Math.max(0, Math.round((node.metadata.durationMs || (video?.duration || 0) * 1000)));
+        const durationMs = resolveCanvasVideoDurationMs(node.metadata?.durationMs, video?.duration);
         const currentMs = video && Number.isFinite(video.currentTime) ? Math.round(video.currentTime * 1000) : 0;
-        const timeMs = preset === "first" ? 0 : preset === "last" ? Math.max(0, durationMs - 1) : currentMs;
+        const timeMs = resolveVideoFramePresetTimeMs(preset, durationMs, currentMs);
         setHoveredNodeId(null);
         setToolbarNodeId(null);
         void extractVideoFrames(node, { timesMs: [timeMs] });

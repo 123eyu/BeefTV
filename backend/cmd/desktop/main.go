@@ -15,6 +15,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
+	"github.com/wailsapp/wails/v2/pkg/options/windows"
 )
 
 func main() {
@@ -46,14 +47,33 @@ func main() {
 	}
 	_ = os.Remove(startupErrorPath)
 
-	err = wails.Run(&options.App{
-		Title:  "BeefTV",
-		Width:  1440,
-		Height: 960,
+	err = wails.Run(desktopAppOptions(app))
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func desktopAppOptions(app *DesktopApp) *options.App {
+	return &options.App{
+		Title:            "BeefTV",
+		Width:            1440,
+		Height:           960,
+		BackgroundColour: &options.RGBA{R: 13, G: 15, B: 18, A: 255},
 		Mac: &mac.Options{
 			// WKWebView disables element fullscreen by default, including the
 			// video player's fullscreen control.
 			Preferences: &mac.Preferences{FullscreenEnabled: mac.Enabled},
+		},
+		Windows: &windows.Options{
+			Theme: windows.Dark,
+			CustomTheme: &windows.ThemeSettings{
+				DarkModeTitleBar:          windows.RGB(13, 15, 18),
+				DarkModeTitleBarInactive:  windows.RGB(13, 15, 18),
+				DarkModeTitleText:         windows.RGB(244, 244, 245),
+				DarkModeTitleTextInactive: windows.RGB(161, 161, 170),
+				DarkModeBorder:            windows.RGB(39, 39, 42),
+				DarkModeBorderInactive:    windows.RGB(39, 39, 42),
+			},
 		},
 		AssetServer: &assetserver.Options{
 			Assets:  assets,
@@ -62,9 +82,6 @@ func main() {
 		OnStartup:  app.startup,
 		OnShutdown: app.shutdown,
 		Bind:       []interface{}{app},
-	})
-	if err != nil {
-		log.Fatal(err)
 	}
 }
 
