@@ -113,6 +113,10 @@ func TestDreaminaOperationsValidateAndReachOfficialWireContract(t *testing.T) {
 
 func TestDreaminaDefaultDurationAndAdaptiveAdmission(t *testing.T) {
 	for _, name := range []string{"dreamina-seedance-2-0-260128", "dreamina-seedance-2-0-fast-260128", "dreamina-seedance-2-0-mini-260615", "dreamina-seedance-2-5-260628"} {
+		profile := DefaultModelCapabilityConfigForModel("volcengine-ark-video", name).Video
+		if profile.Duration.Selection != "enum" || len(profile.Duration.Values) != profile.Duration.Max-2 || profile.Duration.Values[0] != -1 || profile.Duration.Values[1] != 4 || profile.Duration.Values[len(profile.Duration.Values)-1] != profile.Duration.Max {
+			t.Fatalf("missing automatic/duration choices: %#v", profile.Duration)
+		}
 		for _, seconds := range []string{"-1", "1", "3", "4", "15", "30"} {
 			input := canvasGenerationInput{Mode: "video", Prompt: "forest", Config: providerConfig{InterfaceType: "volcengine-ark-video", Model: name, VideoSeconds: seconds, Size: "adaptive", VQuality: "480p"}}
 			err := (&Service{}).validateResolvedVideoCapability(&input)

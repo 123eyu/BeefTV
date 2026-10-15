@@ -236,8 +236,12 @@ func DefaultModelCapabilityConfigForModel(protocol string, modelName string) *Mo
 		}
 	}
 	if isNativeDreaminaSeedance(protocol, modelName) {
+		video.Duration.Selection = "enum"
 		video.Duration.Min = 4
 		video.Duration.Values = []int{-1}
+		for seconds := 4; seconds <= video.Duration.Max; seconds++ {
+			video.Duration.Values = append(video.Duration.Values, seconds)
+		}
 		video.Ratios = appendUniqueString(video.Ratios, "adaptive")
 		if isSeedance25Model(modelName) {
 			video.Operations = appendUniqueString(appendUniqueString(video.Operations, "inpaint"), "extend")

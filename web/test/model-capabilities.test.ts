@@ -12,6 +12,9 @@ test("Dreamina native defaults expose editing and valid duration choices without
     const profile = defaultModelCapabilityConfig("volcengine-ark-video", model).video!;
     assert.ok(profile.operations.includes("inpaint") && profile.operations.includes("extend"));
     assert.ok(profile.ratios.includes("adaptive"));
+    assert.equal(profile.duration.selection, "enum");
+    assert.deepEqual(profile.duration.values, [-1, ...Array.from({ length: 27 }, (_, index) => index + 4)]);
+    assert.deepEqual(defaultModelCapabilityConfig("volcengine-ark-video", "dreamina-seedance-2-0-fast-260128").video!.duration.values, [-1, ...Array.from({ length: 12 }, (_, index) => index + 4)]);
     for (const value of [-1, 4, 30]) assert.ok(videoDurationAllowed(profile, value));
     for (const value of [1, 3, 31]) assert.equal(videoDurationAllowed(profile, value), false);
     const config = { channels: [{ id: "custom", models: [model], modelProfiles: [{ model, protocol: "volcengine-ark-video" }] }] } as AiConfig;
