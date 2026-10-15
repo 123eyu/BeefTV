@@ -194,7 +194,7 @@ func (r *Repository) ImageCreateReceipt(userID, taskID string) (*model.ApiCallLo
 	}
 	if count > 1 {
 		var uncertain int64
-		if err := query.Where("status_code = 0 OR (status_code >= 200 AND status_code < 300)").Count(&uncertain).Error; err != nil {
+		if err := query.Where("status_code IS NULL OR status_code = 0 OR (status_code >= 200 AND status_code < 300)").Count(&uncertain).Error; err != nil {
 			return nil, err
 		}
 		if uncertain > 0 {

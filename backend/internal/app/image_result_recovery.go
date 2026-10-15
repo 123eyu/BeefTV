@@ -20,10 +20,10 @@ func (s *Service) recoverAcceptedImage(task model.Task) (*model.Task, bool, erro
 	if err != nil {
 		return nil, true, imageRecoveryError{err}
 	}
-	if receipt != nil && receipt.StatusCode == 0 {
+	if receipt != nil && (receipt.StatusCode < 200 || (receipt.StatusCode >= 200 && receipt.StatusCode < 300 && (receipt.StatusCode != 200 || receipt.Status != model.ApiCallStatusSucceeded || receipt.APIFormat != "openai" || (!strings.HasSuffix(receipt.Path, "/images/generations") && !strings.HasSuffix(receipt.Path, "/images/edits"))))) {
 		return nil, true, imageRecoveryError{errors.New("创建请求结果未知")}
 	}
-	if receipt == nil || receipt.Status != model.ApiCallStatusSucceeded || receipt.StatusCode != 200 || receipt.APIFormat != "openai" || (!strings.HasSuffix(receipt.Path, "/images/generations") && !strings.HasSuffix(receipt.Path, "/images/edits")) {
+	if receipt == nil || receipt.StatusCode < 200 || receipt.StatusCode >= 300 {
 		return nil, false, nil
 	}
 	var payload map[string]any

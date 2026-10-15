@@ -54,7 +54,7 @@ func TestRetryAcceptedImageUsesOriginalReceiptWithoutCreate(t *testing.T) {
 }
 
 func TestImageReceiptRecoveryRejectsAmbiguousAndFailedCreates(t *testing.T) {
-	for _, tc := range []string{"failed", "unknown-later", "malformed", "no-data", "business-error"} {
+	for _, tc := range []string{"failed", "unknown-later", "null-later", "accepted-201", "accepted-202", "accepted-204", "malformed", "no-data", "business-error"} {
 		t.Run(tc, func(t *testing.T) {
 			s, db, _, _ := creationTestService(t)
 			task := model.Task{ID: "task", UserID: "user", Type: "canvas_image", Status: model.TaskStatusFailed}
@@ -71,18 +71,29 @@ func TestImageReceiptRecoveryRejectsAmbiguousAndFailedCreates(t *testing.T) {
 				receipt.ResponseBody = `{"data":[]}`
 			case "business-error":
 				receipt.ResponseBody = `{"code":500,"data":[{"url":"https://8.8.8.8/image.png"}]}`
+			case "accepted-201":
+				receipt.StatusCode = 201
+			case "accepted-202":
+				receipt.StatusCode = 202
+			case "accepted-204":
+				receipt.StatusCode = 204
 			}
 			if err := db.Create(&receipt).Error; err != nil {
 				t.Fatal(err)
 			}
-			if tc == "unknown-later" {
+			if tc == "unknown-later" || tc == "null-later" {
 				receipt.ID = "unknown"
 				receipt.StatusCode = 0
 				if err := db.Create(&receipt).Error; err != nil {
 					t.Fatal(err)
 				}
+				if tc == "null-later" {
+					if err := db.Model(&receipt).Update("status_code", nil).Error; err != nil {
+						t.Fatal(err)
+					}
+				}
 			}
-			if tc == "unknown-later" || tc == "malformed" || tc == "no-data" {
+			if tc == "unknown-later" || tc == "null-later" || strings.HasPrefix(tc, "accepted-") || tc == "malformed" || tc == "no-data" {
 				if _, err := s.RetryTask(task.UserID, task.ID); err == nil {
 					t.Fatal("uncertain receipt allowed paid retry")
 				}
