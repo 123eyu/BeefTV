@@ -9,7 +9,7 @@ import type { CanvasResourceReference } from "../../src/lib/canvas/canvas-resour
 import { useConfigStore } from "../../src/stores/use-config-store";
 import { useCanvasThemeStore } from "../../src/stores/canvas/use-canvas-theme-store";
 import { CanvasNodeType, type CanvasNodeData } from "../../src/types/canvas";
-import { h3AspectConfig, h3Models } from "./h3-aspect-config";
+import { h3AspectConfig, h3Models, h3StyleModels } from "./h3-aspect-config";
 
 const dark = new URLSearchParams(location.search).get("theme") === "dark";
 useCanvasThemeStore.setState({ active: true, theme: dark ? "dark" : "light" });
@@ -23,6 +23,7 @@ function Harness() {
     return <main style={{ padding: 16, maxWidth: 430, margin: "48px auto" }}>
         <nav aria-label="验证场景" style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
             {h3Models.map((model) => <button key={model} onClick={() => setNode((current) => ({ ...current, metadata: { ...current.metadata, model: `beefapi::${model}` } }))}>{model}</button>)}
+            <button onClick={() => setNode((current) => ({ ...current, metadata: { ...current.metadata, model: `beefapi::${h3StyleModels[0]}` } }))}>H3 手绘</button>
             <button onClick={() => { setReferences(references.length ? [] : [image]); setNode((current) => ({ ...current, metadata: { ...current.metadata, videoStartFrameNodeId: undefined, videoEndFrameNodeId: undefined, videoEditOperation: undefined } })); }}>{references.length ? "断开图片" : "接入图片"}</button>
             <button onClick={() => setNode((current) => ({ ...current, metadata: { ...current.metadata, videoStartFrameNodeId: "frame", videoEndFrameNodeId: undefined } }))}>指定首帧</button>
             <button onClick={() => setNode((current) => ({ ...current, metadata: { ...current.metadata, videoStartFrameNodeId: undefined, videoEndFrameNodeId: "frame" } }))}>只用尾帧</button>
