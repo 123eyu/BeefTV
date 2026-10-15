@@ -556,6 +556,7 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
     if (protocol === "volcengine-ark-video" || protocol === "volcengine-ark-agent-plan-video") {
         video.watermark = { supported: true, default: false };
         video.operations.push("reference_to_video");
+        if (/^dreamina-seedance-2-0-(?:fast|mini)(?:-|$)/.test(model.toLowerCase().split("/").pop() || "")) video.resolutions = ["480p", "720p"];
     }
     if (protocol === "newapi-channel-2") {
         // APIMart 的 Seedance 2.0 Video Generations 协议支持参考视频/音频，
@@ -705,7 +706,7 @@ function isSeedance2Family(protocol: ModelProtocol | undefined, modelName: strin
 
 export function isSeedance25Model(modelName: string) {
     const base = String(modelName).trim().toLowerCase().split("/").pop() || "";
-    return /^seedance-2\.5(?:-|$)/.test(base) || /^doubao-seedance-2[.-]5(?:-|$)/.test(base);
+    return /^seedance-2\.5(?:-|$)/.test(base) || /^(?:doubao|dreamina)-seedance-2[.-]5(?:-|$)/.test(base);
 }
 
 function overlayOfficialSeedance2References(base: VideoCapabilityConfig["references"], is25: boolean): VideoCapabilityConfig["references"] {

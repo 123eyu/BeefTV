@@ -5,6 +5,29 @@ import test from "node:test";
 import { DEFAULT_VIDEO_PROMPT_MAX_CHARS, defaultModelCapabilityConfig, modelCapabilityConfigFor, normalizeVideoValue } from "../src/lib/model-capabilities.ts";
 import { modelCompatibilityError } from "../src/lib/model-selection.ts";
 import type { AiConfig } from "../src/stores/use-config-store.ts";
+import { seedanceTaskOptions, seedanceOmniTaskType } from "../src/lib/seedance-task-constraints.ts";
+
+test("Dreamina 2.5 enables audio-only and keeps edit and extension task constraints", () => {
+    const model = "dreamina-seedance-2-5-260628";
+    const video = defaultModelCapabilityConfig("volcengine-ark-video", model).video!;
+    assert.equal(video.references.maxImages, 30);
+    assert.equal(video.references.maxVideos, 10);
+    assert.equal(video.references.maxAudios, 10);
+    assert.equal(video.duration.max, 30);
+    assert.ok(video.operations.includes("audio_to_video"));
+    assert.deepEqual(seedanceTaskOptions(model, "16:9", 6, [], 1, "inpaint"), { ratio: "adaptive", duration: -1 });
+    assert.equal(seedanceOmniTaskType(model, "extend", 1), "extend");
+    assert.deepEqual(seedanceTaskOptions(model, "16:9", 6, ["first_frame"], 0), { ratio: "adaptive", duration: 6 });
+});
+
+test("Dreamina Fast and Mini restrict native defaults without changing standard or custom profiles", () => {
+    for (const model of ["dreamina-seedance-2-0-fast-260128", "dreamina-seedance-2-0-mini-260615"]) {
+        assert.deepEqual(defaultModelCapabilityConfig("volcengine-ark-video", model).video!.resolutions, ["480p", "720p"]);
+        const config = { channels: [{ id: "custom", models: [model], modelProfiles: [{ model, protocol: "volcengine-ark-video", capabilityConfig: { version: 1, video: { ...defaultModelCapabilityConfig("volcengine-ark-video", model).video!, resolutions: ["720p"] } } }] }] } as AiConfig;
+        assert.deepEqual(modelCapabilityConfigFor(config, `custom::${model}`).video!.resolutions, ["720p"]);
+    }
+    assert.deepEqual(defaultModelCapabilityConfig("volcengine-ark-video", "dreamina-seedance-2-0-260128").video!.resolutions, ["480p", "720p", "1080p"]);
+});
 
 test("FullVideo full models accept one or two image references as well as mixed video references", () => {
     for (const name of ["sd-native-full-2.0", "sd-native-full-2.5", "原生不卡人脸-全参2.0", "原生不卡人脸-全参2.5"]) {

@@ -13,6 +13,17 @@ const protocols = [
     ["volcengine-ark-video", "video"], ["newapi", "video"],
 ].map(([value, capability]) => ({ value, capability, enabled: true } as ModelProtocolDefinition));
 
+test("BytePlus import selects Ark without changing third-party or saved protocols", () => {
+    const item = { id: "dreamina-seedance-2-0-fast-260128" };
+    const channel = createModelChannel({ baseUrl: "https://ark.ap-southeast.bytepluses.com/api/v3" });
+    expect(serviceModelProfile(channel, item, protocols)).toMatchObject({ protocol: "volcengine-ark-video", capabilityConfig: { video: { resolutions: ["480p", "720p"] } } });
+    for (const baseUrl of ["https://ark.ap-southeast.bytepluses.com.example.com/api/v3", "https://other.example.com/v1"]) {
+        expect(serviceModelProfile({ ...channel, baseUrl }, item, protocols).protocol).toBeUndefined();
+    }
+    const saved = { model: item.id, capability: "video" as const, protocol: "newapi" as const };
+    expect(serviceModelProfile({ ...channel, modelProfiles: [saved] }, item, protocols)).toEqual(saved);
+});
+
 test("persisted boolean video options are normalized without turning false back on", () => {
     const channel = createModelChannel({ id: "custom", models: ["seedance-2.0-mini"], modelProfiles: [{ model: "seedance-2.0-mini", capability: "video", protocol: "newapi" }] });
     for (const enabled of [true, false]) {

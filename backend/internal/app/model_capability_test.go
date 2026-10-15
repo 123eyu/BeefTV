@@ -31,7 +31,7 @@ func TestSourcedSeedanceGenerationKeepsServerLimitsAndAudio(t *testing.T) {
 
 func TestNativeArkModelDefaultsAndExplicitRestrictions(t *testing.T) {
 	for _, protocol := range []string{"volcengine-ark-video", "volcengine-ark-agent-plan-video"} {
-		for _, name := range []string{"seedance-2.5", "doubao-seedance-2-5-260528"} {
+		for _, name := range []string{"seedance-2.5", "doubao-seedance-2-5-260528", "dreamina-seedance-2-5-260628"} {
 			profile := DefaultModelCapabilityConfigForModel(protocol, name).Video
 			if profile.References.MaxImages != 30 || profile.References.MaxVideos != 10 || profile.References.MaxAudios != 10 || profile.References.MinAudioDuration != 2 || profile.Duration.Max != 30 {
 				t.Fatalf("%s %s defaults = %#v", protocol, name, profile)
@@ -63,6 +63,19 @@ func TestNativeArkModelDefaultsAndExplicitRestrictions(t *testing.T) {
 			profile := DefaultModelCapabilityConfigForModel(protocol, name).Video
 			if videoCapabilityAllowsAudioOnly(profile) {
 				t.Fatalf("unknown or 2.0 model %s inferred audio-only", name)
+			}
+		}
+	}
+}
+
+func TestDreaminaFastMiniRejectUnsupportedResolution(t *testing.T) {
+	for _, name := range []string{"dreamina-seedance-2-0-fast-260128", "dreamina-seedance-2-0-mini-260615"} {
+		for _, resolution := range []string{"480p", "720p", "1080p"} {
+			profile := DefaultModelCapabilityConfigForModel("volcengine-ark-video", name)
+			input := canvasGenerationInput{Mode: "video", Prompt: "test", Config: providerConfig{InterfaceType: "volcengine-ark-video", Model: name, VideoSeconds: "5", Size: "16:9", VQuality: resolution, CapabilityConfig: profile}}
+			err := (&Service{}).validateResolvedVideoCapability(&input)
+			if (err != nil) != (resolution == "1080p") {
+				t.Fatalf("%s %s validation = %v", name, resolution, err)
 			}
 		}
 	}

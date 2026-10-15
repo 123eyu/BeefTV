@@ -172,6 +172,12 @@ func DefaultModelCapabilityConfigForModel(protocol string, modelName string) *Mo
 		video.GenerateAudio = VideoBooleanConfig{Supported: true, Default: true}
 		video.Watermark = VideoBooleanConfig{Supported: true, Default: false}
 		video.Resolutions = []string{"480p", "720p", "1080p"}
+		name := strings.ToLower(strings.TrimSpace(modelName))
+		parts := strings.Split(name, "/")
+		name = parts[len(parts)-1]
+		if name == "dreamina-seedance-2-0-fast" || strings.HasPrefix(name, "dreamina-seedance-2-0-fast-") || name == "dreamina-seedance-2-0-mini" || strings.HasPrefix(name, "dreamina-seedance-2-0-mini-") {
+			video.Resolutions = []string{"480p", "720p"}
+		}
 	case model.ChannelInterfaceNewAPIChannel1, model.ChannelInterfaceNewAPIChannel2, "video-generations-json":
 		video.References.MaxVideos, video.References.MaxAudios = 3, 3
 		video.References.MaxVideoBytes, video.References.MaxAudioBytes = 200*1024*1024, 15*1024*1024

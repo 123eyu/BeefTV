@@ -50,7 +50,7 @@ func isSeedance2Family(protocol, modelName string) bool {
 func isSeedance25Model(modelName string) bool {
 	parts := strings.Split(strings.ToLower(strings.TrimSpace(modelName)), "/")
 	base := parts[len(parts)-1]
-	return base == "seedance-2.5" || strings.HasPrefix(base, "seedance-2.5-") || strings.HasPrefix(base, "doubao-seedance-2-5") || strings.HasPrefix(base, "doubao-seedance-2.5")
+	return base == "seedance-2.5" || strings.HasPrefix(base, "seedance-2.5-") || strings.HasPrefix(base, "doubao-seedance-2-5") || strings.HasPrefix(base, "doubao-seedance-2.5") || base == "dreamina-seedance-2-5" || strings.HasPrefix(base, "dreamina-seedance-2-5-") || base == "dreamina-seedance-2.5" || strings.HasPrefix(base, "dreamina-seedance-2.5-")
 }
 
 const documentedSeedanceVideoMinPixels = 407696
