@@ -155,13 +155,16 @@ func reportResumableRetrying(opts ResumableOptions, attemptNumber int) {
 func downloadResumableAttempt(ctx context.Context, parsed *url.URL, opts ResumableOptions, headerTimeout, idleTimeout time.Duration, attemptNumber int) (ResumableResult, bool, error) {
 	sidecar := loadResumableSidecar(opts.PartialPath)
 	offset := int64(0)
-	if sidecar != nil && resumableSourceMatches(sidecar, parsed) {
+	// Combining byte ranges requires a strong validator. Last-Modified alone
+	// is not enough: this sidecar has no Date/clock evidence of its strength.
+	if sidecar != nil && strongResumableETag(sidecar.ETag) && resumableSourceMatches(sidecar, parsed) {
 		if info, err := os.Stat(opts.PartialPath); err == nil && info.Size() > 0 {
 			offset = info.Size()
 		}
 	}
 	if offset == 0 {
-		removeResumablePartial(opts.PartialPath)
+		// Keep the old cache until a full response can replace it. A failed
+		// request (including an expired signed URL) must not discard its bytes.
 		sidecar = nil
 	}
 	sidecarTotal := int64(-1)
@@ -184,11 +187,7 @@ func downloadResumableAttempt(ctx context.Context, parsed *url.URL, opts Resumab
 	ApplyDefaultOutboundHeaders(request)
 	if offset > 0 && sidecar != nil {
 		request.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
-		if strings.TrimSpace(sidecar.ETag) != "" {
-			request.Header.Set("If-Range", sidecar.ETag)
-		} else if strings.TrimSpace(sidecar.LastModified) != "" {
-			request.Header.Set("If-Range", sidecar.LastModified)
-		}
+		request.Header.Set("If-Range", sidecar.ETag)
 	}
 	response, err := OutboundHTTPClient(0).Do(request)
 	headerTimer.Stop()
@@ -246,17 +245,6 @@ func downloadResumableAttempt(ctx context.Context, parsed *url.URL, opts Resumab
 		removeResumablePartial(opts.PartialPath)
 		return ResumableResult{}, false, ErrResourceTooLarge
 	}
-	// Persist the sidecar before streaming. A process crash or kill mid-transfer
-	// never runs a failure path, and without the sidecar the next call would
-	// discard the partial and restart from byte zero.
-	saveResumableSidecar(opts.PartialPath, pending)
-	emitter.observe(offset)
-	emitter.emit(offset, total, "downloading", true)
-
-	idleTimer := time.AfterFunc(idleTimeout, cancel)
-	defer idleTimer.Stop()
-	reader := &idleResetReader{body: response.Body, timer: idleTimer, idle: idleTimeout}
-
 	file, err := os.OpenFile(opts.PartialPath, os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return ResumableResult{}, false, err
@@ -271,6 +259,19 @@ func downloadResumableAttempt(ctx context.Context, parsed *url.URL, opts Resumab
 		_ = file.Close()
 		return ResumableResult{}, false, err
 	}
+	// A full response replaces the old representation: discard its bytes before
+	// publishing the new validator. Never stream without successfully saving the
+	// matching sidecar, or a later retry could combine two different artifacts.
+	if err := saveResumableSidecar(opts.PartialPath, pending); err != nil {
+		_ = file.Close()
+		return ResumableResult{}, false, err
+	}
+	emitter.observe(offset)
+	emitter.emit(offset, total, "downloading", true)
+
+	idleTimer := time.AfterFunc(idleTimeout, cancel)
+	defer idleTimer.Stop()
+	reader := &idleResetReader{body: response.Body, timer: idleTimer, idle: idleTimeout}
 
 	written := offset
 	buffer := make([]byte, resumableReadBuffer)
@@ -398,12 +399,12 @@ func loadResumableSidecar(partialPath string) *resumableSidecar {
 	return &sidecar
 }
 
-func saveResumableSidecar(partialPath string, sidecar resumableSidecar) {
+func saveResumableSidecar(partialPath string, sidecar resumableSidecar) error {
 	raw, err := json.Marshal(sidecar)
 	if err != nil {
-		return
+		return err
 	}
-	_ = os.WriteFile(partialPath+".json", raw, 0o600)
+	return os.WriteFile(partialPath+".json", raw, 0o600)
 }
 
 func removeResumablePartial(partialPath string) {
