@@ -238,6 +238,11 @@ func DoJSON(req *http.Request, target interface{}) error {
 }
 
 func DoBinary(req *http.Request) ([]byte, string, error) {
+	var protocolErr error
+	req, protocolErr = NegotiateImageReplay(req)
+	if protocolErr != nil {
+		return nil, "", protocolErr
+	}
 	if RecoverableImageEndpoint(req) {
 		runtime, ok := RuntimeFromContext(req.Context())
 		if !ok || runtime.Images == nil {

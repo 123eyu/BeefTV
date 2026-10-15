@@ -16,7 +16,7 @@ func TestImagePreparationFailureIsNotUnknownSubmission(t *testing.T) {
 	if err := db.Migrator().DropTable(&model.ImageSubmission{}); err != nil {
 		t.Fatal(err)
 	}
-	ctx := context.WithValue(context.Background(), imageTaskContext{}, task)
+	ctx := context.WithValue(generation.WithImageReplayProtocol(context.Background(), generation.ImageReplayProtocol), imageTaskContext{}, task)
 	ctx = context.WithValue(ctx, imageAttemptContext{}, "image-attempt")
 	ctx = context.WithValue(ctx, providerSubmissionKeyContext{}, "persisted-key")
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://beeftv.app/v1/images/generations", strings.NewReader(`{}`))

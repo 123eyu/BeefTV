@@ -927,6 +927,16 @@ func finishProtocolResult(ctx context.Context, config Config, mode string, taskI
 	}
 	items := make([]interface{}, 0, len(references))
 	for index, reference := range references {
+		if mode == "image" && strings.TrimSpace(reference.DataURL) == "" && strings.TrimSpace(reference.URL) != "" {
+			value := strings.TrimSpace(reference.URL)
+			if _, err := outbound.ValidateOutboundURL(value); err != nil {
+				return nil, err
+			}
+			// Generation is complete. Persist its artifact before the existing
+			// delivery worker downloads it; a slow GET must not fail a paid create.
+			items = append(items, map[string]interface{}{"url": value, "mimeType": reference.MIMEType})
+			continue
+		}
 		var data []byte
 		var mimeType string
 		var err error

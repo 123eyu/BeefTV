@@ -38,10 +38,10 @@ func TestOutboundTransportUsesEnvironmentProxyAndHonorsNoProxy(t *testing.T) {
 
 func TestConfiguredProxyHostIsTrustedAsDeploymentEgress(t *testing.T) {
 	t.Setenv("HTTPS_PROXY", "http://172.24.176.1:10808")
-	if !configuredProxyHost("172.24.176.1") {
+	if !configuredProxyAddress("172.24.176.1:10808") {
 		t.Fatal("configuredProxyHost() rejected the configured private proxy")
 	}
-	if configuredProxyHost("172.24.176.2") {
+	if configuredProxyAddress("172.24.176.2:10808") || configuredProxyAddress("172.24.176.1:8080") {
 		t.Fatal("configuredProxyHost() accepted an unrelated private host")
 	}
 }

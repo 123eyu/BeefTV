@@ -25,6 +25,7 @@ var ErrResourceTooLarge = errors.New("远程资源超过大小上限")
 // timeout here: the caller owns the overall delivery deadline through ctx.
 type ResumableOptions struct {
 	PartialPath   string
+	Headers       http.Header
 	MaxBytes      int64
 	HeaderTimeout time.Duration
 	IdleTimeout   time.Duration
@@ -185,11 +186,34 @@ func downloadResumableAttempt(ctx context.Context, parsed *url.URL, opts Resumab
 		return ResumableResult{}, false, err
 	}
 	ApplyDefaultOutboundHeaders(request)
+	for name, values := range opts.Headers {
+		request.Header[name] = append([]string(nil), values...)
+	}
 	if offset > 0 && sidecar != nil {
 		request.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
 		request.Header.Set("If-Range", sidecar.ETag)
 	}
-	response, err := OutboundHTTPClient(0).Do(request)
+	client := OutboundHTTPClient(0)
+	checkRedirect := client.CheckRedirect
+	leftOrigin := false
+	client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+		if err := checkRedirect(next, via); err != nil {
+			return err
+		}
+		if !strings.EqualFold(next.URL.Scheme, parsed.Scheme) || !strings.EqualFold(next.URL.Host, parsed.Host) {
+			leftOrigin = true
+		}
+		if leftOrigin {
+			for name := range opts.Headers {
+				next.Header.Del(name)
+			}
+			next.Header.Del("Authorization")
+			next.Header.Del("Cookie")
+			next.Header.Del("Proxy-Authorization")
+		}
+		return nil
+	}
+	response, err := client.Do(request)
 	headerTimer.Stop()
 	if err != nil {
 		return ResumableResult{}, true, err

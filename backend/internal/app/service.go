@@ -277,8 +277,13 @@ func (s *Service) RetryTask(userID string, id string) (*model.Task, error) {
 	if s.IsDraining() {
 		return s.taskDomain().Retry(userID, id)
 	}
-	if task, err := s.repo.TaskForUser(userID, id); err == nil && task.Status == model.TaskStatusSucceeded && deliveryPaused(task.Stage) {
-		return s.resumeGenerationDownload(*task)
+	if task, err := s.repo.TaskForUser(userID, id); err == nil {
+		if task.Status == model.TaskStatusSucceeded && deliveryPaused(task.Stage) {
+			return s.resumeGenerationDownload(*task)
+		}
+		if restored, handled, err := s.recoverAcceptedImage(*task); handled {
+			return restored, err
+		}
 	}
 	return s.taskDomain().Retry(userID, id)
 }
