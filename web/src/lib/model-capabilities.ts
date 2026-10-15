@@ -539,7 +539,7 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
         video.duration = { selection: "enum", values: [4, 6, 8], default: 6 };
         video.resolutions = ["720p", "1080p"];
     }
-    if (protocol === "volcengine-ark-video" || protocol === "volcengine-ark-agent-plan-video" || protocol === "newapi-channel-1" || protocol === "newapi-channel-2") {
+    if (protocol === "volcengine-ark-video" || protocol === "volcengine-ark-agent-plan-video" || protocol === "newapi-channel-1" || protocol === "newapi-channel-2" || protocol === "video-generations-json") {
         video.references.maxVideos = 3;
         video.references.maxAudios = 3;
         video.references.maxVideoBytes = 200 * 1024 * 1024;
@@ -560,6 +560,12 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
     if (protocol === "newapi-channel-2") {
         // APIMart 的 Seedance 2.0 Video Generations 协议支持参考视频/音频，
         // 但不是火山方舟 Agent Plan，因此单独声明全模态参考能力。
+        video.operations.push("reference_to_video");
+    }
+    if (protocol === "video-generations-json") {
+        video.duration.default = 5;
+        video.resolutions = ["720p", "1080p"];
+        video.watermark = { supported: true, default: false };
         video.operations.push("reference_to_video");
     }
     if (protocol === "novita-video") {

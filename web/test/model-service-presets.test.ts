@@ -61,7 +61,32 @@ test("native provider models use installed native adapters and never invent a mi
     const regionalArk = { ...ark, baseUrl: "https://ark.cn-shanghai.volces.com/api/v3" };
     expect(serviceModelProfile(regionalArk, { id: "endpoint-abc" }, protocols, "video").protocol).toBe("volcengine-ark-video");
     const unrelated = { ...ark, baseUrl: "https://ark.cn-shanghai.volces.com.example.org/api/v3" };
-    expect(serviceModelProfile(unrelated, { id: "endpoint-abc" }, protocols, "video").protocol).toBe("newapi");
+    expect(serviceModelProfile(unrelated, { id: "endpoint-abc" }, protocols, "video").protocol).toBeUndefined();
+});
+
+test("external video protocols require an explicit contract and keep user selections", () => {
+    const channel = createModelChannel({ baseUrl: "https://www.whatstoken.ai/v1" });
+    const installed = [...protocols, { value: "video-generations-json", capability: "video", enabled: true } as ModelProtocolDefinition];
+    for (const id of ["seedance-2.5", "sora-2", "veo-video", "opaque"]) {
+        expect(serviceModelProfile(channel, { id }, installed, "video").protocol).toBeUndefined();
+    }
+    expect(serviceModelProfile(channel, { id: "seedance-2.5", supportedEndpointTypes: ["openai"] }, installed).protocol).toBeUndefined();
+    expect(serviceModelProfile(channel, { id: "seedance-2.5", supportedEndpointTypes: [" video-generations-json "] }, installed).protocol).toBe("video-generations-json");
+    expect(serviceModelProfile(channel, { id: "seedance-2.5", supportedEndpointTypes: ["video-generations-json"] }, protocols).protocol).toBeUndefined();
+    const configured = { ...channel, modelProfiles: [{ model: "seedance-2.5", capability: "video" as const, protocol: "volcengine-ark-video" }] };
+    expect(serviceModelProfile(configured, { id: "seedance-2.5" }, installed).protocol).toBe("volcengine-ark-video");
+    expect(serviceModelProfile({ ...channel, baseUrl: "https://api.openai.com/v1" }, { id: "sora-2" }, installed).protocol).toBe("newapi");
+});
+
+test("saving a model inherits an enabled channel protocol of the same capability without mutating its draft", () => {
+    const channel = createModelChannel({ baseUrl: "https://video.example.com/v1", interfaceType: "video-generations-json", modelProfiles: [{ model: "seedance-2.5", capability: "video" }] });
+    const installed = [...protocols, { value: "video-generations-json", capability: "video", enabled: true } as ModelProtocolDefinition];
+    expect(serviceModelProfile(channel, { id: "seedance-2.5" }, installed).protocol).toBe("video-generations-json");
+    expect(channel.modelProfiles?.[0]?.protocol).toBeUndefined();
+    expect(serviceModelProfile(channel, { id: "seedance-2.5" }, protocols).protocol).toBeUndefined();
+    expect(serviceModelProfile(channel, { id: "seedance-2.5" }, installed.map((p) => ({ ...p, enabled: false }))).protocol).toBeUndefined();
+    expect(serviceModelProfile({ ...channel, interfaceType: "chat-completion" }, { id: "seedance-2.5" }, installed).protocol).toBeUndefined();
+    expect(serviceModelProfile(channel, { id: "sd-native-full-2.5" }, installed).protocol).toBe("video-generations-json");
 });
 
 test("refresh keeps selected/manual models and user capability limits", () => {

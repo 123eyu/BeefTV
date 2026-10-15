@@ -29,6 +29,14 @@ func IsSeedanceVideoConfig(config Config) bool {
 	return strings.Contains(modelName, "seedance") || strings.Contains(modelName, "doubao-seedance") || IsArkPlanVideoConfig(config)
 }
 
+// Empty interface types use the legacy hand-written Seedance task path.
+// Explicit third-party protocols own their image roles and parameter shape.
+func usesSeedanceTaskOptions(config Config) bool {
+	return strings.TrimSpace(config.InterfaceType) == "" ||
+		model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(config.InterfaceType)) ||
+		config.InterfaceType == "seedance-videos-compatible"
+}
+
 func IsBeefAPIVideoConfig(ctx context.Context, config Config) bool {
 	if testBase := beefAPITestBaseURL(ctx); testBase != "" {
 		got := strings.TrimRight(strings.TrimSpace(config.BaseURL), "/")

@@ -6,7 +6,7 @@ import { nanoid } from "nanoid";
 import { scopedLocalStorage } from "@/lib/user-scope";
 import { beefAPIVideoContract, isBeefAPIEndpoint } from "@/lib/beefapi-video-contracts";
 import { beefAPIImageContract } from "@/lib/beefapi-image-contracts";
-import { defaultProtocolForCapability, defaultProtocolForModel, modelProtocolCapability, normalizeModelProtocol, usesOpenAICompatibleProtocolDefault, type ModelProtocol } from "@/lib/model-protocols";
+import { defaultProtocolForCapability, defaultProtocolForModel, inferProtocolCapabilityFromModel, modelProtocolCapability, normalizeModelProtocol, usesOpenAICompatibleProtocolDefault, type ModelProtocol } from "@/lib/model-protocols";
 import { normalizeVideoBoolean, normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
 import { defaultModelCapabilityConfig, workflowFieldRole, workflowFieldSafeToOverride, workflowVideoFieldsFromJson, type ModelCapabilityConfig } from "@/lib/model-capabilities";
 import { useUserStore } from "@/stores/use-user-store";
@@ -1084,9 +1084,10 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
     const model = modelOptionName(value || config.model);
     const modelProfile = channel.modelProfiles?.find((item) => item.model === model);
     const modelProtocol = normalizeModelProtocol(modelProfile?.protocol);
+    const capability = modelProfile?.capability || inferProtocolCapabilityFromModel(model);
     const interfaceType = modelProtocol
         || normalizeModelProtocol(channel.interfaceType)
-        || (channel.scope === "system" || !usesOpenAICompatibleProtocolDefault(channel.apiFormat)
+        || (capability === "video" || channel.scope === "system" || !usesOpenAICompatibleProtocolDefault(channel.apiFormat)
             ? undefined
             : (modelProfile?.capability ? defaultProtocolForCapability(modelProfile.capability) : defaultProtocolForModel(model)));
     return {

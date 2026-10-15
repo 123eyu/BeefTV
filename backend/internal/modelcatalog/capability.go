@@ -172,7 +172,7 @@ func DefaultModelCapabilityConfigForModel(protocol string, modelName string) *Mo
 		video.GenerateAudio = VideoBooleanConfig{Supported: true, Default: true}
 		video.Watermark = VideoBooleanConfig{Supported: true, Default: false}
 		video.Resolutions = []string{"480p", "720p", "1080p"}
-	case model.ChannelInterfaceNewAPIChannel1, model.ChannelInterfaceNewAPIChannel2:
+	case model.ChannelInterfaceNewAPIChannel1, model.ChannelInterfaceNewAPIChannel2, "video-generations-json":
 		video.References.MaxVideos, video.References.MaxAudios = 3, 3
 		video.References.MaxVideoBytes, video.References.MaxAudioBytes = 200*1024*1024, 15*1024*1024
 		video.References.MaxVideoDuration, video.References.MaxAudioDuration = 15, 15
@@ -206,6 +206,12 @@ func DefaultModelCapabilityConfigForModel(protocol string, modelName string) *Mo
 		video.Watermark = VideoBooleanConfig{Supported: true, Default: false}
 	case model.ChannelInterfaceAgnesVideo:
 		video = applyModelSpecificVideoCapability(video, protocol, modelName)
+	}
+	if protocol == "video-generations-json" {
+		video.Duration.Default = 5
+		video.Resolutions = []string{"720p", "1080p"}
+		video.Watermark = VideoBooleanConfig{Supported: true, Default: false}
+		video.Operations = appendUniqueString(video.Operations, "reference_to_video")
 	}
 	if isSeedance2Family(protocol, modelName) {
 		if model.ChannelInterfaceType(protocol) == model.ChannelInterfaceNewAPIVideo {

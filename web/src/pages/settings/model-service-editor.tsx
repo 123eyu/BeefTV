@@ -107,6 +107,10 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
         const item = catalog.find((candidate) => candidate.id === id) || { id };
         const profile = serviceModelProfile(draft, item, protocols);
         setDraft((current) => ({ ...current, models: enabled ? [...new Set([...current.models, id])] : current.models.filter((model) => model !== id), modelProfiles: [...(current.modelProfiles || []).filter((p) => p.model !== id), profile] }));
+        if (enabled && !profile.protocol) {
+            setNotice("请在高级模型设置中，按服务商文档选择请求协议。视频接口的地址和格式可能不同。");
+            setEditingCapabilities(true);
+        }
         setError("");
     };
     const addManual = () => {
