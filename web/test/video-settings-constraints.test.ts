@@ -5,6 +5,8 @@ import { createVideoTransport } from "../src/services/api/video-transport";
 import { videoResponseTools } from "../src/services/api/video-response";
 import { resolveModelRequestConfig } from "../src/stores/use-config-store";
 import { h3AspectConfig, h3Models } from "./fixtures/h3-aspect-config";
+import { buildVideoGenerationMetadata } from "../src/lib/canvas/canvas-project-generation";
+import { CanvasNodeType, type CanvasNodeData, type CanvasNodeMetadata } from "../src/types/canvas";
 
 for (const model of h3Models) {
     test(`${model}: settings reflect the actual keyframe payload and restore the selected ratio`, async () => {
@@ -34,9 +36,7 @@ for (const model of h3Models) {
 
 test("H3 base ordinary references retain an independent ratio", () => {
     const config = h3AspectConfig("minimax-h3");
-    for (const metadata of [undefined, { videoEditOperation: "reference_to_video" as const }]) {
-        expect(videoSettingsConstraints(config, { imageCount: 1 }, metadata)).toEqual({});
-    }
+    expect(videoSettingsConstraints(config, { imageCount: 1 }, { videoEditOperation: "reference_to_video" })).toEqual({});
     expect(videoSettingsConstraints(config, { imageCount: 1, videoCount: 1 })).toEqual({});
     expect(videoSettingsConstraints(config, { imageCount: 1, audioCount: 2 })).toEqual({});
 });
@@ -72,7 +72,7 @@ test("mixed H3 references with an explicit frame are rejected before dispatch", 
     const deps = { response: videoResponseTools, transport: { ...createVideoTransport(resolved), post: async () => { throw new Error("must not dispatch"); } } };
     const image = { id: "frame", name: "frame.png", type: "image/png", dataUrl: "data:image/png;base64,dGVzdA==" };
     const video = { id: "video", name: "video.mp4", type: "video/mp4", url: "https://example.com/fixture.mp4" };
-    await expect(createVideoGenerationsTask(deps, resolved, "minimax-h3", "Fixture", [image], [video], [], { videoStartFrameNodeId: "frame" })).rejects.toThrow("不能同时指定首帧或尾帧");
+    await expect(createVideoGenerationsTask(deps, resolved, "minimax-h3", "Fixture", [image], [video], [], { videoStartFrameNodeId: "frame" })).rejects.toThrow("参考模式不能同时指定关键帧");
     expect(videoSettingsConstraints(config, { imageCount: 1, videoCount: 1 }, { videoStartFrameNodeId: "frame" })).toEqual({});
 });
 
@@ -84,9 +84,43 @@ test("character representations mixed with explicit frames explain the pre-dispa
         const deps = { response: videoResponseTools, transport: { ...createVideoTransport(resolved), post: async <T>() => { dispatched += 1; return { id: "fixture" } as T; } } };
         const images = ["frame", "character-reference-1"].map((id) => ({ id, name: "frame.png", type: "image/png", dataUrl: "data:image/png;base64,dGVzdA==" }));
         for (const metadata of [{ videoStartFrameNodeId: "frame" }, { videoEndFrameNodeId: "frame" }]) {
-            await expect(createVideoGenerationsTask(deps, resolved, model, "Fixture", images, [], [], metadata)).rejects.toThrow("图片须指定为首帧或尾帧");
+            await expect(createVideoGenerationsTask(deps, resolved, model, "Fixture", images, [], [], metadata)).rejects.toThrow("图片须指定角色");
             expect(videoSettingsConstraints(config, { imageCount: 1, characterCount: 1 }, metadata).ratioHelp).toContain("不能与指定的首尾帧同时使用");
         }
         expect(dispatched).toBe(0);
     }
 });
+
+for (const model of h3Models) {
+    test(`${model}: ratio controls match canvas metadata and the dispatched request`, async () => {
+        const config = h3AspectConfig(model);
+        const resolved = resolveModelRequestConfig(config, config.model);
+        const bodies: Record<string, unknown>[] = [];
+        const deps = { response: videoResponseTools, transport: { ...createVideoTransport(resolved), post: async <T>(_url: string, body: unknown) => { bodies.push(body as Record<string, unknown>); return { id: "fixture" } as T; } } };
+        const image = (id: string) => ({ id, name: `${id}.png`, type: "image/png", dataUrl: "data:image/png;base64,dGVzdA==" });
+        const video = { id: "motion", name: "motion.mp4", type: "video/mp4", url: "https://example.com/motion.mp4" };
+        const audio = (id: string) => ({ id, name: `${id}.mp3`, type: "audio/mpeg", url: `https://example.com/${id}.mp3` });
+        const scenarios: Array<{ images: string[]; metadata?: Partial<CanvasNodeMetadata>; videos?: boolean; audios?: boolean; locked: boolean }> = [
+            { images: ["first"], locked: true },
+            { images: ["first"], metadata: { videoEditOperation: "image_to_video" }, locked: true },
+            { images: ["first"], metadata: { videoEditOperation: "reference_to_video" }, locked: false },
+            { images: ["first"], videos: true, locked: false },
+            { images: ["first"], audios: true, locked: false },
+            { images: ["first", "second", "third"], locked: false },
+            ...(model === "minimax-h3-max" ? [
+                { images: ["first", "last", "middle"], metadata: { videoStartFrameNodeId: "first", videoEndFrameNodeId: "last", videoMiddleFrameNodeId: "middle", videoMiddleFrameTime: 2 }, locked: false },
+                { images: ["first", "character-reference"], metadata: { videoStartFrameNodeId: "first", videoEditOperation: "reference_to_video" as const }, locked: false },
+            ] : []),
+        ];
+        for (const scenario of scenarios) {
+            const images = scenario.images.map(image), videos = scenario.videos ? [video] : [], audios = scenario.audios ? [audio("voice1"), audio("voice2")] : [];
+            const node = { id: "node", type: CanvasNodeType.Video, metadata: scenario.metadata } as CanvasNodeData;
+            const metadata = buildVideoGenerationMetadata(node, { referenceImages: images, referenceVideos: videos, referenceAudios: audios }, config);
+            const constraints = videoSettingsConstraints(config, { imageCount: images.length, videoCount: videos.length, audioCount: audios.length }, node.metadata);
+            await createVideoGenerationsTask(deps, resolved, model, "Fixture", images, videos, audios, metadata);
+            expect(Boolean(constraints.ratioLabel)).toBe(scenario.locked);
+            expect(bodies.at(-1)!.aspect_ratio).toBe(scenario.locked ? undefined : "9:16");
+        }
+        expect(config.size).toBe("9:16");
+    });
+}

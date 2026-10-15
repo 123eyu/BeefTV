@@ -1,4 +1,5 @@
 import { beefAPIVideoContract, isBeefAPIEndpoint } from "./beefapi-video-contracts";
+import { h3ReferenceMode, h3VideoOperation } from "./h3-video";
 import { seedanceSettingsConstraints, type SeedanceSettingsConstraints } from "./seedance-task-constraints";
 import { modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { CanvasNodeMetadata } from "@/types/canvas";
@@ -8,7 +9,7 @@ export type VideoSettingsConstraints = SeedanceSettingsConstraints & { ratioHelp
 export function videoSettingsConstraints(
     config: AiConfig,
     input: { imageCount?: number; videoCount?: number; audioCount?: number; characterCount?: number },
-    metadata?: Pick<CanvasNodeMetadata, "videoEditOperation" | "videoStartFrameNodeId" | "videoEndFrameNodeId">,
+    metadata?: Pick<CanvasNodeMetadata, "videoEditOperation" | "videoStartFrameNodeId" | "videoEndFrameNodeId" | "videoMiddleFrameNodeId">,
 ): VideoSettingsConstraints {
     const model = modelOptionName(config.model);
     const imageCount = input.imageCount || 0;
@@ -19,12 +20,13 @@ export function videoSettingsConstraints(
     const resolved = resolveModelRequestConfig(config, config.model);
     const h3 = isBeefAPIEndpoint(resolved.baseUrl) && beefAPIVideoContract(model) && ["minimax-h3", "minimax-h3-max", "minimax-h3-max-turbo"].includes(model);
     if (h3) {
-        // Match the gateway request's keyframe/reference split without changing saved settings.
-        const referenceMode = model === "minimax-h3" && (metadata?.videoEditOperation === "reference_to_video" || videoCount > 0 || audioCount > 1 || imageCount > 0 && !first && !last);
+        // Canvas submission resolves the operation before building the provider payload.
+        const counts = { imageCount, videoCount, audioCount };
+        const referenceMode = h3ReferenceMode(model, counts, { ...metadata, videoEditOperation: h3VideoOperation(model, counts, metadata?.videoEditOperation) });
         if (referenceMode) return {};
         if (!imageCount) {
             // Character representations are resolved at submission; a card cover is not a keyframe.
-            return model !== "minimax-h3" && input.characterCount
+            return input.characterCount
                 ? { ratioHelp: "角色卡带参考图时，视频比例由参考图决定；所选比例只在没有参考图时生效。" }
                 : {};
         }

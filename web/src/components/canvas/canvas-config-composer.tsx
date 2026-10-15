@@ -11,8 +11,11 @@ import { generationInputMentionLabel, normalizeGenerationNodeMentionTokens, type
 import { CanvasVideoPromptTools } from "./canvas-video-prompt-tools";
 import { CanvasPresetPicker, type CanvasPromptPreset } from "./canvas-preset-picker";
 import type { CanvasGenerationMode, CanvasNodeMetadata, CanvasWorkspaceMode } from "@/types/canvas";
+import { CanvasH3ReferenceOrder } from "./canvas-h3-reference-order";
+import { isH3Style } from "@/lib/h3-video";
 
 type CanvasConfigComposerProps = {
+    model?: string;
     value: string;
     inputs: NodeGenerationInput[];
     skillReferences?: CanvasResourceReference[];
@@ -44,7 +47,7 @@ type ComposerCandidate =
 
 export const CONFIG_REFERENCE_PATTERN = /@\[node:([^\]]+)\]|@(图片|视频|音频|文本|角色|绘图)(\d+)/g;
 
-export function CanvasConfigComposer({ value, inputs, skillReferences = [], generationMode, metadata, onChange, onMetadataChange, onClose, workspaceMode = "professional" }: CanvasConfigComposerProps) {
+export function CanvasConfigComposer({ value, inputs, skillReferences = [], generationMode, metadata, model="", onChange, onMetadataChange, onClose, workspaceMode = "professional" }: CanvasConfigComposerProps) {
     const theme = canvasThemes[useActiveTheme()];
     const editorRef = useRef<HTMLDivElement>(null);
     const composingRef = useRef(false);
@@ -185,8 +188,11 @@ export function CanvasConfigComposer({ value, inputs, skillReferences = [], gene
                 <div className="mb-3 rounded-lg px-2 py-2" style={{ background: theme.node.fill }}>
                     <CanvasVideoPromptTools
                         metadata={metadata}
+                        middleFrameSupported={model.split("::").at(-1)==="minimax-h3-max"}
+                        endFrameSupported={!isH3Style(model)}
+                        referenceLabel={workflowVideoReferenceMode?"工作流参考":"参考生成"}
                         frameOptions={videoFrameOptions}
-                        referenceMode={workflowVideoReferenceMode ? "all" : "frames"}
+                        referenceMode={workflowVideoReferenceMode || model.split("::").at(-1)==="minimax-h3" && metadata?.videoEditOperation==="reference_to_video" ? "all" : "frames"}
                         referenceSummary={{
                             imageCount: inputs.filter((input) => input.type === "image" || input.type === "character").length,
                             videoCount: inputs.filter((input) => input.type === "video").length,
@@ -194,6 +200,7 @@ export function CanvasConfigComposer({ value, inputs, skillReferences = [], gene
                         }}
                         onMetadataChange={onMetadataChange}
                     />
+                    <CanvasH3ReferenceOrder model={model} inputs={inputs} metadata={metadata} onChange={onMetadataChange} />
                 </div>
             ) : null}
             <div className="canvas-config-composer-editor relative rounded-lg" style={{ background: theme.node.fill }}>

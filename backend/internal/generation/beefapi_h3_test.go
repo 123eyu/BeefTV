@@ -52,9 +52,9 @@ func TestBeefAPIH3BodyKeepsKeyframeRolesAndResolution(t *testing.T) {
 }
 func TestBeefAPIH3RejectsUnsupportedInputs(t *testing.T) {
 	for _, input := range []Input{
-		{Config: Config{Model: "minimax-h3-max-turbo", VideoSeconds: "2.5"}},
+		{Config: Config{Model: "minimax-h3-max-turbo", VideoSeconds: "0.91"}},
 		{Config: Config{Model: "minimax-h3-max-turbo", VQuality: "720"}},
-		{Config: Config{Model: "minimax-h3-max-turbo"}, ReferenceVideos: []Media{{URL: "https://example.com/v.mp4"}}},
+		{Config: Config{Model: "minimax-h3-max-turbo"}, ReferenceVideos: []Media{{URL: "file:///tmp/v.mp4"}}},
 		{Config: Config{Model: "minimax-h3-max-turbo"}, ReferenceImages: []Media{{ID: "a", URL: "https://example.com/a.png"}}, Metadata: map[string]interface{}{"videoEndFrameNodeId": "missing"}},
 	} {
 		if _, err := BeefAPIVideoRequestBody(input); err == nil {

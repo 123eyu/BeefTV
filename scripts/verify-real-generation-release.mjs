@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { validateH3FamilyRelease } from './h3-family-release-contract.mjs';
+import { validateVideoDirectDeliveryRelease } from './video-direct-delivery-release-contract.mjs';
 import {
   REQUIRED_AGENT_CHECK_IDS,
   DETERMINISTIC_FAULT_CHECK_IDS,
@@ -28,6 +29,66 @@ const receipt = JSON.parse(readFileSync(`docs/release-evidence/${version}.json`,
 const fail = message => { throw new Error(`Real generation release gate: ${message}`); };
 const nonempty = value => typeof value === 'string' && value.trim() !== '';
 if (receipt.version !== version || receipt.sourceDigest !== sourceDigest) fail('receipt does not match this release source');
+if (version === 'v1.7.23') {
+  const evidence = value => Array.isArray(value) && value.length > 0 && value.every(nonempty);
+  const bound = value => value?.sourceDigest === sourceDigest && evidence(value.evidence);
+  if (receipt.ownerException?.scope !== 'late-merged-installer-canvas-bind-20261015'
+    || receipt.ownerException.approvedBy !== 'Ender'
+    || receipt.ownerException.instruction !== '把那两个lucas没review的群里在提醒一遍lucas 然后发版吧 发版后告诉lucas这版更新了什么'
+    || !evidence(receipt.ownerException.evidence)
+    || receipt.releaseAuthorization?.additionalHumanReplyRequired !== false
+    || receipt.releaseAuthorization.scope !== 'v1.7.23 only'
+    || receipt.baseRelease !== 'v1.7.22'
+    || receipt.baseCommit !== 'a99c0c41c0bbb71a4b2b2479e5e5c14f14c3151a'
+    || JSON.stringify(receipt.includedPullRequests) !== JSON.stringify([151])
+    || receipt.paidSubmissionPathChanged !== false
+    || receipt.liveMatrixStatus !== 'not_run_owner_waived'
+    || receipt.agentAcceptanceStatus !== 'not_run_owner_waived'
+    || receipt.acceptanceComplete !== false) fail('v1.7.23 requires exact owner release authorization and v1.7.22 base');
+  if (receipt.paidSubmissionLimit !== 0 || receipt.newBudgetCNY !== 0
+    || receipt.newSpentCNY !== 0 || receipt.newPendingCNY !== 0
+    || !Array.isArray(receipt.cases) || receipt.cases.length !== 0
+    || !Array.isArray(receipt.billingAttempts) || receipt.billingAttempts.length !== 0
+    || [receipt.budgetCNY, receipt.spentCNY, receipt.pendingCNY].some(value => value !== null)) fail('v1.7.23 must not add paid generation or zero historical totals');
+  if (receipt.priorFinancialUncertainty?.status !== 'unresolved'
+    || receipt.priorFinancialUncertainty.carriedFromVersion !== 'v1.7.22'
+    || receipt.priorFinancialUncertainty.pendingCNY !== null
+    || !evidence(receipt.priorFinancialUncertainty.evidence)) fail('v1.7.23 must retain v1.7.22 financial uncertainty');
+  if (receipt.review?.result !== 'approved' || receipt.review.independent !== true
+    || !nonempty(receipt.review.reviewer) || !bound(receipt.review)
+    || receipt.upgrade?.preservedData !== true || !bound(receipt.upgrade)) fail('v1.7.23 requires current-source review and data preservation');
+  for (const [id, method] of Object.entries({
+    windowsInstallerUX: 'test',
+    canvasMediaBindAndRetry: 'test',
+    noNewPaidGeneration: 'source-diff',
+    localReleaseGate: 'local-script',
+    ci: 'github-actions',
+  })) {
+    const item = receipt.verification?.[id];
+    if (item?.status !== 'passed' || item.method !== method || !bound(item)) fail(`v1.7.23 missing targeted evidence: ${id}`);
+  }
+  const packages = receipt.packages;
+  const platforms = ['darwin-arm64', 'darwin-amd64', 'windows-amd64', 'linux-amd64'];
+  if (!Array.isArray(packages?.platforms) || JSON.stringify([...packages.platforms].sort()) !== JSON.stringify([...platforms].sort())
+    || packages.status !== 'pending_release_workflow' || packages.archives != null
+    || receipt.releasePublished !== false || receipt.releaseComplete !== false
+    || packages.windowsReleasedUpgradeAndRollbackBeforeUpload !== true || packages.finalArchiveSmokeBeforeUpload !== true
+    || packages.linuxNativeWindowBeforeUpload !== true || packages.signedManifestBeforePublish !== true
+    || packages.publicReadbackAfterPublish !== true || !evidence(packages.workflowEvidence)) fail('v1.7.23 must enforce all four final-package gates');
+  console.log('v1.7.23 Windows installer and canvas media bind package; no new paid generation; full matrix NOT run; four-platform package gates pending.');
+  process.exit(0);
+}
+if (version === 'v1.7.22') {
+  const { validateVideoUnifiedDeliveryRelease, releaseVideoProtocolIds } = await import('./video-unified-delivery-release-contract.mjs');
+  validateVideoUnifiedDeliveryRelease(receipt, sourceDigest, releaseVideoProtocolIds('plugin-packages'));
+  console.log('v1.7.22 original-task video retrieval acceptance; zero new paid submissions, current-source native display, review and protocol checks; full matrix and assistant suite NOT run; four-platform package gates pending.');
+  process.exit(0);
+}
+if (version === 'v1.7.21') {
+  validateVideoDirectDeliveryRelease(receipt, sourceDigest);
+  console.log('v1.7.21 single native video delivery acceptance; one settled generation, current-source review and recovery checks; full matrix and assistant suite NOT run; four-platform package gates pending.');
+  process.exit(0);
+}
 if (version === 'v1.7.20') {
   validateH3FamilyRelease(receipt, sourceDigest);
   // Release Actions checks out a shallow squash commit, so the executed branch

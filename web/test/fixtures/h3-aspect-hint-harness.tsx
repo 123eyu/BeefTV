@@ -35,6 +35,7 @@ function Harness() {
             <CanvasNodePromptPanel projectId="fixture-project" node={node} isRunning={false} mentionReferences={references} onPromptChange={(_id, composerContent) => setNode((current) => ({ ...current, metadata: { ...current.metadata, composerContent } }))} onConfigChange={(_id, patch) => setNode((current) => ({ ...current, metadata: { ...current.metadata, ...patch } }))} onGenerate={() => {}} onRemoveReference={() => setReferences([])} />
         </section>
         <output hidden data-testid="saved-size">{node.metadata?.size}</output>
+        <output hidden data-testid="saved-seed">{node.metadata?.videoH3Options?.seed}</output>
     </main>;
 }
 

@@ -5,6 +5,8 @@ import { ChevronDown, Dice5, Image as ImageIcon, LoaderCircle, MessageSquare, Mu
 
 import { Switch } from "@/components/ui/base/switch";
 import { isSeedance25Model } from "@/lib/model-capabilities";
+import { isH3Model, h3VideoOperation } from "@/lib/h3-video";
+import { CanvasH3Controls, CanvasH3UnsupportedFrames } from "./canvas-h3-controls";
 import { resolveVideoOperation } from "@/lib/model-selection";
 
 import {
@@ -282,11 +284,11 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
 
             {mode === "video" && !simpleMode ? (
                 <div className="cursor-default" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
-                    {workflowProvider === "model" && isSeedance25Model(modelOptionName(config.model)) ? (
+                    {workflowProvider === "model" && (isSeedance25Model(modelOptionName(config.model)) || isH3Model(config.model)) ? (
                         <Select
                             aria-label="视频生成模式"
                             className="w-full"
-                            value={resolveVideoOperation(inputSummary, node.metadata?.videoEditOperation)}
+                            value={isH3Model(config.model) ? h3VideoOperation(config.model, inputSummary, node.metadata?.videoEditOperation) : resolveVideoOperation(inputSummary, node.metadata?.videoEditOperation)}
                             options={videoOperationOptions
                                 .filter(
                                     (option) =>
@@ -297,7 +299,10 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
                                     label: option.value === "image_to_video" ? "首帧 / 首尾帧" : option.value === "reference_to_video" ? "参考生成" : option.label,
                                     disabled:
                                         option.value === "image_to_video"
-                                            ? inputSummary.imageCount + inputSummary.characterCount < 1 || inputSummary.imageCount + inputSummary.characterCount > 2 || inputSummary.videoCount > 0 || inputSummary.audioCount > 0
+                                            ? inputSummary.imageCount + inputSummary.characterCount < 1 ||
+                                              inputSummary.imageCount + inputSummary.characterCount > 2 ||
+                                              inputSummary.videoCount > 0 ||
+                                              (!isH3Model(config.model) && inputSummary.audioCount > 0)
                                             : ["inpaint", "extend"].includes(option.value)
                                               ? inputSummary.videoCount < 1
                                               : option.value === "text_to_video"
@@ -315,12 +320,23 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, onConfigC
                             title="已连接的图片、视频和音频会按当前工作流字段映射自动传入"
                         >
                             <ImageIcon className="size-3.5 shrink-0 opacity-75" />
-                            <span className="shrink-0 font-medium">全能参考</span>
+                            <span className="shrink-0 font-medium">{modelCapabilityConfigFor(config, config.model).video?.operations.includes("reference_to_video") ? "参考生成" : "图片生成"}</span>
                             <span className="min-w-0 truncate opacity-60">已连接媒体自动映射</span>
                         </div>
                     )}
                 </div>
             ) : null}
+
+            {mode === "video" && workflowProvider === "model" && !simpleMode && isH3Model(config.model) ? (
+                <CanvasH3Controls
+                    model={config.model}
+                    value={node.metadata?.videoH3Options}
+                    duration={config.videoSeconds}
+                    onDurationChange={(seconds) => onConfigChange(node.id, { seconds })}
+                    onChange={(videoH3Options) => onConfigChange(node.id, { videoH3Options })}
+                />
+            ) : null}
+            {mode === "video" && isH3Model(config.model) ? <CanvasH3UnsupportedFrames model={config.model} metadata={node.metadata} onChange={(patch) => onConfigChange(node.id, patch)} /> : null}
 
             {simpleMode ? (
                 <div className="rounded-lg px-3 py-2.5 text-[var(--fs-label)]" style={{ background: theme.node.fill, color: theme.node.muted }}>

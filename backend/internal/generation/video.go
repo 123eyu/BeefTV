@@ -36,6 +36,7 @@ func RunVideoTask(ctx context.Context, input Input) (map[string]interface{}, err
 }
 
 func RunVideoTaskWithPolicy(ctx context.Context, input Input, pollPolicy VideoPollPolicy) (map[string]interface{}, error) {
+	pollPolicy = videoPollPolicyForConfig(ctx, input.Config, pollPolicy)
 	// BeefAPI exposes its flat /v1/videos contract. Route it before
 	// protocol adapters so stale persisted channel metadata cannot select an
 	// incompatible legacy multipart or flat request shape.
@@ -126,24 +127,22 @@ func RunVideoTaskWithPolicy(ctx context.Context, input Input, pollPolicy VideoPo
 		if err := GetJSON(ctx, input.Config, "/videos/"+id, &state); err != nil {
 			return VideoPollOutcome{}, err
 		}
-		if data, ok := state["data"].(map[string]interface{}); ok {
-			state = data
+		var err error
+		state, err = ValidateVideoTaskState(id, state)
+		if err != nil {
+			return VideoPollOutcome{}, err
 		}
 		status := strings.ToLower(stringField(state, "status"))
-		if status == "completed" || status == "succeeded" || status == "success" || status == "done" {
+		if VideoTaskSucceeded(status) {
 			if videoURL := NewAPIVideoResultURL(state); videoURL != "" {
-				data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, func(ctx context.Context) ([]byte, string, error) {
-					return getVideoResultWithGatewayFallback(ctx, input.Config, videoURL, id)
-				})
+				data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, videoResultDownloader(input.Config, videoURL, id, newAPIVideoURLResolver(input.Config, id)))
 				if err != nil {
 					return VideoPollOutcome{}, fmt.Errorf("视频结果下载失败（任务 %s）：%w", id, err)
 				}
 				mimeType = NormalizedMediaMIMEType(mimeType, data)
 				return VideoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video", "video": map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}}}, nil
 			}
-			data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, func(ctx context.Context) ([]byte, string, error) {
-				return getVideoResultWithGatewayFallback(ctx, input.Config, APIURL(input.Config.BaseURL, "/videos/"+id+"/content"), id)
-			})
+			data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, videoResultDownloader(input.Config, APIURL(input.Config.BaseURL, "/videos/"+id+"/content"), id, newAPIVideoURLResolver(input.Config, id)))
 			if err != nil {
 				return VideoPollOutcome{}, err
 			}
@@ -213,6 +212,7 @@ func GrokVideoBody(input Input) (map[string]interface{}, error) {
 }
 
 func RunSeedanceVideosTask(ctx context.Context, input Input, pollPolicy VideoPollPolicy) (map[string]interface{}, error) {
+	pollPolicy = videoPollPolicyForConfig(ctx, input.Config, pollPolicy)
 	// 恢复任务已有 provider ID 时只能继续查询，绝不能重新 create，否则会产生第二个上游任务。
 	// create 成功后的 poll/download 任一失败都保留失败或结果未知语义，不降级成“成功但无内容”。
 	id := ResumedProviderRequestID(ctx)
@@ -261,29 +261,26 @@ func RunSeedanceVideosTask(ctx context.Context, input Input, pollPolicy VideoPol
 		if err := GetJSON(ctx, input.Config, "/videos/"+id, &state); err != nil {
 			return VideoPollOutcome{}, err
 		}
-		if data, ok := state["data"].(map[string]interface{}); ok {
-			state = data
+		var err error
+		state, err = ValidateVideoTaskState(id, state)
+		if err != nil {
+			return VideoPollOutcome{}, err
 		}
 		status, videoURL := SeedancePollStatusAndURL(state)
-		if status == "completed" || status == "succeeded" {
+		if VideoTaskSucceeded(status) {
 			if videoURL != "" {
-				data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, func(ctx context.Context) ([]byte, string, error) {
-					// Enterprise BeefAPI result URLs require the same channel
-					// credential as the poll request; an anonymous external fetch
-					// returns 401 even though generation itself succeeded.
-					return getVideoResultWithGatewayFallback(ctx, input.Config, videoURL, id)
-				})
+				data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, videoResultDownloader(input.Config, videoURL, id, newAPIVideoURLResolver(input.Config, id)))
 				if err != nil {
 					return VideoPollOutcome{}, fmt.Errorf("视频结果下载失败：%w", err)
 				}
+				mimeType = NormalizedMediaMIMEType(mimeType, data)
 				return VideoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video", "video": map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}}}, nil
 			}
-			data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, func(ctx context.Context) ([]byte, string, error) {
-				return getVideoResultWithGatewayFallback(ctx, input.Config, APIURL(input.Config.BaseURL, "/videos/"+id+"/content"), id)
-			})
+			data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, videoResultDownloader(input.Config, APIURL(input.Config.BaseURL, "/videos/"+id+"/content"), id, newAPIVideoURLResolver(input.Config, id)))
 			if err != nil {
 				return VideoPollOutcome{}, fmt.Errorf("视频任务成功但未返回视频 URL，备用内容下载失败：%w", err)
 			}
+			mimeType = NormalizedMediaMIMEType(mimeType, data)
 			return VideoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video", "video": map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}}}, nil
 		}
 		if status == "failed" || status == "cancelled" || status == "expired" {
@@ -531,8 +528,10 @@ func RunSeedanceAgentPlanVideoTask(ctx context.Context, input Input, pollPolicy 
 		if err := GetJSON(ctx, input.Config, "/contents/generations/tasks/"+id, &state); err != nil {
 			return VideoPollOutcome{}, err
 		}
-		if data, ok := state["data"].(map[string]interface{}); ok {
-			state = data
+		var err error
+		state, err = ValidateVideoTaskState(id, state)
+		if err != nil {
+			return VideoPollOutcome{}, err
 		}
 		status := strings.ToLower(strings.TrimSpace(stringField(state, "status")))
 		if status == "succeeded" {
@@ -541,12 +540,15 @@ func RunSeedanceAgentPlanVideoTask(ctx context.Context, input Input, pollPolicy 
 			if videoURL == "" {
 				return VideoPollOutcome{}, fmt.Errorf("%s任务成功但没有返回视频 URL", providerName)
 			}
-			data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, func(ctx context.Context) ([]byte, string, error) {
-				return GetExternalBinary(WithRequestKind(ctx, "download"), videoURL)
+			renew := videoTaskURLResolver(input.Config, id, "/contents/generations/tasks/"+id, func(state map[string]interface{}) (string, string) {
+				content, _ := state["content"].(map[string]interface{})
+				return stringField(state, "status"), stringField(content, "video_url")
 			})
+			data, mimeType, err := RunVideoDownload(ctx, id, pollPolicy, videoResultDownloader(input.Config, videoURL, id, renew))
 			if err != nil {
 				return VideoPollOutcome{}, fmt.Errorf("视频结果下载失败：%w", err)
 			}
+			mimeType = NormalizedMediaMIMEType(mimeType, data)
 			return VideoPollOutcome{Done: true, Result: map[string]interface{}{"mode": "video", "video": map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}}}, nil
 		}
 		if status == "failed" || status == "cancelled" || status == "expired" {
@@ -554,6 +556,34 @@ func RunSeedanceAgentPlanVideoTask(ctx context.Context, input Input, pollPolicy 
 		}
 		return VideoPollOutcome{}, nil
 	})
+}
+
+func newAPIVideoURLResolver(config Config, id string) videoResultURLResolver {
+	return videoTaskURLResolver(config, id, "/videos/"+id, func(state map[string]interface{}) (string, string) {
+		status, rawURL := SeedancePollStatusAndURL(state)
+		if rawURL == "" {
+			rawURL = NewAPIVideoResultURL(state)
+		}
+		if rawURL == "" && VideoTaskSucceeded(status) {
+			rawURL = APIURL(config.BaseURL, "/videos/"+id+"/content")
+		}
+		return status, rawURL
+	})
+}
+
+func videoTaskURLResolver(config Config, taskID, path string, extract func(map[string]interface{}) (string, string)) videoResultURLResolver {
+	return func(ctx context.Context) (string, error) {
+		var state map[string]interface{}
+		if err := GetJSON(WithRequestKind(ctx, "poll"), config, path, &state); err != nil {
+			return "", err
+		}
+		var err error
+		state, err = ValidateVideoTaskState(taskID, state)
+		if err != nil {
+			return "", err
+		}
+		return videoResultURL(extract(state))
+	}
 }
 
 func SeedanceContent(input Input) ([]map[string]interface{}, error) {

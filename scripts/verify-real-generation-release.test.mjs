@@ -27,7 +27,7 @@ const BUNNY_FIXTURES = {
 function copyGate(dir) {
   mkdirSync(join(dir, 'scripts'), { recursive: true });
   mkdirSync(join(dir, 'docs/release-evidence'), { recursive: true });
-  for (const name of ['verify-real-generation-release.mjs', 'real-generation-release-contract.mjs', 'h3-family-release-contract.mjs']) {
+  for (const name of ['verify-real-generation-release.mjs', 'real-generation-release-contract.mjs', 'h3-family-release-contract.mjs', 'video-direct-delivery-release-contract.mjs']) {
     writeFileSync(join(dir, 'scripts', name), readFileSync(new URL(`./${name}`, import.meta.url)));
   }
 }
@@ -49,6 +49,60 @@ function setupRepo(version) {
   };
   return { dir, git, run, save, commitVersion };
 }
+
+test('v1.7.23 packages Windows installer and canvas media bind fixes and cannot carry the waiver forward', () => {
+  const { dir, run, save, commitVersion } = setupRepo('v1.7.23');
+  try {
+    assert.throws(() => run());
+    const sourceDigest = run('--fingerprint').trim();
+    const evidence = ['synthetic receipt for gate testing; not live acceptance'];
+    const passed = (method) => ({ status: 'passed', method, sourceDigest, evidence });
+    const value = {
+      version: 'v1.7.23', sourceDigest,
+      ownerException: { scope: 'late-merged-installer-canvas-bind-20261015', approvedBy: 'Ender', instruction: '把那两个lucas没review的群里在提醒一遍lucas 然后发版吧 发版后告诉lucas这版更新了什么', evidence },
+      releaseAuthorization: { additionalHumanReplyRequired: false, scope: 'v1.7.23 only' },
+      baseRelease: 'v1.7.22', baseCommit: 'a99c0c41c0bbb71a4b2b2479e5e5c14f14c3151a',
+      includedPullRequests: [151], paidSubmissionPathChanged: false,
+      paidSubmissionLimit: 0, newBudgetCNY: 0, newSpentCNY: 0, newPendingCNY: 0,
+      cases: [], billingAttempts: [], budgetCNY: null, spentCNY: null, pendingCNY: null,
+      liveMatrixStatus: 'not_run_owner_waived', agentAcceptanceStatus: 'not_run_owner_waived', acceptanceComplete: false,
+      priorFinancialUncertainty: { status: 'unresolved', carriedFromVersion: 'v1.7.22', pendingCNY: null, evidence },
+      review: { result: 'approved', independent: true, reviewer: 'synthetic reviewer', sourceDigest, evidence },
+      upgrade: { preservedData: true, sourceDigest, evidence },
+      verification: {
+        windowsInstallerUX: passed('test'),
+        canvasMediaBindAndRetry: passed('test'),
+        noNewPaidGeneration: passed('source-diff'),
+        localReleaseGate: passed('local-script'),
+        ci: passed('github-actions'),
+      },
+      packages: { platforms: ['darwin-arm64', 'darwin-amd64', 'windows-amd64', 'linux-amd64'], status: 'pending_release_workflow', archives: null,
+        windowsReleasedUpgradeAndRollbackBeforeUpload: true, finalArchiveSmokeBeforeUpload: true, linuxNativeWindowBeforeUpload: true,
+        signedManifestBeforePublish: true, publicReadbackAfterPublish: true, workflowEvidence: evidence },
+      releasePublished: false, releaseComplete: false,
+    };
+    save(value);
+    assert.match(run(), /Windows installer and canvas media bind package/);
+    const deny = mutate => { const changed = structuredClone(value); mutate(changed); save(changed); assert.throws(() => run()); };
+    for (const mutate of [
+      r => r.ownerException.instruction = '发版吧', r => r.ownerException.approvedBy = 'other',
+      r => r.releaseAuthorization.additionalHumanReplyRequired = true, r => r.releaseAuthorization.scope = 'later versions',
+      r => r.baseRelease = 'v1.7.21', r => r.baseCommit = '0'.repeat(40),
+      r => r.includedPullRequests = [], r => r.includedPullRequests = [151, 147],
+      r => r.paidSubmissionPathChanged = true, r => r.paidSubmissionLimit = 1, r => r.newBudgetCNY = 1,
+      r => r.cases.push({}), r => r.billingAttempts.push({}), r => r.budgetCNY = 0, r => r.spentCNY = 0, r => r.pendingCNY = 0,
+      r => r.liveMatrixStatus = 'passed', r => r.acceptanceComplete = true,
+      r => r.priorFinancialUncertainty.carriedFromVersion = 'v1.7.21', r => r.priorFinancialUncertainty.pendingCNY = 0,
+      r => r.review.independent = false, r => r.upgrade.preservedData = false,
+      r => r.verification.ci.method = 'test', r => r.verification.windowsInstallerUX.status = 'pending',
+      r => r.packages.platforms.pop(), r => r.packages.archives = {}, r => r.releaseComplete = true,
+    ]) deny(mutate);
+    save(value);
+    commitVersion('v1.7.24');
+    save({ ...value, version: 'v1.7.24', sourceDigest: run('--fingerprint').trim() }, 'v1.7.24');
+    assert.throws(() => run());
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
 
 test('v1.7.19 packages only the three late merges and cannot carry the waiver forward', () => {
   const { dir, run, save, commitVersion } = setupRepo('v1.7.19');

@@ -78,7 +78,7 @@ test("actual prompt panel updates keyframe hints, reconnects and changes H3 mode
         await page.getByRole("button", { name: "minimax-h3-max", exact: true }).click();
         await page.getByRole("button", { name: /高级设置：.*随首帧图片/ }).waitFor();
         await page.getByRole("button", { name: "minimax-h3", exact: true }).click();
-        await page.getByRole("button", { name: /高级设置：.*16:9/ }).waitFor();
+        await page.getByRole("button", { name: /高级设置：.*随首帧图片/ }).waitFor();
         await page.getByRole("button", { name: "指定首帧", exact: true }).click();
         await page.getByRole("button", { name: "加入角色卡", exact: true }).click();
         await assertLocked(page, "首帧", "16:9", true);
@@ -110,4 +110,25 @@ test("keyframe explanation fits light desktop and dark 390px panels", async () =
             expect(errors).toEqual([]);
         } finally { await page.close(); }
     }
+}, 30000);
+
+test("Max and Turbo reference ratios remain editable alongside H3 advanced controls", async () => {
+    const page = await open();
+    try {
+        for (const model of ["minimax-h3-max", "minimax-h3-max-turbo"]) {
+            await page.getByRole("button", { name: model, exact: true }).click();
+            await page.getByRole("button", { name: "普通参考", exact: true }).click();
+            await page.getByRole("button", { name: /高级设置：.*9:16/ }).click();
+            const panel = page.locator(".canvas-image-settings-popover");
+            await panel.getByRole("button", { name: "16:9", exact: true }).click();
+            expect(await page.getByTestId("saved-size").textContent()).toBe("16:9");
+            await panel.getByRole("button", { name: "9:16", exact: true }).click();
+            await panel.getByText("MiniMax H3 高级设置", { exact: true }).click();
+            await panel.getByRole("spinbutton", { name: "随机种子", exact: true }).fill("42");
+            await panel.getByRole("spinbutton", { name: "随机种子", exact: true }).press("Tab");
+            expect(await page.getByTestId("saved-seed").textContent()).toBe("42");
+            await page.getByRole("button", { name: /高级设置：.*9:16/ }).click();
+        }
+        expect(errors).toEqual([]);
+    } finally { await page.close(); }
 }, 30000);

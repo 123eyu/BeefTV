@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,8 +22,15 @@ func TestBeefAPIH3RealMediaDeliverySurvivesRestart(t *testing.T) {
 	if dir == "" {
 		t.Skip("explicit existing real-media fixture opt-in required")
 	}
-	for _, name := range []string{"text-768p", "first-last-480p", "last-only-1080p", "pinned-audio-768p"} {
+	names := []string{"text-768p", "first-last-480p", "last-only-1080p", "pinned-audio-768p"}
+	if explicit := os.Getenv("FAL_H3_REAL_MEDIA_CASES"); explicit != "" {
+		names = strings.Split(explicit, ",")
+	}
+	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
+			if strings.ContainsAny(name, "/\\") || name == "" {
+				t.Fatal("invalid real media case")
+			}
 			original, err := os.ReadFile(filepath.Join(dir, name+".mp4"))
 			if err != nil {
 				t.Fatal(err)
@@ -30,8 +38,15 @@ func TestBeefAPIH3RealMediaDeliverySurvivesRestart(t *testing.T) {
 			dataDir := t.TempDir()
 			svc, db := openDBRuntimeMatrix(t, dataDir)
 			now := time.Now()
+			modelName := "minimax-h3-max-turbo"
+			for _, style := range []string{"hand-drawn", "16bit-pixel", "low-poly", "retro-toon-70s", "vhs"} {
+				if name == style {
+					modelName = "minimax-h3-max-style-" + style
+				}
+			}
+			inputJSON, _ := json.Marshal(map[string]any{"metadata": map[string]any{"source": "canvas", "nodeId": "h3-output"}, "config": map[string]any{"model": modelName}})
 			task := model.Task{ID: "h3-real-" + name, UserID: "local", ProjectID: "canvas-h3", Type: "canvas_video", Status: model.TaskStatusSucceeded,
-				InputJSON: `{"metadata":{"source":"canvas","nodeId":"h3-output"},"config":{"model":"minimax-h3-max-turbo"}}`, CreatedAt: now, UpdatedAt: now, CompletedAt: &now}
+				InputJSON: string(inputJSON), CreatedAt: now, UpdatedAt: now, CompletedAt: &now}
 			canvas, err := json.Marshal(map[string]any{"id": task.ProjectID, "title": "H3 real-media canary", "revision": 0, "connections": []any{}, "nodes": []any{map[string]any{"id": "h3-output", "type": "video", "position": map[string]any{"x": 0, "y": 0}, "metadata": map[string]any{"taskId": task.ID, "status": "loading"}}}})
 			if err != nil {
 				t.Fatal(err)

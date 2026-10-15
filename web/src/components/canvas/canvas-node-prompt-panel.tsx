@@ -21,6 +21,9 @@ import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textare
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
 import { videoSettingsConstraints } from "@/lib/video-settings-constraints";
 import { CanvasVideoPromptTools } from "./canvas-video-prompt-tools";
+import { CanvasH3Controls, CanvasH3UnsupportedFrames } from "./canvas-h3-controls";
+import { CanvasH3ReferenceOrder } from "./canvas-h3-reference-order";
+import { h3VideoOperation, isH3Model, isH3Style } from "@/lib/h3-video";
 import { CanvasPresetPicker, type CanvasPromptPreset } from "./canvas-preset-picker";
 import { CanvasPortraitTexturePopover } from "./canvas-portrait-texture-popover";
 import { CanvasPromptOptimizerDrawer } from "./canvas-prompt-optimizer-drawer";
@@ -137,7 +140,24 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     const priceChannel = resolveModelChannel(config, config.model);
     const activeReferenceCount = activeReferences.length;
     const videoFrameOptions = resolvedMentionReferences.filter((item) => item.active && item.kind === "image").map((item) => ({ nodeId: item.nodeId, label: item.label, title: item.title, previewUrl: item.previewUrl }));
-    const hasVideoPromptTools = mode === "video" && !simpleMode && videoFrameOptions.length > 0;
+    const h3Model = isH3Model(config.model);
+    const videoReferenceInputs = activeReferences.flatMap((reference) => reference.kind === "skill" ? [] : [{ nodeId: reference.nodeId, type: reference.kind, title: reference.title }]);
+    const hasVideoPromptTools = mode === "video" && !simpleMode && (videoFrameOptions.length > 0 || (h3Model && videoReferenceInputs.some((input) => input.type !== "text")));
+    const renderVideoPromptTools = () => (
+        <>
+            <CanvasVideoPromptTools
+                metadata={node.metadata}
+                frameOptions={videoFrameOptions}
+                middleFrameSupported={modelOptionName(config.model) === "minimax-h3-max"}
+                endFrameSupported={!isH3Style(config.model)}
+                referenceLabel={h3Model ? "参考生成" : undefined}
+                referenceMode={modelOptionName(config.model) === "minimax-h3" && h3VideoOperation(config.model, requirements.input!, node.metadata?.videoEditOperation) === "reference_to_video" ? "all" : "frames"}
+                referenceSummary={requirements.input}
+                onMetadataChange={(patch) => onConfigChange(node.id, patch)}
+            />
+            <CanvasH3ReferenceOrder model={config.model} inputs={videoReferenceInputs} metadata={node.metadata} onChange={(patch) => onConfigChange(node.id, patch)} />
+        </>
+    );
     const monochromeAccent = theme.node.activeStroke;
     const composerTokens = {
         "--canvas-composer-surface": theme.node.panel,
@@ -432,7 +452,9 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                                 }, node.metadata)}
                                 buttonClassName="canvas-node-composer-settings-trigger [&>span]:min-w-0 [&_.lucide]:!size-3"
                                 onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))}
-                            />
+                            >
+                                {h3Model ? <><CanvasH3Controls model={config.model} value={node.metadata?.videoH3Options} onChange={(videoH3Options) => onConfigChange(node.id, { videoH3Options })} /><CanvasH3UnsupportedFrames model={config.model} metadata={node.metadata} onChange={(patch) => onConfigChange(node.id, patch)} /></> : null}
+                            </CanvasVideoSettingsPopover>
                         </>
                     ) : mode === "audio" ? (
                         <CanvasAudioSettingsPopover
@@ -554,7 +576,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                     </button>
                     {paramsExpanded ? (
                         <div className="pt-1">
-                            <CanvasVideoPromptTools metadata={node.metadata} frameOptions={videoFrameOptions} onMetadataChange={(patch) => onConfigChange(node.id, patch)} />
+                            {renderVideoPromptTools()}
                         </div>
                     ) : null}
                 </div>
@@ -586,7 +608,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                         {renderPromptEditor(true, Boolean(expandedModalSize))}
                         {hasVideoPromptTools ? (
                             <div className="canvas-node-composer-parameters shrink-0">
-                                <CanvasVideoPromptTools metadata={node.metadata} frameOptions={videoFrameOptions} onMetadataChange={(patch) => onConfigChange(node.id, patch)} />
+                                {renderVideoPromptTools()}
                             </div>
                         ) : null}
                         <div className="shrink-0">{renderComposerControls(true)}</div>

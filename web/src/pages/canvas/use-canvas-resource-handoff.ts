@@ -311,9 +311,12 @@ export function useCanvasResourceHandoff({
                 await applyGenerationTaskResult(targetNodeId, task);
             } catch (error) {
                 if (!lifetime.matches(owner, projectIdRef.current)) return;
+                if (isUserScopeAbandonedError(error) || (error instanceof Error && error.name === "AbortError")) return;
+                const failure = canvasGenerationFailureMetadata(error, { prompt: node.metadata?.prompt || "" });
                 setNodes((current) =>
-                    current.map((item) => (item.id === targetNodeId ? { ...item, metadata: { ...item.metadata, status: "error", ...canvasGenerationFailureMetadata(error, { prompt: item.metadata?.prompt || "" }), resourceReloadAvailable: true } } : item)),
+                    current.map((item) => (item.id === targetNodeId ? { ...item, metadata: { ...item.metadata, status: "error", ...failure, resourceReloadAvailable: true } } : item)),
                 );
+                message.error(failure.errorDetails || "继续取回失败，请稍后重试");
             }
         },
         [applyGenerationTaskResult, lifetime, message, projectId, setNodes],

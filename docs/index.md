@@ -19,6 +19,7 @@ BeefTV 是一个本地优先、轻量、AI Native 的视频工作台。本页只
 - [模型服务商验证](model-provider-validation.md)
 - [MiniMax H3 Max Turbo 接入与验收](fal-h3-max-turbo.md)
 - [MiniMax H3 三款模型与多素材参考](fal-h3-family.md)
+- [H3 完整生成、Styles 与 Director 续接边界](fal-h3-full-capabilities.md)
 
 ## 开发参考
 

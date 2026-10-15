@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -420,7 +421,12 @@ func CapabilitySpecFromModelCapabilityConfig(config *ModelCapabilityConfig, capa
 			}
 			spec.Options["videoSeconds"] = OptionConstraint{Values: values}
 		} else {
-			spec.Options["videoSeconds"] = numericRange(float64(video.Duration.Min), float64(video.Duration.Max), float64(video.Duration.Step))
+			spec.Options["videoSeconds"] = numericRange(durationMinimum(video.Duration), float64(video.Duration.Max), float64(video.Duration.Step))
+			if video.Duration.Continuous {
+				option := spec.Options["videoSeconds"]
+				option.Step = nil
+				spec.Options["videoSeconds"] = option
+			}
 		}
 		spec.Options["size"] = anyValues(video.Ratios)
 		if len(video.Resolutions) > 0 {
@@ -646,7 +652,10 @@ func validateVideoCapabilityConfig(value *VideoCapabilityConfig) error {
 func validateVideoDuration(value VideoDurationConfig) error {
 	switch value.Selection {
 	case "range":
-		if value.Min < 1 || value.Max < value.Min || value.Max > 3600 || value.Step < 1 || value.Default < value.Min || value.Default > value.Max || (value.Default-value.Min)%value.Step != 0 {
+		if math.IsNaN(value.FractionalMin) || math.IsInf(value.FractionalMin, 0) || value.FractionalMin != 0 && (!value.Continuous || value.FractionalMin < .92 || value.FractionalMin > float64(value.Min)) {
+			return kernel.BadAuthRequest("视频小数时长范围无效")
+		}
+		if value.Min < 1 || value.Max < value.Min || value.Max > 3600 || value.Step < 1 || value.Default < value.Min || value.Default > value.Max || !value.Continuous && (value.Default-value.Min)%value.Step != 0 {
 			return kernel.BadAuthRequest("视频时长范围或默认值无效")
 		}
 	case "enum":
@@ -720,8 +729,16 @@ func validateVideoTaskParameters(profile *VideoCapabilityConfig, input TaskInput
 	if err := validateModelPromptLength("视频", input.Prompt, profile.References.PromptMaxChars); err != nil {
 		return err
 	}
-	seconds, err := strconv.Atoi(strings.TrimSpace(input.Config.VideoSeconds))
-	if err != nil || !videoDurationAllowed(profile.Duration, seconds) {
+	seconds, err := strconv.ParseFloat(strings.TrimSpace(input.Config.VideoSeconds), 64)
+	allowed := false
+	if err == nil && !math.IsNaN(seconds) && !math.IsInf(seconds, 0) {
+		if profile.Duration.Continuous {
+			allowed = seconds >= durationMinimum(profile.Duration) && seconds <= float64(profile.Duration.Max)
+		} else if seconds == math.Trunc(seconds) {
+			allowed = videoDurationAllowed(profile.Duration, int(seconds))
+		}
+	}
+	if !allowed {
 		return kernel.BadAuthRequest("视频时长不在当前模型支持范围内")
 	}
 	if input.Config.Size != "" && !videoRatioAllowed(profile.Ratios, input.Config.Size) {
@@ -898,7 +915,14 @@ func videoDurationAllowed(value VideoDurationConfig, seconds int) bool {
 	if value.Selection == "enum" {
 		return containsInt(value.Values, seconds)
 	}
-	return seconds >= value.Min && seconds <= value.Max && value.Step > 0 && (seconds-value.Min)%value.Step == 0
+	return float64(seconds) >= durationMinimum(value) && seconds <= value.Max && (value.Continuous || value.Step > 0 && (seconds-value.Min)%value.Step == 0)
+}
+
+func durationMinimum(value VideoDurationConfig) float64 {
+	if value.Continuous && value.FractionalMin > 0 {
+		return value.FractionalMin
+	}
+	return float64(value.Min)
 }
 
 func videoRatioAllowed(options []string, value string) bool {

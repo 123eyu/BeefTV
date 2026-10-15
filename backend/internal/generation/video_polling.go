@@ -17,6 +17,8 @@ import (
 
 const DefaultVideoPollInterval = 30 * time.Second
 
+const beefAPIVideoPollInterval = 5 * time.Second
+
 type VideoPollPolicy struct {
 	InitialDelay          time.Duration
 	Interval              time.Duration
@@ -65,6 +67,18 @@ func DefaultVideoPollPolicy() VideoPollPolicy {
 		Sleep:                 SleepContext,
 		Notify:                NotifyPollEvent,
 	}
+}
+
+func videoPollPolicyForConfig(ctx context.Context, config Config, policy VideoPollPolicy) VideoPollPolicy {
+	if IsBeefAPIVideoConfig(ctx, config) {
+		if policy.InitialDelay == DefaultVideoPollInterval {
+			policy.InitialDelay = beefAPIVideoPollInterval
+		}
+		if policy.Interval == DefaultVideoPollInterval {
+			policy.Interval = beefAPIVideoPollInterval
+		}
+	}
+	return policy
 }
 
 func RunVideoPollLoop(ctx context.Context, taskID string, policy VideoPollPolicy, query func(context.Context) (VideoPollOutcome, error)) (map[string]interface{}, error) {
@@ -215,6 +229,10 @@ func RetryableVideoPollError(ctx context.Context, err error) (retry bool, notFou
 	var downloadError VideoDownloadError
 	if errors.As(err, &downloadError) {
 		return false, false
+	}
+	var expiredBackup videoBackupLinkExpiredError
+	if errors.As(err, &expiredBackup) {
+		return true, false
 	}
 	if code, _ := platform.ChannelSlotFailureDetails(err); code != "" {
 		return true, false
