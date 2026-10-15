@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/net/http/httpproxy"
+	"infinite-canvas/backend/internal/desktopnet"
 )
 
 const (
@@ -250,14 +250,15 @@ func blockedOutboundHeader(name string) bool {
 func newOutboundTransport(resolveHost func(context.Context, string) ([]net.IP, error)) *http.Transport {
 	dialer := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
 	return &http.Transport{
-		Proxy: outboundProxyFromEnvironment,
+		Proxy: desktopnet.Proxy,
 		DialContext: func(ctx context.Context, network string, address string) (net.Conn, error) {
 			host, port, err := net.SplitHostPort(address)
 			if err != nil {
 				return nil, err
 			}
-			// 代理地址由部署者通过环境变量配置；目标 URL 仍在请求前经过 SSRF 校验。
-			if configuredProxyHost(host) {
+			// Only configured proxy hosts bypass target DNS validation. Target URLs
+			// still pass the outbound policy before transport dispatch.
+			if configuredProxyAddress(address) {
 				return dialer.DialContext(ctx, network, address)
 			}
 			addresses, err := resolveHost(ctx, host)
@@ -338,29 +339,8 @@ func dialValidatedAddresses(ctx context.Context, network, port string, addresses
 	return nil, firstErr
 }
 
-func outboundProxyFromEnvironment(req *http.Request) (*url.URL, error) {
-	if req == nil || req.URL == nil {
-		return nil, nil
-	}
-	return httpproxy.FromEnvironment().ProxyFunc()(req.URL)
-}
-
-func configuredProxyHost(host string) bool {
-	host = normalizeOutboundHost(host)
-	for _, name := range []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"} {
-		raw := strings.TrimSpace(os.Getenv(name))
-		if raw == "" {
-			continue
-		}
-		if !strings.Contains(raw, "://") {
-			raw = "http://" + raw
-		}
-		parsed, err := url.Parse(raw)
-		if err == nil && normalizeOutboundHost(parsed.Hostname()) == host {
-			return true
-		}
-	}
-	return false
+func configuredProxyAddress(address string) bool {
+	return desktopnet.ConfiguredProxyAddress(address)
 }
 
 func ValidateOutboundHost(host string) error {

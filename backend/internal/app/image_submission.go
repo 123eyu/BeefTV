@@ -26,9 +26,10 @@ type imageAttemptContext struct{}
 type imageTaskContext struct{}
 
 type imageWireRequest struct {
-	URL    string
-	Header http.Header
-	Body   []byte
+	URL            string
+	Header         http.Header
+	Body           []byte
+	ReplayProtocol string
 }
 
 func (s *Service) validateImageTaskRetry(task *model.Task) error {
@@ -219,7 +220,7 @@ func prepareImageSubmission(s *Service, req *http.Request) (*model.ImageSubmissi
 	header := req.Header.Clone()
 	header.Del("X-Idempotency-Key")
 	header.Set("Idempotency-Key", key)
-	raw, err := json.Marshal(imageWireRequest{URL: req.URL.String(), Header: header, Body: body})
+	raw, err := json.Marshal(imageWireRequest{URL: req.URL.String(), Header: header, Body: body, ReplayProtocol: generation.ImageReplayProtocol})
 	if err != nil {
 		return nil, true, err
 	}
@@ -273,6 +274,14 @@ func (s *Service) sendImageSubmissionWith(ctx context.Context, task model.Task, 
 			return nil, "", imageRecoveryError{err}
 		}
 		req.Header = wire.Header.Clone()
+		if wire.ReplayProtocol == generation.ImageReplayProtocol {
+			req = req.WithContext(generation.WithImageReplayProtocol(req.Context(), wire.ReplayProtocol))
+		} else {
+			req, err = generation.NegotiateImageReplay(req)
+			if err != nil {
+				return nil, "", imageRecoveryError{err}
+			}
+		}
 		if !recoverableImageEndpoint(req) || req.Header.Get("Idempotency-Key") == "" {
 			return nil, "", imageRecoveryError{errors.New("图片恢复记录无效")}
 		}

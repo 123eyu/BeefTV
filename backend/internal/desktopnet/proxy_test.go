@@ -22,13 +22,35 @@ func TestHTTPSChildProxyPreservesRedirectBypassAndExplicitDirect(t *testing.T) {
 	t.Setenv("HTTPS_PROXY", "")
 	t.Setenv("https_proxy", "")
 	t.Setenv("ALL_PROXY", "http://127.0.0.1:8888")
+	t.Setenv("NO_PROXY", "*")
 	env = strings.Join(HTTPSProxyEnvironment(), "\n")
-	if !strings.HasPrefix(env, "HTTPS_PROXY=\nhttps_proxy=\n") || !strings.HasSuffix(env, "ALL_PROXY=\nall_proxy=") {
+	if !strings.Contains(env, "no_proxy=*\n") || !strings.HasSuffix(env, "ALL_PROXY=\nall_proxy=") {
 		t.Fatal("explicit direct configuration fell back to a different proxy")
 	}
 	t.Setenv("NO_PROXY", "*")
 	if !strings.Contains(strings.Join(HTTPSProxyEnvironment(), "\n"), "no_proxy=*\n") {
 		t.Fatal("universal proxy bypass was lost")
+	}
+}
+
+func TestEmptyDesktopProxyEnvironmentUsesSystemSettings(t *testing.T) {
+	for _, name := range []string{"HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"} {
+		t.Setenv(name, "")
+	}
+	if ExplicitProxyConfigured() {
+		t.Fatal("empty launcher variables disabled OS proxy settings")
+	}
+	u, _ := url.Parse("https://example.com/image.png")
+	system := parseWindowsProxy("127.0.0.1:7890", "")
+	got, err := proxyWithSystem(u, *httpproxy.FromEnvironment(), system)
+	if err != nil || got == nil || got.Host != "127.0.0.1:7890" {
+		t.Fatalf("system fallback: %v %v", got, err)
+	}
+	t.Setenv("NO_PROXY", "*")
+	req, _ := http.NewRequest("GET", u.String(), nil)
+	got, err = Proxy(req)
+	if err != nil || got != nil {
+		t.Fatalf("explicit bypass lost: %v %v", got, err)
 	}
 }
 
