@@ -9,6 +9,15 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.7.24
+
+- 修复视频未预载时长时「截取尾帧」退化为首帧的问题，解码失败自动回退拉取 H.264 播放副本并弹出截取完成提示；Windows 桌面端启用原生暗色标题栏与深色启动底色。
+- 侧栏新增「更新失败排查」，支持打开日志文件夹并在诊断包中导出脱敏的 `update.log` 摘要；准备安装超时区分校验、解压和准备安装阶段。
+- 历史媒体入库期间保留用户对画布节点和时间线的并发增删改；修复旧版桌面 WebView 打开画布时因数组方法兼容问题崩溃。
+- 外接视频模型需显式选择协议，Sora 协议在提交前提示不支持的多素材限制，新增可复用的 JSON 视频协议；支持 BytePlus 渠道自动识别火山方舟协议与 Dreamina 视频编辑、续写和自动时长。
+- H3 首尾帧、角色多视图与 Styles 模式明确比例限制提示；收起 H3 Max 中间帧入口并保留历史残留参数的清理按钮。
+- 区分本机凭据错误与磁盘空间不足报错，区分请求尚未发出与提交结果未确认（409），断点续传仅在强校验匹配时复用缓存字节。
+
 ## v1.7.23
 
 - 修复画布内旧版未入库媒体节点拦截新生成结果回写，以及点击「继续取回」闪一下又退回报错的问题；生成完成或继续取回时自动补齐画布素材绑定。

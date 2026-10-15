@@ -50,6 +50,46 @@ function setupRepo(version) {
   return { dir, git, run, save, commitVersion };
 }
 
+test('v1.7.24 packages cross-reviewed PRs and BytePlus/TLS fixes and cannot carry the waiver forward', () => {
+  const { dir, run, save, commitVersion } = setupRepo('v1.7.24');
+  try {
+    assert.throws(() => run());
+    const sourceDigest = run('--fingerprint').trim();
+    const evidence = ['synthetic receipt for gate testing; not live acceptance'];
+    const passed = (method) => ({ status: 'passed', method, sourceDigest, evidence });
+    const value = {
+      version: 'v1.7.24', sourceDigest,
+      ownerException: { scope: 'cross-reviewed-prs-and-byteplus-tls-20261015', approvedBy: 'Ender', instruction: '把已 commit 的 codex/byteplus-compat 和 fix/tls-submission-20261015 合进 main 后一起发 v1.7.24（未 commit 的 4 个工作区留下一版）', evidence },
+      releaseAuthorization: { additionalHumanReplyRequired: false, scope: 'v1.7.24 only' },
+      baseRelease: 'v1.7.23', baseCommit: 'cabdbdd116530feaac04bb93d940162d586413d4',
+      includedPullRequests: [147, 154, 157, 153, 155, 156, 158, 159], paidSubmissionPathChanged: false,
+      paidSubmissionLimit: 0, newBudgetCNY: 0, newSpentCNY: 0, newPendingCNY: 0,
+      cases: [], billingAttempts: [], budgetCNY: null, spentCNY: null, pendingCNY: null,
+      liveMatrixStatus: 'not_run_owner_waived', agentAcceptanceStatus: 'not_run_owner_waived', acceptanceComplete: false,
+      priorFinancialUncertainty: { status: 'unresolved', carriedFromVersion: 'v1.7.23', pendingCNY: null, evidence },
+      review: { result: 'approved', independent: true, reviewer: 'synthetic reviewer', sourceDigest, evidence },
+      upgrade: { preservedData: true, sourceDigest, evidence },
+      verification: {
+        canvasAndWebviewFixes: passed('test'),
+        externalVideoAndBytePlus: passed('test'),
+        updaterAndSubmissionDiagnostics: passed('test'),
+        noNewPaidGeneration: passed('source-diff'),
+        localReleaseGate: passed('local-script'),
+        ci: passed('github-actions'),
+      },
+      packages: { platforms: ['darwin-arm64', 'darwin-amd64', 'windows-amd64', 'linux-amd64'], status: 'pending_release_workflow', archives: null,
+        windowsReleasedUpgradeAndRollbackBeforeUpload: true, finalArchiveSmokeBeforeUpload: true, linuxNativeWindowBeforeUpload: true,
+        signedManifestBeforePublish: true, publicReadbackAfterPublish: true, workflowEvidence: evidence },
+      releasePublished: false, releaseComplete: false,
+    };
+    save(value);
+    assert.match(run(), /v1\.7\.24 cross-reviewed canvas, updater, external video and BytePlus\/TLS package/);
+    commitVersion('v1.7.25');
+    save({ ...value, version: 'v1.7.25', sourceDigest: run('--fingerprint').trim() }, 'v1.7.25');
+    assert.throws(() => run());
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('v1.7.23 packages Windows installer and canvas media bind fixes and cannot carry the waiver forward', () => {
   const { dir, run, save, commitVersion } = setupRepo('v1.7.23');
   try {
@@ -98,8 +138,8 @@ test('v1.7.23 packages Windows installer and canvas media bind fixes and cannot 
       r => r.packages.platforms.pop(), r => r.packages.archives = {}, r => r.releaseComplete = true,
     ]) deny(mutate);
     save(value);
-    commitVersion('v1.7.24');
-    save({ ...value, version: 'v1.7.24', sourceDigest: run('--fingerprint').trim() }, 'v1.7.24');
+    commitVersion('v1.7.25');
+    save({ ...value, version: 'v1.7.25', sourceDigest: run('--fingerprint').trim() }, 'v1.7.25');
     assert.throws(() => run());
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
