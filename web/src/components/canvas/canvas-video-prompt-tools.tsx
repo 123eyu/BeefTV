@@ -76,7 +76,7 @@ export function CanvasVideoPromptTools({ metadata, frameOptions, onMetadataChang
             {endFrameSupported ? <FrameMenu label="尾帧" value={endFrame} options={frameOptions} theme={theme} onChange={(value) => setFrame("videoEndFrameNodeId", value)} /> : null}
             {middleFrameSupported ? (
                 <>
-                    <FrameMenu label="中间帧" value={metadata?.videoMiddleFrameNodeId || EMPTY_FRAME_VALUE} options={frameOptions} theme={theme} onChange={(v) => onMetadataChange({ videoMiddleFrameNodeId: v === EMPTY_FRAME_VALUE ? undefined : v })} />
+                    <FrameMenu label="中间帧" value={metadata?.videoMiddleFrameNodeId || EMPTY_FRAME_VALUE} options={frameOptions} theme={theme} onChange={(v) => onMetadataChange(v === EMPTY_FRAME_VALUE ? { videoMiddleFrameNodeId: undefined, videoMiddleFrameTime: undefined } : { videoMiddleFrameNodeId: v })} />
                     <label className="flex min-w-0 items-center gap-1 text-[var(--fs-micro)]">
                         <span className="shrink-0 whitespace-nowrap">时间（秒）</span>
                         <input

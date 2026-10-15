@@ -300,12 +300,14 @@ export async function bindBackendCanvasGenerationResult(input: {
                         }
                         throw error instanceof CanvasBindFlushError ? error : new CanvasBindFlushError(error);
                     }
+                    const current = useCanvasStore.getState().openProject(capturedCanvasId);
+                    if (!current) throw new DOMException("The canvas operation was abandoned", "AbortError");
                     await persistDocument(
                         capturedCanvasId,
                         {
-                            nodes: healed.nodes,
-                            connections: targetProject.connections,
-                            ...(healed.timeline ? { timeline: healed.timeline } : {}),
+                            nodes: current.nodes,
+                            connections: current.connections,
+                            ...(current.timeline ? { timeline: current.timeline } : {}),
                         },
                         capturedScope,
                     );
@@ -361,13 +363,15 @@ export async function bindBackendCanvasGenerationResult(input: {
                     }
                     throw error;
                 }
+                const current = useCanvasStore.getState().openProject(capturedCanvasId);
+                if (!current) throw new DOMException("The canvas operation was abandoned", "AbortError");
                 try {
                     await persistDocument(
                         capturedCanvasId,
                         {
-                            nodes: healed.nodes,
-                            connections: targetProject.connections,
-                            ...(healed.timeline ? { timeline: healed.timeline } : {}),
+                            nodes: current.nodes,
+                            connections: current.connections,
+                            ...(current.timeline ? { timeline: current.timeline } : {}),
                         },
                         capturedScope,
                     );

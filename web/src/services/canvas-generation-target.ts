@@ -103,10 +103,14 @@ export async function healCanvasProjectMediaAssets(
     if (!isScopeCurrent()) {
         return { healed: false, current: false, nodes: project.nodes, timeline: project.timeline };
     }
-    syncInMemoryCanvasProjectMediaAssets(project);
-    if (!isScopeCurrent()) {
+    const latest = useCanvasStore.getState().openProject(project.id);
+    if (!latest) {
         return { healed: false, current: false, nodes: project.nodes, timeline: project.timeline };
     }
+    project = latest;
+    const originalNodes = new Map(project.nodes.map((node) => [node.id, node]));
+    const originalPageNodes = options.nodesRef ? new Map(options.nodesRef.current.map((node) => [node.id, node])) : originalNodes;
+    const originalClips = new Map(project.timeline?.clips.map((clip) => [clip.id, clip]) ?? []);
 
     const ensure = options.ensureNodeAsset ?? (await import("@/services/project-asset-sync")).ensureCanvasNodeAsset;
     const assets = useAssetStore.getState().assets;
@@ -237,38 +241,48 @@ export async function healCanvasProjectMediaAssets(
         return { healed: false, current: false, nodes: project.nodes, timeline: project.timeline };
     }
 
-    const healedAssetIdByNodeId = new Map<string, string | undefined>();
-    for (const node of healedNodes) {
-        if (node.metadata?.assetId) {
-            healedAssetIdByNodeId.set(node.id, node.metadata.assetId);
-        } else if (clearedNodeIds.has(node.id)) {
-            healedAssetIdByNodeId.set(node.id, undefined);
-        }
-    }
+    assertScopeActive();
+    const current = useCanvasStore.getState().openProject(project.id);
+    if (!current) return { healed: false, current: false, nodes: [], timeline: undefined };
 
-    project.nodes = healedNodes;
-    if (timelineChanged && healedTimeline) project.timeline = healedTimeline;
-    useCanvasStore.getState().updateProject(project.id, {
-        nodes: healedNodes,
-        ...(timelineChanged && healedTimeline ? { timeline: healedTimeline } : {}),
-    });
-
-    if (healedAssetIdByNodeId.size > 0) {
-        const stampNodes = (current: CanvasNodeData[]) =>
-            current.map((item) => {
-                if (!healedAssetIdByNodeId.has(item.id)) return item;
-                const assetId = healedAssetIdByNodeId.get(item.id);
-                return item.metadata?.assetId !== assetId ? { ...item, metadata: { ...item.metadata, assetId } } : item;
-            });
-        if (options.nodesRef) options.nodesRef.current = stampNodes(options.nodesRef.current);
-        options.setNodes?.(stampNodes);
-    }
+    // Only apply the binding that was ensured. Media, graph and timeline edits
+    // made while awaiting asset registration belong to the current document.
+    const healedById = new Map(healedNodes.map((node) => [node.id, node]));
+    const stampNodes = (nodes: CanvasNodeData[], originals = originalNodes) =>
+        nodes.map((node) => {
+            const original = originals.get(node.id);
+            const healed = healedById.get(node.id);
+            if (!original || !healed || node.type !== original.type || node.type !== healed.type ||
+                canvasNodeResourceId(node) !== canvasNodeResourceId(original) || canvasNodeResourceId(node) !== canvasNodeResourceId(healed) ||
+                node.metadata?.assetId !== original.metadata?.assetId) return node;
+            // A page can lag the synchronous store binding, or already have its
+            // own explicit selection that has not reached the store yet.
+            if (original.metadata?.assetId && original.metadata.assetId !== originalNodes.get(node.id)?.metadata?.assetId) return node;
+            const assetId = healed.metadata?.assetId;
+            return node.metadata?.assetId === assetId ? node : { ...node, metadata: { ...node.metadata, assetId } };
+        });
+    const mergedNodes = stampNodes(current.nodes);
+    const healedClips = new Map(healedTimeline?.clips.map((clip) => [clip.id, clip]) ?? []);
+    const mergedTimeline = timelineChanged && current.timeline ? {
+        ...current.timeline,
+        clips: current.timeline.clips.map((clip) => {
+            const original = originalClips.get(clip.id)?.directMedia;
+            const media = clip.directMedia;
+            const healed = healedClips.get(clip.id)?.directMedia;
+            if (!original || !media || !healed || media.id !== original.id || media.kind !== original.kind || media.assetId !== original.assetId ||
+                extractOwnedResourceId(media.storageKey, media.url || media.dataUrl || media.content) !== extractOwnedResourceId(original.storageKey, original.url || original.dataUrl || original.content)) return clip;
+            return media.assetId === healed.assetId ? clip : { ...clip, directMedia: { ...media, assetId: healed.assetId } };
+        }),
+    } : current.timeline;
+    useCanvasStore.getState().updateProject(project.id, { nodes: mergedNodes, ...(mergedTimeline ? { timeline: mergedTimeline } : {}) });
+    if (options.nodesRef) options.nodesRef.current = stampNodes(options.nodesRef.current, originalPageNodes);
+    options.setNodes?.((nodes) => stampNodes(nodes, originalPageNodes));
 
     return {
-        healed: nodesChanged || healedAssetIdByNodeId.size > 0 || timelineChanged,
+        healed: nodesChanged || timelineChanged,
         current: true,
-        nodes: healedNodes,
-        timeline: healedTimeline,
+        nodes: mergedNodes,
+        timeline: mergedTimeline,
     };
 }
 
@@ -306,12 +320,14 @@ export async function persistCanvasGenerationTarget(input: {
                 });
                 if (!healed.current) throw new DOMException("The canvas operation was abandoned", "AbortError");
                 assertCurrent();
+                const current = useCanvasStore.getState().openProject(input.projectId);
+                if (!current) throw new CanvasGenerationTargetSaveError(undefined, "生成节点已不存在，未开始生成");
                 await persist(
                     input.projectId,
                     {
-                        nodes: healed.nodes,
-                        connections: project.connections,
-                        ...(healed.timeline ? { timeline: healed.timeline } : {}),
+                        nodes: current.nodes,
+                        connections: current.connections,
+                        ...(current.timeline ? { timeline: current.timeline } : {}),
                     },
                     input.expectedScope,
                 );
