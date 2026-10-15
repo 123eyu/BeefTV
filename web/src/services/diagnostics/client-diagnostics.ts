@@ -12,6 +12,7 @@ export type ClientDiagnosticEvent = {
     level: ClientDiagnosticLevel;
     category: ClientDiagnosticCategory;
     code?: string;
+    reason?: string;
     message: string;
     route?: string;
     durationMs?: number;
@@ -78,6 +79,7 @@ export function initializeClientDiagnostics() {
                 level: status >= 400 || businessCode !== 0 ? "error" : "info",
                 category: "request",
                 code: businessCode !== 0 ? String(businessCode) : undefined,
+                reason: response.data?.reason,
                 message: String(config.method || "GET").toUpperCase() + " " + route,
                 route,
                 durationMs: meta ? Math.max(0, Math.round(performance.now() - meta.startedAt)) : undefined,
@@ -91,12 +93,13 @@ export function initializeClientDiagnostics() {
             const config = error.config;
             const meta = config ? requestMeta.get(config) : undefined;
             const response = error.response;
-            const body = response?.data && typeof response.data === "object" ? (response.data as { code?: number; msg?: string }) : undefined;
+            const body = response?.data && typeof response.data === "object" ? (response.data as { code?: number; msg?: string; reason?: string }) : undefined;
             const route = appPathnameFrom(config?.url);
             recordDiagnosticEvent({
                 level: "error",
                 category: "request",
                 code: body?.code !== undefined ? String(body.code) : response?.status ? "HTTP_" + response.status : "NETWORK_ERROR",
+                reason: body?.reason,
                 message: body?.msg || String(config?.method || "GET").toUpperCase() + " " + route + " 请求失败",
                 route,
                 durationMs: meta ? Math.max(0, Math.round(performance.now() - meta.startedAt)) : undefined,
@@ -124,6 +127,7 @@ export function recordDiagnosticEvent(input: DiagnosticEventInput) {
         level: input.level,
         category: input.category,
         code: redactClientText(input.code),
+        reason: safeDiagnosticId(input.reason),
         message: redactClientText(input.message) || "未命名诊断事件",
         route: appPathnameFrom(input.route),
         durationMs: input.durationMs === undefined ? undefined : clampNumber(input.durationMs, 0, 86_400_000),

@@ -164,6 +164,12 @@ Windows 的运行地址描述文件位于用户目录的 `.beeftv/runtime/`，�
 
 ## 任务诊断
 
+任务提交前无法读取或解密本地算力凭据时，返回 HTTP 500、`reason=local_credential_failed`，不创建生成任务。安全摘要区分密钥文件缺失、读取权限不足、密钥长度异常和解密失败，不返回密钥、密文或本地路径。客户端将其显示为本地算力连接错误，禁止自动重试；复制排查信息保留响应的 `X-Request-ID`、HTTP 状态及凭据读取阶段，不归类为模型参数错误。
+
+本地生成结果写入遇到 Windows 磁盘空间不足、POSIX `ENOSPC` 或 SQLite 磁盘写满时，生成错误分类为 `local_disk_full`。提示清理 BeefTV 数据目录所在磁盘，并优先取回原任务结果，避免重复生成。上游返回的磁盘错误不据此推断为用户电脑磁盘不足。
+
+诊断包的 `client/events.jsonl` 保留业务错误 `reason`；`backend/tasks.jsonl` 导出经过脱敏的 `failureDiagnostics`，包括已采集的失败阶段、请求 ID、上游任务 ID、执行结果和错误摘要。历史记录缺失的信息不会补造。
+
 章节分镜替换与角色候选写入可携带 `sourceTaskId`。服务端核对原任务、用户、项目、章节和生成类型，并将结果写入与稳定操作回执放在同一事务中。同一任务和内容重放返回原回执，不覆盖之后的人工编辑；更换内容返回 `409 operation_id_reused_with_different_payload`。分镜仍须提交批准时的 `expectedRevision` 与 `expectedShotIds`；冲突为 `409 project_revision_conflict` 或 `project_unit_shots_changed`。
 
 `GET /projects/:id/chapter-apply-receipts?taskIds=` 查询最多 100 个任务的已提交回执。页面不以更新时间猜测是否写入；没有回执的分镜结果保留待核对，确认后可直接写入，不重新生成。

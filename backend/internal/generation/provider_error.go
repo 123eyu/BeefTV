@@ -29,6 +29,8 @@ const (
 	CategoryModerationOutput    FailureCategory = "moderation_output"
 	CategoryInvalidParams       FailureCategory = "invalid_params"
 	CategoryLocalStorage        FailureCategory = "local_storage"
+	CategoryLocalDiskFull       FailureCategory = "local_disk_full"
+	CategoryLocalCredential     FailureCategory = "local_credential"
 	CategoryContextTooLong      FailureCategory = "context_too_long"
 	CategoryInputInaccessible   FailureCategory = "input_inaccessible"
 	CategoryInputTooLarge       FailureCategory = "input_too_large"
@@ -80,6 +82,8 @@ type categoryCopy struct {
 }
 
 var categoryCopies = map[FailureCategory]categoryCopy{
+	CategoryLocalDiskFull:       {Reason: "本地磁盘空间不足，无法保存数据", Action: "请清理 BeefTV 数据目录所在磁盘；已有生成结果请优先取回原任务，不要重复生成"},
+	CategoryLocalCredential:     {Reason: "本地算力凭据读取失败", Action: "请检查工作区数据目录并重新连接算力账号；不要删除工作区密钥"},
 	CategoryAuth:                {Reason: "模型服务鉴权失败", Action: "请检查 API Key 后重试"},
 	CategoryPermission:          {Reason: "当前渠道没有使用该模型的权限", Action: "请更换模型或检查渠道权限"},
 	CategoryQuotaUser:           {Reason: "当前账号可用额度不足", Action: "请检查账号余额，补充额度或调整令牌、套餐额度后重试"},
@@ -134,6 +138,8 @@ var (
 )
 
 var providerCodeCategories = map[string]FailureCategory{
+	"local_disk_full":                  CategoryLocalDiskFull,
+	"local_credential_failed":          CategoryLocalCredential,
 	"local_storage_failed":             CategoryLocalStorage,
 	"contentsecuritydetectionerror":    CategoryProviderUnavailable,
 	"accountoverdueerror":              CategoryQuotaUpstream,
@@ -371,6 +377,10 @@ func (e PayloadError) Error() string {
 
 func ClassifyHTTP(status int, statusText string, body string) Failure {
 	failure := ClassifyText(body)
+	// This boundary handles provider responses, not local filesystem errors.
+	if failure.Category == CategoryLocalDiskFull || failure.Category == CategoryLocalCredential {
+		failure = Failure{Category: CategoryUnknown}
+	}
 	failure.HTTPStatus = status
 	// Reservation failures also use HTTP 503; only explicit funding rejection identifies caller quota.
 	if status == 402 && failure.ProviderCode == "video_reservation_failed" && strings.HasPrefix(failure.ProviderMessage, "insufficient balance for this video request") {
@@ -517,6 +527,9 @@ func ClassifyText(raw string) Failure {
 	if localDatabaseErrorPattern.MatchString(databaseMessage) {
 		return normalizeFailure(Failure{Category: CategoryLocalStorage, FromCode: true, RequestID: sanitizeDebugID(fields.RequestID), TaskID: sanitizeDebugID(fields.TaskID)})
 	}
+	if isLocalDiskFullMessage(databaseMessage) {
+		return normalizeFailure(Failure{Category: CategoryLocalDiskFull, FromCode: true})
+	}
 	if fields.hasStructured() {
 		if strings.Contains(fields.Message, "暂无可用渠道") || strings.Contains(fields.Message, "无可用渠道") {
 			return normalizeFailure(Failure{Category: CategoryProviderUnavailable, Structured: true, ProviderCode: sanitizeProviderCode(fields.Code), ProviderMessage: sanitizeProviderText(fields.Message), RequestID: fields.RequestID})
@@ -634,7 +647,18 @@ func ClassifyAppError(status int, code int, reason string, message string) Failu
 	return normalizeFailure(failure)
 }
 
+func isLocalDiskFullMessage(message string) bool {
+	text := strings.ToLower(message)
+	local := strings.Contains(text, "write local resource") || strings.Contains(text, "生成内容写入资源存储失败") || strings.Contains(text, "database or disk is full") || strings.Contains(text, "本地磁盘空间不足")
+	full := strings.Contains(text, "no space left on device") || strings.Contains(text, "not enough space on the disk") || strings.Contains(text, "disk full") || strings.Contains(text, "database or disk is full") || strings.Contains(text, "本地磁盘空间不足")
+	return local && full
+}
+
 func WithDownloadFailure(failure Failure, taskID string) Failure {
+	if failure.Category == CategoryLocalDiskFull || failure.Category == CategoryLocalCredential || failure.Category == CategoryLocalStorage {
+		failure.TaskID = firstNonEmpty(failure.TaskID, taskID)
+		return normalizeFailure(failure)
+	}
 	if failure.Category == CategoryAuth || failure.Category == CategoryPermission || failure.IsModeration() || failure.Category == CategoryInvalidParams || failure.Category == CategoryDeliveryFailed {
 		failure.TaskID = firstNonEmpty(failure.TaskID, taskID)
 		return normalizeFailure(failure)

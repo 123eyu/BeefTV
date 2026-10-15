@@ -838,6 +838,8 @@ components:
                 - timeout
                 - internal
                 - local_storage_failed
+                - local_credential_failed
+                - local_disk_full
                 - bad_gateway
                 - model_capability_not_supported
                 - model_price_not_configured

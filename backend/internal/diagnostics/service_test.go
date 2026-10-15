@@ -3,6 +3,7 @@ package diagnostics
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/json"
 	"io"
 	"strings"
 	"testing"
@@ -14,6 +15,30 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+func TestExportRecordsKeepFailureEvidenceAndLocalReason(t *testing.T) {
+	row := sanitizeTask(model.Task{ID: "task-disk", FailureDiagnostics: &model.TaskFailureDiagnostics{
+		Source: "local_result", Stage: "本地结果处理", ExecutionResult: "completed", RequestID: "req-12345678", ProviderTaskID: "task_12345678",
+		Summary: `write C:\Users\private\video: There is not enough space on the disk`,
+	}})
+	body, err := json.Marshal(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	for _, expected := range []string{"failureDiagnostics", "local_result", "req-12345678", "task_12345678", "not enough space on the disk"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("missing %s: %s", expected, text)
+		}
+	}
+	if strings.Contains(text, "private") {
+		t.Fatal("private path leaked")
+	}
+	event := sanitizeClientEvent(ClientEvent{Reason: "local_credential_failed", RequestID: "req-credential-test", Message: "工作区密钥文件不存在"})
+	if event.Reason != "local_credential_failed" || event.RequestID != "req-credential-test" || event.Message != "工作区密钥文件不存在" {
+		t.Fatalf("lost admission evidence: %#v", event)
+	}
+}
 
 func TestExportRedactsSensitiveValuesFromFixture(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:diagnostics-test?mode=memory&cache=shared"), &gorm.Config{})

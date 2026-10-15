@@ -1,6 +1,9 @@
 package diagnostics
 
-import "time"
+import (
+	"infinite-canvas/backend/internal/model"
+	"time"
+)
 
 const (
 	SchemaVersion    = 1
@@ -13,6 +16,7 @@ const (
 )
 
 type ClientEvent struct {
+	Reason     string `json:"reason,omitempty"`
 	ID         string `json:"id"`
 	Timestamp  string `json:"timestamp"`
 	Level      string `json:"level"`
@@ -125,6 +129,7 @@ type runtimeRecord struct {
 }
 
 type clientEventRecord struct {
+	Reason     string `json:"reason,omitempty"`
 	ID         string `json:"id,omitempty"`
 	Timestamp  string `json:"timestamp,omitempty"`
 	Level      string `json:"level,omitempty"`
@@ -143,25 +148,26 @@ type clientEventRecord struct {
 }
 
 type taskRecord struct {
-	ID                string     `json:"id"`
-	TraceID           string     `json:"traceId,omitempty"`
-	RequestID         string     `json:"requestId,omitempty"`
-	ProjectID         string     `json:"projectId,omitempty"`
-	Type              string     `json:"type,omitempty"`
-	Status            string     `json:"status,omitempty"`
-	Stage             string     `json:"stage,omitempty"`
-	Progress          int        `json:"progress,omitempty"`
-	Operation         string     `json:"operation,omitempty"`
-	Provider          string     `json:"provider,omitempty"`
-	Model             string     `json:"model,omitempty"`
-	LogicalModelID    string     `json:"logicalModelId,omitempty"`
-	ProviderRequestID string     `json:"providerRequestId,omitempty"`
-	Error             string     `json:"error,omitempty"`
-	Attempts          int        `json:"attempts,omitempty"`
-	StartedAt         *time.Time `json:"startedAt,omitempty"`
-	CompletedAt       *time.Time `json:"completedAt,omitempty"`
-	CreatedAt         time.Time  `json:"createdAt"`
-	UpdatedAt         time.Time  `json:"updatedAt"`
+	FailureDiagnostics *model.TaskFailureDiagnostics `json:"failureDiagnostics,omitempty"`
+	ID                 string                        `json:"id"`
+	TraceID            string                        `json:"traceId,omitempty"`
+	RequestID          string                        `json:"requestId,omitempty"`
+	ProjectID          string                        `json:"projectId,omitempty"`
+	Type               string                        `json:"type,omitempty"`
+	Status             string                        `json:"status,omitempty"`
+	Stage              string                        `json:"stage,omitempty"`
+	Progress           int                           `json:"progress,omitempty"`
+	Operation          string                        `json:"operation,omitempty"`
+	Provider           string                        `json:"provider,omitempty"`
+	Model              string                        `json:"model,omitempty"`
+	LogicalModelID     string                        `json:"logicalModelId,omitempty"`
+	ProviderRequestID  string                        `json:"providerRequestId,omitempty"`
+	Error              string                        `json:"error,omitempty"`
+	Attempts           int                           `json:"attempts,omitempty"`
+	StartedAt          *time.Time                    `json:"startedAt,omitempty"`
+	CompletedAt        *time.Time                    `json:"completedAt,omitempty"`
+	CreatedAt          time.Time                     `json:"createdAt"`
+	UpdatedAt          time.Time                     `json:"updatedAt"`
 }
 
 type taskLogRecord struct {
