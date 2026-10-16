@@ -76,6 +76,9 @@ func DefaultImageCapabilityConfig(protocol string, modelName string) *ImageCapab
 		OutputFormat:          ParameterSupport{Supported: true},
 		MaxOutputs:            15,
 	}
+	if name := strings.ToLower(strings.TrimSpace(modelName)); protocol == "openai-image" && (name == "gpt-image-2.5-flare" || name == "gpt-image-2.5-sunburst") {
+		image.Quality.Values = []string{"auto", "low", "medium", "high", "xhigh", "max"}
+	}
 	switch model.ChannelInterfaceType(protocol) {
 	case model.ChannelInterfaceGrokImage:
 		image.References.MaxImages = 1

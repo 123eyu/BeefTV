@@ -387,6 +387,9 @@ export function defaultImageCapabilityConfig(protocol?: ModelProtocol, model = "
         outputFormat: { supported: true },
         maxOutputs: 15,
     };
+    if (protocol === "openai-image" && ["gpt-image-2.5-flare", "gpt-image-2.5-sunburst"].includes(model.trim().toLowerCase())) {
+        image.quality.values = ["auto", "low", "medium", "high", "xhigh", "max"];
+    }
     const contract = protocol === "openai-image" ? beefAPIImageContract(model) : undefined;
     if (contract) {
         return {

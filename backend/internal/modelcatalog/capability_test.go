@@ -24,6 +24,31 @@ func TestDefaultPixelPresetsSatisfyImageGenerationConstraints(t *testing.T) {
 	}
 }
 
+func TestGPTImageQualityTiersValidateAll39Selections(t *testing.T) {
+	count := 0
+	for _, name := range []string{"gpt-image-2", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst"} {
+		profile := DefaultImageCapabilityConfig("openai-image", name)
+		for _, quality := range profile.Quality.Values {
+			if quality == "auto" {
+				continue
+			}
+			for _, size := range []string{"1024x1024", "2048x2048", "2880x2880"} {
+				input := TaskInput{Prompt: "cat", Config: TaskConfig{Model: name, InterfaceType: "openai-image", Quality: quality, Size: size, Count: "1"}}
+				if err := validateImageTask(profile, input); err != nil {
+					t.Fatalf("%s/%s/%s: %v", name, quality, size, err)
+				}
+				count++
+			}
+		}
+	}
+	if count != 39 {
+		t.Fatalf("expected 39 quality/size combinations, got %d", count)
+	}
+	if containsCapabilityString(DefaultImageCapabilityConfig("openai-image", "gpt-image-2").Quality.Values, "max") || containsCapabilityString(DefaultImageCapabilityConfig("openai-image", "custom-doodle").Quality.Values, "xhigh") {
+		t.Fatal("unverified models must not inherit the 2.5 quality tiers")
+	}
+}
+
 func TestNormalizeCustomImageModelWithoutGuessedLimits(t *testing.T) {
 	input := &ModelCapabilityConfig{Version: 1, Image: DefaultImageCapabilityConfig("openai-image", "my-custom-doodle")}
 	normalized, err := NormalizeModelCapabilityConfigForModel("image", "openai-image", "my-custom-doodle", input)
