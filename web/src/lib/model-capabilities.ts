@@ -379,12 +379,13 @@ const defaultImageSizes = [
 
 export function upgradeGPTImageCapability(profile: ImageCapabilityConfig, protocol: ModelProtocol | undefined, model: string): ImageCapabilityConfig {
     if (protocol !== "openai-image" || !["gpt-image-2", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst"].includes(model.trim().toLowerCase())) return profile;
+    if (!Array.isArray(profile.quality?.values) || !Array.isArray(profile.size?.values)) return profile;
     const defaults = defaultImageCapabilityConfig(protocol, model);
     const legacyQuality = profile.quality.supported && profile.quality.default === "auto" && profile.quality.values.length === 4 && ["auto", "low", "medium", "high"].every((value) => profile.quality.values.includes(value));
     const quality = legacyQuality && defaults.quality.values.includes("xhigh") ? { ...profile.quality, values: [...defaults.quality.values] } : profile.quality;
     const fixSize = (value: string) => value === "2048x878" ? "2048x880" : value;
     return { ...profile, quality, size: { ...profile.size, values: profile.size.values.map(fixSize), default: fixSize(profile.size.default),
-        ...(profile.size.presets ? { presets: profile.size.presets.map((preset) => preset.size === "2048x878" ? { ...preset, size: "2048x880", height: 880 } : preset) } : {}) } };
+        ...(Array.isArray(profile.size.presets) ? { presets: profile.size.presets.map((preset) => preset.size === "2048x878" ? { ...preset, size: "2048x880", height: 880 } : preset) } : {}) } };
 }
 
 export function defaultImageCapabilityConfig(protocol?: ModelProtocol, model = ""): ImageCapabilityConfig {
