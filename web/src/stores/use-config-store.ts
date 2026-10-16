@@ -376,6 +376,7 @@ export type ModelChannel = {
         icon?: string;
         capability: ModelCapability;
         protocol?: ModelProtocol;
+        authType?: string;
         capabilityConfig?: ModelCapabilityConfig;
         videoCapabilitiesVersion?: string;
         videoPricing?: VideoPriceQuote | null;
@@ -645,7 +646,8 @@ export function channelHasManagedBeefAPICredential(channel: Pick<ModelChannel, "
     return channel.credentialRef === MANAGED_BEEFAPI_CREDENTIAL_REF || channel.hasApiKey === true;
 }
 
-export function channelHasGenerationCredential(channel: Pick<ModelChannel, "id" | "pinned" | "credentialRef" | "hasApiKey" | "apiKey">) {
+export function channelHasGenerationCredential(channel: Pick<ModelChannel, "id" | "pinned" | "credentialRef" | "hasApiKey" | "apiKey" | "modelProfiles">, model = "") {
+    if (model && channel.modelProfiles?.some((item) => item.model === modelOptionName(model) && item.authType === "none")) return true;
     return channelHasManagedBeefAPICredential(channel) || Boolean(channel.apiKey?.trim());
 }
 
@@ -655,7 +657,7 @@ function isAiConfigReady(config: AiConfig, model: string) {
         return Boolean(config.runningHub.enabled && config.runningHub.baseUrl.trim() && key.trim() && config.runningHub.workflowId.trim());
     }
     const channel = resolveModelChannel(config, model);
-    return Boolean(model.trim() && channel.baseUrl.trim() && channelHasGenerationCredential(channel));
+    return Boolean(model.trim() && channel.baseUrl.trim() && channelHasGenerationCredential(channel, model));
 }
 
 export const useConfigStore = create<ConfigStore>()(

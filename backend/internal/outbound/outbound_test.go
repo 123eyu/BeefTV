@@ -1,6 +1,7 @@
 package outbound
 
 import (
+	"context"
 	"encoding/base64"
 	"net"
 	"net/http"
@@ -246,5 +247,66 @@ func TestCustomRelayHTTPClientDoesNotFollowRedirects(t *testing.T) {
 	}
 	if redirected {
 		t.Fatal("redirect destination should not receive the request")
+	}
+}
+
+func TestAddressesAllowLocalHTTPRequiresEveryAddress(t *testing.T) {
+	local := []net.IP{
+		net.ParseIP("127.0.0.1"),
+		net.ParseIP("::1"),
+		net.ParseIP("10.1.2.3"),
+		net.ParseIP("172.16.0.2"),
+		net.ParseIP("192.168.1.9"),
+		net.ParseIP("100.64.0.1"),
+		net.ParseIP("fd00::1"),
+		net.ParseIP("::ffff:10.1.2.3"),
+		net.ParseIP("::ffff:100.64.1.1"),
+	}
+	if !addressesAllowLocalHTTP(local, true) {
+		t.Fatal("loopback, RFC1918/ULA, and CGNAT should allow local HTTP")
+	}
+	for _, blocked := range []net.IP{
+		net.ParseIP("1.1.1.1"),
+		net.ParseIP("169.254.169.254"),
+		net.ParseIP("::ffff:169.254.169.254"),
+		net.ParseIP("198.18.0.1"),
+		net.ParseIP("0.0.0.0"),
+		net.ParseIP("224.0.0.1"),
+		nil,
+	} {
+		if addressesAllowLocalHTTP([]net.IP{blocked}, true) {
+			t.Fatalf("local HTTP accepted %v", blocked)
+		}
+	}
+	if addressesAllowLocalHTTP([]net.IP{net.ParseIP("10.0.0.1"), net.ParseIP("1.1.1.1")}, true) {
+		t.Fatal("a mixed public address must reject local HTTP")
+	}
+	if addressesAllowLocalHTTP([]net.IP{net.ParseIP("127.0.0.1")}, false) {
+		t.Fatal("strict mode must reject local HTTP")
+	}
+	if addressesAllowLocalHTTP(nil, true) {
+		t.Fatal("empty resolution must reject local HTTP")
+	}
+}
+
+func TestHostAllowsLocalHTTP(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	for _, host := range []string{"127.0.0.1", "::1", "10.0.0.8", "100.64.12.1", "192.168.0.2"} {
+		if !HostAllowsLocalHTTP(context.Background(), host) {
+			t.Fatalf("HostAllowsLocalHTTP(%q) = false", host)
+		}
+	}
+	for _, host := range []string{"1.1.1.1", "169.254.169.254", "198.18.0.1", ""} {
+		if HostAllowsLocalHTTP(context.Background(), host) {
+			t.Fatalf("HostAllowsLocalHTTP(%q) = true", host)
+		}
+	}
+	if _, err := ValidateOutboundURL("http://user:secret@10.0.0.8/object"); err == nil {
+		t.Fatal("credential-in-URL must stay rejected")
+	}
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "false")
+	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
+	if HostAllowsLocalHTTP(context.Background(), "127.0.0.1") {
+		t.Fatal("allowlist must not enable local HTTP while private upstreams are locked")
 	}
 }

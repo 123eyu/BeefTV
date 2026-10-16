@@ -194,13 +194,17 @@ func trustedFullVideoAssetSource(baseURL, sourceURL, assetOrigin string) bool {
 	if source.Host == base.Host && (source.Scheme == "https" || (source.Scheme == "http" && base.Scheme == "http")) {
 		return true
 	}
-	if source.Scheme != "https" {
-		return false
-	}
 	// Cross-origin assets require an exact origin explicitly configured by the
 	// user. The host never sends the API credential to that asset origin.
+	// An empty origin stays same-host only. A receipt cannot name an arbitrary LAN URL.
 	allowed, err := url.Parse(strings.TrimSpace(assetOrigin))
-	return err == nil && allowed.Scheme == "https" && allowed.Host != "" && allowed.User == nil && allowed.RawQuery == "" && allowed.Fragment == "" && (allowed.Path == "" || allowed.Path == "/") && (allowed.Port() == "" || allowed.Port() == "443") && source.Host == allowed.Host
+	if err != nil || allowed.Scheme == "" || allowed.Host == "" || allowed.User != nil || allowed.RawQuery != "" || allowed.Fragment != "" || (allowed.Path != "" && allowed.Path != "/") || source.Scheme != allowed.Scheme || source.Host != allowed.Host {
+		return false
+	}
+	if allowed.Scheme == "https" && (allowed.Port() == "" || allowed.Port() == "443") {
+		return true
+	}
+	return (allowed.Scheme == "http" || allowed.Scheme == "https") && outbound.HostAllowsLocalHTTP(context.Background(), allowed.Hostname())
 }
 
 func fullvideoFullModel(name string) bool {

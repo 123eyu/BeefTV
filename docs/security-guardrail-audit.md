@@ -17,7 +17,7 @@
 | IPv6 ULA | `fc00::/7` | 含 Tailscale IPv6 `fd7a:115c:a1e0::/48` |
 | CGNAT | `100.64.0.0/10` | Go 的 `IP.IsPrivate()` 不含这段；默认开启时自定义中转的额外前缀检查被跳过，所以 Tailscale IPv4 能通 |
 
-默认仍然拒绝，而且 **`CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS` 也不能放行**（本分支补上了允许列表绕过）：
+默认仍然拒绝，而且 **`CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS` 也不能放行**：
 
 | 检查 | 拦住什么 | 为什么还要留 |
 | --- | --- | --- |
@@ -53,17 +53,17 @@
 | `CANVAS_ALLOW_PRIVATE_UPSTREAMS=false` 及主机白名单 | 回环和 RFC1918 | 多租户或暴露在公网的实例被用来打内网 | 对默认桌面是低（功能回归）；对公网实例是高 | **严格部署才打开**。默认保持 true |
 | 严格模式下自定义渠道拒绝明文 HTTP | 公网 `http://` | 密钥明文出网 | 低（本地服务需要 HTTP） | **保留为严格模式**。默认已允许 HTTP |
 | 严格模式额外保留地址（含 `198.18/15`、`100.64/10`） | fake-ip、CGNAT、文档网段 | 缩小严格模式的可达面 | 低，但会误伤 Clash fake-ip 和 Tailscale | **严格模式保留**；不要在默认 true 时启用。fake-ip 误伤记为 P2 |
-| `referencestorage.Config.Validate` 强制 HTTPS、无 query | 明文对象存储、带 token 的 URL | 参考图 URL 会交给云端模型拉取；token 进 URL | 中（云拉取）；对纯局域网 MinIO 是功能限制 | **保留 HTTPS 与无凭据**。私网 HTTPS 在默认策略下已经允许。明文局域网 MinIO 见 P1，不要默默放开公网 HTTP |
-| `trustedFullVideoAssetSource` | 素材 URL 必须与 API 同主机，或用户显式填写的 HTTPS 源站（端口只能 443） | 全参视频回执把素材指到攻击者服务器；密钥不发往该源站，但后端会去拉 | 中 | **保留同源和显式源站**。局域网非 443 源站见 P1 |
+| `referencestorage.Config.Validate` | 公网 HTTP、带 token 的 URL、解析结果不全是本机/RFC1918/CGNAT 的 HTTP | 参考图 URL 会交给云端模型拉取；token 进 URL | 中（云拉取） | **保留公网 HTTPS、无凭据、无 query**。默认私网开关打开时，每个解析地址都是回环、RFC1918/ULA 或 `100.64/10` 才允许 HTTP。严格模式仍只许公网 HTTPS |
+| `trustedFullVideoAssetSource` | 未填写源站时必须与 API 同主机。跨主机必须等于用户填写的源站 | 全参视频回执把素材指到攻击者服务器；密钥不发往该源站，但后端会去拉 | 中 | **保留显式源站**。公网仍是 HTTPS 且端口为空或 443。已填写的本机/私网/CGNAT 源站可以是 HTTP 或非 443；回执不能改指另一台机器 |
 | `generation/http.go` 离开源站即剥掉 Authorization 和渠道头 | 重定向后的签名 URL | 渠道密钥跟到 CDN | 高 | **保留** |
 | 结果下载仍走 `ValidateOutboundURL` | 与出站同一策略 | 模型回执里的 URL 是第二跳 SSRF | 高（若改回“只许公网”则功能坏；若连元数据也不查则危险） | **保留当前策略**，不要退回“只许公网” |
 | 桌面 `ProfileDesktop` 只监听 `127.0.0.1`，且要启动令牌 | 局域网直接打桌面 API | 本机 WebView 以外的调用方 | 低（桌面本来就该只听本机） | **保留** |
-| 服务端 profile 监听 `:8080` 且没有启动令牌 | 什么都不拦 | 这是缺口，不是过度限制 | 把 API 暴露到 LAN/公网时高 | **不要再削出站来补偿**。P0 是给对外服务端补监听地址或共享令牌，而不是放宽 SSRF |
+| 服务端 profile 默认监听 `127.0.0.1:8080`，没有启动令牌 | 未设置地址时不监听所有网卡 | 这是暴露面，不是过度限制 | 显式把 API 绑到非回环时仍高 | **默认回环**。局域网或 Compose 网络用 `CANVAS_BACKEND_ADDR=:8080` 或 `0.0.0.0:8080` 显式放开。不用共享令牌：浏览器和局域网客户端会拿到同一份页面，令牌保不住 |
 | `cmd/beeftv` CLI 只接受回环 `BEEFTV_BASE_URL` | 连局域网另一台 BeefTV | 首版把 owner token 只发给本机 | 低到中 | **先保留**。服务端还没有等价于桌面令牌的认证时，放开 CLI 等于把工作区凭据发到任意主机 |
 | Eagle `validateBaseURL` | 只许 `http://127.0.0.1\|localhost\|::1:41595`，禁止重定向 | Eagle 本地 API 无鉴权，不能变成通用代理 | 低 | **保留**。Eagle 是本机应用，不是局域网服务 |
 | 浏览器自定义渠道 `requireHttpUrl` | 只查 http(s) 和主机名非空 | 不重复私网策略 | 无 | **保留为格式校验**。私网判断只放后端 |
-| `serviceConnectionError` 与多数插件 `apiKey.required: true` | 没有密钥不能保存渠道 | 防空密钥打到计费 API | 对 Ollama 是功能限制，不是安全收益 | **软化**，见 P1。运行时 `ApplyProtocolAuth` 对 `auth.type=none` 已经不发送密钥 |
-| `/api/ai/custom` 空 API Key 直接 401 | 无密钥的 OpenAI 兼容本地服务 | 防止匿名中转 | 低到中 | **P1 可选**：仅当目标已判定为回环/私网且用户显式勾选“无密钥”时放行。公网仍要密钥 |
+| `serviceConnectionError` 与插件 `apiKey.required` | 没有密钥不能保存渠道，除非所选协议 `auth.type` 都是 `none` | 防空密钥打到计费 API | 对 Ollama 不再拦截 | **已按协议放行**。目录里的 `authType` 优先于渠道上保存的值。`/api/ai/custom` 和模型目录读取仍要密钥 |
+| `/api/ai/custom` 空 API Key 直接 401 | 无密钥的浏览器通用中转 | 防止匿名中转 | 低到中 | **保留**。Ollama 原生 `/api/chat` 走协议插件，不走这条白名单 |
 | 服务端 CORS | 默认同源反射；`CANVAS_CORS_ORIGINS` 为空时额外允许 localhost；Compose 默认 `http://localhost:3000` | 带凭证的跨站调用 | 低。经 Nginx 用局域网 IP 打开同一站点时，Host 与 Origin 相同，已经放行 | **保留白名单**。不要改成反射任意私网 Origin（那是局域网 CSRF） |
 | 桌面 CORS 反射任意 Origin | 桌面 WebView 的 `wails:` / `wails.localhost` | 由启动令牌兜底，不是浏览器站点 | 低 | **保留**。没有启动令牌的服务端不要套用这段 |
 | 频控 `DefaultRuntimePolicy` 30 次/分钟等 | 托管配额 | 多租户刷接口 | 桌面/当前服务端都走 `NewLocal` → `selfUseRuntimePolicy`（上限 999999） | **保留代码路径**。不要在 local mode 启用托管配额 |
@@ -89,30 +89,29 @@
 
 - 本机 Ollama、vLLM、LocalAI、LiteLLM、局域网 RFC1918、Tailscale `100.64/10` 的 HTTP 模型地址。协议插件走 `ValidateOutboundURL`，不再被“拒绝私网”挡住。
 - 前端没有第二套私网黑名单。`channelRequest` 只检查 scheme。
+- Ollama 的 `auth.type=none` 可以不填 API Key。其他协议和 `/api/ai/custom` 仍要密钥。
+- 参考素材的本机、局域网和 CGNAT 端点可以使用 HTTP。公网仍必须 HTTPS。
+- 全参视频在用户已填写源站、且该源站通过同一私网策略时，可以是 HTTP 或非 443。未填写源站时仍必须与 API 同主机。
 
 仍然像噪音、或只在严格/特定产品路径上碍事：
 
 - `SECURITY.md` / `AGENTS.md` 仍写“公开注册默认关闭”。注册路由已经不存在，`CANVAS_REGISTRATION_ENABLED` 没有任何 Go 读取点。开关是空的。
 - Compose 的 `CANVAS_LOCAL_MODE` 同样没有 Go 读取点。服务端进程已经是 local mode。
-- 参考素材文档原先写“拒绝私网地址”。代码只是强制 HTTPS，私网是否拒绝取决于上面的出站开关。本分支已改文档。
-- `video-model-contracts.mdx` 和 `backend-database.mdx` 仍写“公网地址检查”。本分支已改成与 #171 一致。
-- Ollama 插件 `auth.type` 是 `none`，配置字段却 `required: true`，设置页 `serviceConnectionError` 对所有渠道都要 API Key。运行时不会发送这个密钥，但用户不填就无法保存。这是表单限制，不是 SSRF。
 - 本机 ComfyUI 的 `/prompt`、`/history` 不在自定义中转白名单里，也没有对应协议插件。`runninghub-workflow` 的默认 Base URL 是 `http://127.0.0.1:8188`，路径却是 RunningHub 的 `/task/openapi/*`，鉴权是 bearer。#171 解决了端口可达，没有因此接上原生 Comfy API。
-- 全参视频的跨源素材地址只接受 443 端口的 HTTPS。同源 HTTP（API 自己也是 HTTP）已经允许。
 - Eagle 锁死本机 41595。对这款本机软件是匹配的，不是误伤局域网模型。
 
 ## 4. 建议的改动顺序
 
 ### P0
 
-1. **已在本分支做：** 允许列表不再放行链路本地、未指定和组播。此前 `CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS=169.254.169.254` 可以打到云元数据。回环和 RFC1918 的白名单行为不变。
-2. **不要在这次做，但应单独立项：** `cmd/server` 默认 `:8080` 且 `launchToken` 为空，API 没有桌面那层令牌。出站私网已经默认开放，于是任何能访问到该端口的人都可以让进程去打局域网模型，并读取工作区。桌面形态没有这个问题。建议默认只绑 `127.0.0.1`，或增加与桌面令牌同类的 `CANVAS_SERVER_TOKEN`，由反向代理在本机注入。这是收紧暴露面，不是放宽 SSRF。
+1. **已做：** 允许列表不再放行链路本地、未指定和组播。此前 `CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS=169.254.169.254` 可以打到云元数据。回环和 RFC1918 的白名单行为不变。
+2. **已做：** `cmd/server` 与 bootstrap 的服务端 profile 在监听地址为空时使用 `127.0.0.1:8080`。镜像默认同样是容器内回环。Compose 继续显式设置 `CANVAS_BACKEND_ADDR=:8080`，让同网络的 web 容器能访问，宿主机发布保持回环或不发布。没有新增服务端令牌：桌面令牌只在壳和 WebView 之间成立，浏览器页面无法对局域网客户端保密。
 
 ### P1
 
-1. **Ollama / 无密钥本地服务。** 精确改动：`plugin-packages/ollama-chat` 的 `configuration.fields[].required` 改为 false，并与文档块同步；`web/src/lib/model-service-presets.ts` 的 `serviceConnectionError` 在协议鉴权为 `none` 时跳过“请填写 API Key”。不要对所有渠道取消密钥检查。`/api/ai/custom` 仍要求密钥，因为那条是浏览器通用中转；Ollama 原生 `/api/chat` 走协议插件，不走这条白名单。
-2. **参考素材明文局域网端点。** 仅当 `allowPrivateUpstreams()` 为真，且 `ValidateOutboundURL` 解析结果全部是回环或 `IsPrivate()` 或 `100.64.0.0/10` 时，允许 `http`。公网主机、链路本地、带 userinfo 或 query 的地址维持现状。严格模式保持只许 HTTPS。云端模型仍然拉不到局域网 URL，文案要写明。
-3. **全参视频素材源。** `trustedFullVideoAssetSource` 在私网开关打开、且源站主机通过同一出站策略、用户已填写 `referenceAssetOrigin` 时，允许 `http` 和非 443 端口。未填写源站时保持“必须与 API 同主机”。不要接受回执里任意局域网 URL。
+1. **已做：Ollama / 无密钥本地服务。** `plugin-packages/ollama-chat` 的 `configuration.fields[].required` 为 false，并与文档块同步。设置页只在所选协议的 `authType` 都是 `none` 时跳过“请填写 API Key”；目录值优先于渠道里保存的旧值。没有选择协议时仍要密钥，第一步“手动添加模型”除外，保存时再按协议判断。`/api/ai/custom` 和模型目录读取仍要求密钥。
+2. **已做：参考素材明文局域网端点。** 仅当 `allowPrivateUpstreams()` 为真，且解析结果全部是回环、`IsPrivate()` 或 `100.64.0.0/10` 时允许 `http`。公网主机、链路本地、带 userinfo 或 query 的地址维持现状。严格模式保持只许 HTTPS，允许列表也不能改成明文。云端模型仍然拉不到局域网 URL。
+3. **已做：全参视频素材源。** 私网开关打开、用户已填写 `referenceAssetOrigin`、且该源站主机通过同一本地地址策略时，允许 `http` 和非 443 端口。回执的协议、主机和端口必须与该源站一致。未填写源站时保持“必须与 API 同主机”。公网跨源仍是 HTTPS 且端口为空或 443，这条不解析 DNS。
 
 ### P2
 
@@ -130,16 +129,18 @@
 
 ## 5. 与 #171 之后的 main 不一致的文档和 Compose
 
-| 位置 | #171 之后的事实 | 本分支 |
+| 位置 | #171 之后的事实 | 现状 |
 | --- | --- | --- |
 | `AGENTS.md` | 已写成默认开放回环和私网 | 未改，已经对齐 |
 | `docker-compose*.yml` 的 `CANVAS_ALLOW_PRIVATE_UPSTREAMS` | 默认 `true` | 未改，已经对齐 |
 | `docs/content/docs/backend/video-model-contracts.mdx` | 仍写“公网地址校验 / 公网地址检查” | 已改成统一出站策略 |
 | `docs/content/docs/backend/backend-database.mdx` | 仍写“公网/SSRF 校验” | 已改 |
-| `docs/storage-settings.md` | 仍写“拒绝私网地址” | 已改：默认允许私网 HTTPS，端点仍必须是 HTTPS |
+| `docs/storage-settings.md` | 仍写“拒绝私网地址” | 已改：默认允许本机/局域网/CGNAT 的 HTTP，公网仍必须 HTTPS |
 | `SECURITY.md`、Compose 的 `CANVAS_REGISTRATION_ENABLED` | 注册开关没有实现 | 只记录，未删，避免把空环境变量当成行为变更 |
 | Compose 的 `CANVAS_LOCAL_MODE` | Go 不读取 | 只记录 |
 
-## 6. 本分支实际改了的代码
+## 6. 已落地的代码
 
-`resolveOutboundHostWithPolicy` 对链路本地、未指定和组播一律拒绝，不再因为主机名出现在 `CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS` 而跳过。`127.0.0.1` 白名单测试保持通过。新增用例覆盖 `169.254.169.254` 在允许列表和默认私网开关下都被拒绝。错误分类对这句提示不再建议“加入允许列表”。
+允许列表不再放行链路本地、未指定和组播。`127.0.0.1` 白名单测试保持通过。`169.254.169.254` 在允许列表和默认私网开关下都被拒绝。
+
+服务端默认监听改为 `127.0.0.1:8080`。`HostAllowsLocalHTTP` 只在私网开关打开且每个解析地址都是回环、RFC1918/ULA 或 CGNAT 时为真；参考素材 HTTP 和全参视频的已配置私网源站使用它。元数据和 URL 凭据检查没有放宽。Ollama 配置字段不再必填，前端只对 `authType=none` 免密钥。

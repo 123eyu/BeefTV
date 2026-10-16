@@ -433,6 +433,51 @@ func blockedCustomRelayIP(ip net.IP) bool {
 	return false
 }
 
+var cgnatPrefix = netip.MustParsePrefix("100.64.0.0/10")
+
+// localUpstreamIP is loopback, RFC1918/ULA, or CGNAT. Link-local (including
+// cloud metadata), unspecified, multicast, and public addresses are not local.
+func localUpstreamIP(ip net.IP) bool {
+	if blockedLinkLocalOrSpecialIP(ip) {
+		return false
+	}
+	if ip.IsLoopback() || ip.IsPrivate() {
+		return true
+	}
+	address, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return false
+	}
+	return cgnatPrefix.Contains(address.Unmap())
+}
+
+func addressesAllowLocalHTTP(addresses []net.IP, allowPrivate bool) bool {
+	if !allowPrivate || len(addresses) == 0 {
+		return false
+	}
+	for _, ip := range addresses {
+		if !localUpstreamIP(ip) {
+			return false
+		}
+	}
+	return true
+}
+
+// HostAllowsLocalHTTP reports whether every resolved address is loopback,
+// RFC1918/ULA, or CGNAT, and private upstreams are enabled. An operator
+// allowlist does not make this true while CANVAS_ALLOW_PRIVATE_UPSTREAMS=false.
+// Link-local and metadata addresses stay false.
+func HostAllowsLocalHTTP(ctx context.Context, host string) bool {
+	if !allowPrivateUpstreams() {
+		return false
+	}
+	addresses, err := resolveOutboundHost(ctx, host)
+	if err != nil {
+		return false
+	}
+	return addressesAllowLocalHTTP(addresses, true)
+}
+
 func allowPrivateUpstreams() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS"))) {
 	case "0", "false", "no":
