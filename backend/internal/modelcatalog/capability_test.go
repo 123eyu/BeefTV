@@ -8,6 +8,22 @@ import (
 	"infinite-canvas/backend/internal/model"
 )
 
+func TestDefaultPixelPresetsSatisfyImageGenerationConstraints(t *testing.T) {
+	count := 0
+	for _, size := range defaultImageSizeValues() {
+		if !strings.Contains(size, "x") {
+			continue
+		}
+		count++
+		if err := validateGPTImage2CustomSize(size); err != nil {
+			t.Errorf("default pixel preset %q: %v", size, err)
+		}
+	}
+	if count != 30 {
+		t.Fatalf("expected all 30 pixel presets, got %d", count)
+	}
+}
+
 func TestNormalizeCustomImageModelWithoutGuessedLimits(t *testing.T) {
 	input := &ModelCapabilityConfig{Version: 1, Image: DefaultImageCapabilityConfig("openai-image", "my-custom-doodle")}
 	normalized, err := NormalizeModelCapabilityConfigForModel("image", "openai-image", "my-custom-doodle", input)
