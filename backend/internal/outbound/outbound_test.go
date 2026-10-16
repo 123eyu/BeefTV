@@ -164,6 +164,26 @@ func TestValidateOutboundURLAllowsLocalAndPrivateHostsByDefault(t *testing.T) {
 	}
 }
 
+func TestValidateOutboundURLRejectsLinkLocalEvenWhenAllowlisted(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "false")
+	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "169.254.169.254,169.254.169.254.")
+	for _, rawURL := range []string{
+		"http://169.254.169.254/latest/meta-data",
+		"https://169.254.169.254/latest/meta-data/",
+	} {
+		if _, err := ValidateOutboundURL(rawURL); err == nil {
+			t.Fatalf("ValidateOutboundURL(%q) should reject allowlisted link-local metadata", rawURL)
+		}
+		if _, err := ValidateCustomRelayURL(rawURL); err == nil {
+			t.Fatalf("ValidateCustomRelayURL(%q) should reject allowlisted link-local metadata", rawURL)
+		}
+	}
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	if _, err := ValidateOutboundURL("http://169.254.169.254/latest/meta-data"); err == nil {
+		t.Fatal("default private upstreams must still reject metadata")
+	}
+}
+
 func TestValidateCustomRelayURLRespectsPrivateUpstreamDisableAndAllowlist(t *testing.T) {
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "false")
 	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "")

@@ -1332,6 +1332,11 @@ func isNetworkText(value string) bool {
 func outboundPolicyCopy(message string) (categoryCopy, bool) {
 	message, _, _ = strings.Cut(strings.TrimSpace(message), "。")
 	switch message {
+	case "不允许访问链路本地、未指定或组播地址":
+		return categoryCopy{
+			Reason: "模型服务地址被出站安全策略拦截",
+			Action: "该地址属于链路本地或云主机元数据网段，允许列表也不能放行。请改用回环或局域网地址",
+		}, true
 	case "不允许访问本机或内网地址", "不允许访问本机、内网或链路本地地址", "不允许访问保留地址或特殊用途地址":
 		return categoryCopy{
 			Reason: "模型服务地址被出站安全策略拦截",

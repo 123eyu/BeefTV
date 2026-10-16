@@ -355,15 +355,13 @@ func validateCustomRelayHost(host string) error {
 
 func resolveOutboundHost(ctx context.Context, host string) ([]net.IP, error) {
 	host = normalizeOutboundHost(host)
-	explicitHost := AllowedPrivateUpstreamHost(host)
-	return resolveOutboundHostWithPolicy(ctx, host, allowPrivateUpstreams() || explicitHost, explicitHost)
+	return resolveOutboundHostWithPolicy(ctx, host, allowPrivateUpstreams() || AllowedPrivateUpstreamHost(host))
 }
 
 func resolveCustomRelayHost(ctx context.Context, host string) ([]net.IP, error) {
 	host = normalizeOutboundHost(host)
-	explicitHost := AllowedPrivateUpstreamHost(host)
-	allowPrivateHost := allowPrivateUpstreams() || explicitHost
-	addresses, err := resolveOutboundHostWithPolicy(ctx, host, allowPrivateHost, explicitHost)
+	allowPrivateHost := allowPrivateUpstreams() || AllowedPrivateUpstreamHost(host)
+	addresses, err := resolveOutboundHostWithPolicy(ctx, host, allowPrivateHost)
 	if err != nil {
 		return nil, err
 	}
@@ -377,7 +375,7 @@ func resolveCustomRelayHost(ctx context.Context, host string) ([]net.IP, error) 
 	return addresses, nil
 }
 
-func resolveOutboundHostWithPolicy(ctx context.Context, host string, allowPrivateHost bool, explicitHost bool) ([]net.IP, error) {
+func resolveOutboundHostWithPolicy(ctx context.Context, host string, allowPrivateHost bool) ([]net.IP, error) {
 	if host == "" {
 		return nil, BadAuthRequest("外部服务域名无效")
 	}
@@ -398,7 +396,12 @@ func resolveOutboundHostWithPolicy(ctx context.Context, host string, allowPrivat
 		return nil, BadAuthRequest("外部服务域名没有可用地址")
 	}
 	for _, ip := range addresses {
-		if (!explicitHost && blockedLinkLocalOrSpecialIP(ip)) || (!allowPrivateHost && blockedOutboundIP(ip)) {
+		// Link-local includes cloud metadata (169.254.169.254). An operator
+		// allowlist may pin a LAN host, but it must not reopen that range.
+		if blockedLinkLocalOrSpecialIP(ip) {
+			return nil, BadAuthRequest("不允许访问链路本地、未指定或组播地址")
+		}
+		if !allowPrivateHost && blockedOutboundIP(ip) {
 			return nil, BadAuthRequest("不允许访问本机、内网或链路本地地址")
 		}
 	}
