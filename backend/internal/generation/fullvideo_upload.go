@@ -188,11 +188,14 @@ func validFullVideoUploadID(id string) bool {
 func trustedFullVideoAssetSource(baseURL, sourceURL, assetOrigin string) bool {
 	base, baseErr := url.Parse(baseURL)
 	source, sourceErr := url.Parse(sourceURL)
-	if baseErr != nil || sourceErr != nil || source.Scheme != "https" || source.User != nil || source.Fragment != "" || !strings.HasPrefix(source.Path, "/v1/media/assets/") {
+	if baseErr != nil || sourceErr != nil || source.User != nil || source.Fragment != "" || !strings.HasPrefix(source.Path, "/v1/media/assets/") {
 		return false
 	}
-	if source.Host == base.Host {
+	if source.Host == base.Host && (source.Scheme == "https" || (source.Scheme == "http" && base.Scheme == "http")) {
 		return true
+	}
+	if source.Scheme != "https" {
+		return false
 	}
 	// Cross-origin assets require an exact origin explicitly configured by the
 	// user. The host never sends the API credential to that asset origin.

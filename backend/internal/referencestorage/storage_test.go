@@ -100,6 +100,7 @@ func TestUploadSignsPUTAndRequiresAnonymousReadableMedia(t *testing.T) {
 }
 
 func TestConfigRefusesPrivateURLs(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "false")
 	for _, address := range []string{"http://cdn.example.com", "https://127.0.0.1", "https://10.0.0.1", "https://user:secret@example.com", "https://example.com?token=secret"} {
 		config := Config{Endpoint: address, PublicBaseURL: address, Bucket: "fixture", Region: "auto", AccessKeyID: "access", SecretAccessKey: "secret"}
 		if err := config.Validate(); err == nil {

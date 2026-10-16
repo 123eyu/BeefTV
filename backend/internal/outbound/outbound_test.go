@@ -142,14 +142,36 @@ func TestAllowedPrivateUpstreamHostUsesExactCaseInsensitiveMatch(t *testing.T) {
 	}
 }
 
-func TestValidateCustomRelayURLAllowsHTTPOnlyForExactPrivateAllowlist(t *testing.T) {
-	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+func TestValidateOutboundURLAllowsLocalAndPrivateHostsByDefault(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "")
+	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "")
+	for _, rawURL := range []string{
+		"http://127.0.0.1:8080/v1/models",
+		"http://localhost:11434/v1/models",
+		"http://192.168.1.100:8000/v1/models",
+		"http://10.0.0.5:8080/v1/models",
+		"http://172.16.0.2:8080/v1/models",
+	} {
+		if _, err := ValidateOutboundURL(rawURL); err != nil {
+			t.Fatalf("ValidateOutboundURL(%q) error = %v", rawURL, err)
+		}
+		if _, err := ValidateCustomRelayURL(rawURL); err != nil {
+			t.Fatalf("ValidateCustomRelayURL(%q) error = %v", rawURL, err)
+		}
+	}
+	if _, err := ValidateOutboundURL("http://169.254.169.254/latest/meta-data"); err == nil {
+		t.Fatal("ValidateOutboundURL() should still reject link-local metadata addresses by default")
+	}
+}
+
+func TestValidateCustomRelayURLRespectsPrivateUpstreamDisableAndAllowlist(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "false")
 	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "")
 	if _, err := ValidateCustomRelayURL("http://127.0.0.1:8080/v1/models"); err == nil {
-		t.Fatal("ValidateCustomRelayURL() should reject HTTP without an exact host allowlist")
+		t.Fatal("ValidateCustomRelayURL() should reject HTTP when private upstreams are disabled")
 	}
 	if _, err := ValidateCustomRelayURL("https://127.0.0.1:8080/v1/models"); err == nil {
-		t.Fatal("ValidateCustomRelayURL() should ignore the global private upstream override")
+		t.Fatal("ValidateCustomRelayURL() should reject private host when private upstreams are disabled")
 	}
 	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
 	for _, rawURL := range []string{
