@@ -140,6 +140,10 @@ var (
 )
 
 var providerCodeCategories = map[string]FailureCategory{
+	"contentmoderationfailed":           CategoryModerationInput,
+	"invalidparameter.voilationcontent": CategoryModerationInput,
+	"invalidparameter.violationcontent": CategoryModerationInput,
+
 	"local_disk_full":                  CategoryLocalDiskFull,
 	"local_credential_failed":          CategoryLocalCredential,
 	"local_storage_failed":             CategoryLocalStorage,
@@ -525,6 +529,14 @@ func ClassifyText(raw string) Failure {
 		return normalizeFailure(Failure{Category: CategoryMalformedResponse})
 	}
 	fields := extractProviderFields(text)
+	vodText := text
+	if fields.hasStructured() || strings.HasPrefix(text, "{") || strings.HasPrefix(text, "[") {
+		vodText = fields.Message
+	}
+	if copy, ok := vodImageErrorCopy(fields.Code, vodText); ok {
+		copy.RequestID, copy.TaskID = sanitizeDebugID(fields.RequestID), sanitizeDebugID(fields.TaskID)
+		return normalizeFailure(copy)
+	}
 	// Inspect only the error message, never JSON request echoes or debug fields.
 	databaseMessage := text
 	if fields.hasStructured() || strings.HasPrefix(text, "{") || strings.HasPrefix(text, "[") {
@@ -966,6 +978,9 @@ func categoryFromProviderMessage(raw string) (FailureCategory, bool) {
 }
 
 func containsContentSafety(normalized string) bool {
+	if strings.Contains(normalized, "rejected by the safety system") || strings.Contains(normalized, "rejected as a result of our safety system") || strings.Contains(normalized, "rejected as a result of the safety system") || strings.Contains(normalized, "contentmoderationfailed") || strings.Contains(normalized, "invalidparameter.voilationcontent") || strings.Contains(normalized, "invalidparameter.violationcontent") || strings.Contains(normalized, "上游内容安全策略") {
+		return true
+	}
 	if strings.Contains(normalized, "sensitive_words_detected") || strings.Contains(normalized, "content policy") || strings.Contains(normalized, "content safety") || strings.Contains(normalized, "safety policy") || strings.Contains(normalized, "data inspection") || strings.Contains(normalized, "prohibited_content") || strings.Contains(normalized, "内容安全审核") || strings.Contains(normalized, "内容审核未通过") {
 		return true
 	}
