@@ -460,7 +460,7 @@ export function backendProviderConfig(config: AiConfig, mode: BackendGenerationM
     if (workflow) return workflowProviderConfig(config, requestConfig, workflow);
     const generationOptions = {
         size: config.size,
-        quality: omittedImageQuality(config.quality),
+        quality: omittedImageQuality(config.quality, requestConfig),
         transparentBackground: config.transparentBackground,
         count: config.count,
         videoSeconds: config.videoSeconds,
@@ -551,7 +551,7 @@ function logicalCapabilityOptions(config: AiConfig, mode: BackendGenerationMode)
     const spec = channel.modelProfiles?.find((item) => item.model === modelOptionName(config.model))?.logicalCapabilitySpec;
     const candidates: Record<string, unknown> =
         mode === "image"
-            ? { size: config.size, quality: omittedImageQuality(config.quality), transparentBackground: config.transparentBackground === "true", count: Number(config.count) }
+            ? { size: config.size, quality: omittedImageQuality(config.quality, resolveModelRequestConfig(config, config.model)), transparentBackground: config.transparentBackground === "true", count: Number(config.count) }
             : mode === "video"
               ? { size: config.size, videoSeconds: Number(config.videoSeconds), vquality: config.vquality, videoGenerateAudio: config.videoGenerateAudio === "true", videoWatermark: config.videoWatermark === "true" }
               : mode === "audio"
@@ -563,10 +563,11 @@ function logicalCapabilityOptions(config: AiConfig, mode: BackendGenerationMode)
     return filtered;
 }
 
-function omittedImageQuality(value: string | undefined) {
+function omittedImageQuality(value: string | undefined, request: { model: string; interfaceType?: string }) {
     const normalized = String(value || "")
         .trim()
         .toLowerCase();
+    if (request.interfaceType === "openai-image" && request.model.trim().toLowerCase() === "gpt-image-2" && ["", "auto", "any"].includes(normalized)) return "low";
     return normalized === "auto" || normalized === "any" ? undefined : value;
 }
 
