@@ -22,9 +22,9 @@ test("GPT Image 39档在设置面板均能点击并原值提交，明暗主题�
         const url = new URL(request.url);
         if (url.pathname === "/harness.js") return new Response(js, { headers: { "Content-Type": "application/javascript" } });
         if (url.pathname === "/harness.css") return new Response(css, { headers: { "Content-Type": "text/css" } });
-        if (url.pathname === "/api/ai/custom") {
+        if (url.pathname === "/api/tasks") {
             requests.push(await request.json());
-            return Response.json({ data: [{ url: "https://result.example.invalid/cat.png" }] });
+            return Response.json({ code: 0, data: { id: `fixture-${requests.length}`, status: "queued", projectId: "fixture-project" } });
         }
         if (url.pathname.startsWith("/api/")) return new Response("Unexpected API request", { status: 500 });
         return new Response(`<html class="${url.searchParams.get("theme") === "dark" ? "dark" : ""}"><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="/harness.css"><body class="app-product-overlays"><div id="root" class="app-product-workspace"></div><script type="module" src="/harness.js"></script></body></html>`, { headers: { "Content-Type": "text/html" } });
@@ -39,8 +39,9 @@ test("GPT Image 39档在设置面板均能点击并原值提交，明暗主题�
             await page.route("https://**", (route) => route.abort());
             await page.goto(`${server.url}?theme=${theme}`);
             expect(await page.locator(".image-size-tiers").evaluate((element) => getComputedStyle(element).display)).toBe("grid");
+            expect(await page.getByTestId("creation-labels").textContent()).toBe("超高、最高");
             for (const model of ["gpt-image-2", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst"]) {
-                await page.getByRole("combobox", { name: "模型" }).selectOption(`quality-check::${model}`);
+                await page.getByRole("combobox", { name: "模型" }).selectOption(`beefapi::${model}`);
                 const qualities = model === "gpt-image-2" ? ["low", "medium", "high"] : ["low", "medium", "high", "xhigh", "max"];
                 expect(await page.getByRole("button", { name: "最高", exact: true }).count()).toBe(model === "gpt-image-2" ? 0 : 1);
                 for (const quality of qualities) {
@@ -54,8 +55,8 @@ test("GPT Image 39档在设置面板均能点击并原值提交，明暗主题�
                         await page.waitForFunction(() => Boolean(document.querySelector('[role="status"]')?.textContent));
                         expect(await page.locator('[role="status"]').textContent()).toBe("已校验");
                         expect(requests.length).toBe(before + 1);
-                        const body = requests.at(-1)!;
-                        expect(body).toMatchObject({ model, quality, size, n: 1 });
+                        const body = requests.at(-1)! as { input: { config: Record<string, unknown> } };
+                        expect(body.input.config).toMatchObject({ model, quality, size, count: "1" });
                         const box = (await page.getByRole("button", { name: tier, exact: true }).boundingBox())!;
                         expect(box.x + box.width).toBeLessThanOrEqual(width);
                     }

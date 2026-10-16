@@ -21,6 +21,24 @@ import { createModelChannel, defaultConfig, modelDisplayName, normalizeConfigSna
 const originalAxiosRequest = axios.request;
 const originalApiRequest = apiClient.request;
 
+test("官方GPT图片旧默认配置升级质量和21:9尺寸，保留显式限制与第三方配置", () => {
+    const model = "gpt-image-2.5-flare";
+    const legacy = defaultModelCapabilityConfig("openai-image", "gpt-image-2");
+    legacy.image!.size.values = ["2048x878"];
+    legacy.image!.size.default = "2048x878";
+    legacy.image!.size.presets = [{ tier: "1k", ratio: "21:9", size: "2048x878", width: 2048, height: 878 }];
+    const configFor = (baseUrl: string, capabilityConfig = legacy) => normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [createModelChannel({ id: "beefapi", baseUrl, models: [model], modelProfiles: [{ model, capability: "image", protocol: "openai-image", capabilityConfig }] })] } }).config;
+    const upgraded = configFor("https://enterprise.beefapi.com/v1").channels[0]!.modelProfiles![0]!.capabilityConfig!.image!;
+    expect(upgraded.quality.values).toEqual(["auto", "low", "medium", "high", "xhigh", "max"]);
+    expect(upgraded.size.default).toBe("2048x880");
+    expect(upgraded.size.presets![0]!.height).toBe(880);
+    expect(legacy.image!.size.values).toEqual(["2048x878"]);
+    const restricted = structuredClone(legacy);
+    restricted.image!.quality = { supported: true, values: ["low"], default: "low" };
+    expect(configFor("https://enterprise.beefapi.com/v1", restricted).channels[0]!.modelProfiles![0]!.capabilityConfig!.image!.quality.values).toEqual(["low"]);
+    expect(configFor("https://custom.example.com/v1").channels[0]!.modelProfiles![0]!.capabilityConfig!.image!.quality.values).toEqual(["auto", "low", "medium", "high"]);
+});
+
 afterEach(() => {
     axios.request = originalAxiosRequest;
     apiClient.request = originalApiRequest;
