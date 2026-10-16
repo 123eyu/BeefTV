@@ -76,6 +76,9 @@ func DefaultImageCapabilityConfig(protocol string, modelName string) *ImageCapab
 		OutputFormat:          ParameterSupport{Supported: true},
 		MaxOutputs:            15,
 	}
+	if name := strings.ToLower(strings.TrimSpace(modelName)); protocol == "openai-image" && (name == "gpt-image-2.5-flare" || name == "gpt-image-2.5-sunburst") {
+		image.Quality.Values = []string{"auto", "low", "medium", "high", "xhigh", "max"}
+	}
 	switch model.ChannelInterfaceType(protocol) {
 	case model.ChannelInterfaceGrokImage:
 		image.References.MaxImages = 1
@@ -125,7 +128,7 @@ func DefaultImageCapabilityConfig(protocol string, modelName string) *ImageCapab
 func defaultImageSizeValues() []string {
 	return []string{
 		"auto", "1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "21:9", "9:16",
-		"1024x1024", "1360x1024", "1024x1360", "1536x1024", "1024x1536", "1024x1280", "1280x1024", "2048x878", "1824x1024", "1024x1824",
+		"1024x1024", "1360x1024", "1024x1360", "1536x1024", "1024x1536", "1024x1280", "1280x1024", "2048x880", "1824x1024", "1024x1824",
 		"2048x2048", "2304x1728", "1728x2304", "2496x1664", "1664x2496", "1792x2240", "2240x1792", "3136x1344", "2752x1536", "1536x2752",
 		"2880x2880", "3264x2448", "2448x3264", "3504x2336", "2336x3504", "2560x3200", "3200x2560", "3808x1632", "3840x2160", "2160x3840",
 	}
@@ -312,7 +315,7 @@ func NormalizeModelCapabilityConfigForModel(capability string, protocol string, 
 		if input == nil || input.Image == nil {
 			return nil, kernel.BadAuthRequest("请配置图片模型能力参数")
 		}
-		value := &ModelCapabilityConfig{Version: 1, Image: input.Image}
+		value := &ModelCapabilityConfig{Version: 1, Image: applyModelSpecificImageCapability(input.Image, protocol, modelName, "")}
 		if err := validateImageCapabilityConfig(value.Image); err != nil {
 			return nil, err
 		}
@@ -702,12 +705,33 @@ func validateVideoDuration(value VideoDurationConfig) error {
 	return nil
 }
 
-// applyModelSpecificImageCapability is retained as a narrow normalization hook
-// for provider-specific image validation. The stored capability profile is
-// already normalized when the channel model is saved, so no second override is
-// needed here.
-func applyModelSpecificImageCapability(profile *ImageCapabilityConfig, _ string, _ string, _ string) *ImageCapabilityConfig {
-	return profile
+// Upgrade only the old built-in GPT image choices; keep other stored limits.
+func applyModelSpecificImageCapability(profile *ImageCapabilityConfig, protocol string, modelName string, _ string) *ImageCapabilityConfig {
+	name := strings.ToLower(strings.TrimSpace(modelName))
+	if profile == nil || protocol != "openai-image" || (name != "gpt-image-2" && name != "gpt-image-2.5-flare" && name != "gpt-image-2.5-sunburst") {
+		return profile
+	}
+	result := *profile
+	if name != "gpt-image-2" && profile.Quality.Supported && profile.Quality.Default == "auto" && len(profile.Quality.Values) == 4 && containsCapabilityString(profile.Quality.Values, "auto") && containsCapabilityString(profile.Quality.Values, "low") && containsCapabilityString(profile.Quality.Values, "medium") && containsCapabilityString(profile.Quality.Values, "high") {
+		result.Quality.Values = DefaultImageCapabilityConfig(protocol, name).Quality.Values
+	}
+	result.Size.Values = append([]string(nil), profile.Size.Values...)
+	for i, size := range result.Size.Values {
+		if size == "2048x878" {
+			result.Size.Values[i] = "2048x880"
+		}
+	}
+	if result.Size.Default == "2048x878" {
+		result.Size.Default = "2048x880"
+	}
+	result.Size.Presets = append([]ImageSizePreset(nil), profile.Size.Presets...)
+	for i, preset := range result.Size.Presets {
+		if preset.Size == "2048x878" {
+			result.Size.Presets[i].Size = "2048x880"
+			result.Size.Presets[i].Height = 880
+		}
+	}
+	return &result
 }
 
 // applyFixedVideoResolution 让单档位 SKU 的预扣、恢复和上游请求保持同一分辨率。
@@ -786,6 +810,7 @@ func validateVideoTaskParameters(profile *VideoCapabilityConfig, input TaskInput
 }
 
 func validateImageTask(profile *ImageCapabilityConfig, input TaskInput) error {
+	profile = applyModelSpecificImageCapability(profile, input.Config.InterfaceType, input.Config.Model, input.Config.APIFormat)
 	if providerpreset.IsBeefAPIEndpoint(input.Config.BaseURL) {
 		if contract, ok := providerpreset.BeefAPIImageContract(input.Config.Model); ok {
 			profile = DefaultImageCapabilityConfig(contract.Protocol, input.Config.Model)

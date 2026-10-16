@@ -352,7 +352,7 @@ const defaultImageSizes = [
     "1024x1536",
     "1024x1280",
     "1280x1024",
-    "2048x878",
+    "2048x880",
     "1824x1024",
     "1024x1824",
     "2048x2048",
@@ -377,6 +377,17 @@ const defaultImageSizes = [
     "2160x3840",
 ];
 
+export function upgradeGPTImageCapability(profile: ImageCapabilityConfig, protocol: ModelProtocol | undefined, model: string): ImageCapabilityConfig {
+    if (protocol !== "openai-image" || !["gpt-image-2", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst"].includes(model.trim().toLowerCase())) return profile;
+    if (!Array.isArray(profile.quality?.values) || !Array.isArray(profile.size?.values)) return profile;
+    const defaults = defaultImageCapabilityConfig(protocol, model);
+    const legacyQuality = profile.quality.supported && profile.quality.default === "auto" && profile.quality.values.length === 4 && ["auto", "low", "medium", "high"].every((value) => profile.quality.values.includes(value));
+    const quality = legacyQuality && defaults.quality.values.includes("xhigh") ? { ...profile.quality, values: [...defaults.quality.values] } : profile.quality;
+    const fixSize = (value: string) => value === "2048x878" ? "2048x880" : value;
+    return { ...profile, quality, size: { ...profile.size, values: profile.size.values.map(fixSize), default: fixSize(profile.size.default),
+        ...(Array.isArray(profile.size.presets) ? { presets: profile.size.presets.map((preset) => preset.size === "2048x878" ? { ...preset, size: "2048x880", height: 880 } : preset) } : {}) } };
+}
+
 export function defaultImageCapabilityConfig(protocol?: ModelProtocol, model = ""): ImageCapabilityConfig {
     const image: ImageCapabilityConfig = {
         references: { promptMaxChars: 32000, maxImages: 16, maxImageBytes: 30 * 1024 * 1024, maskSupported: true },
@@ -387,6 +398,9 @@ export function defaultImageCapabilityConfig(protocol?: ModelProtocol, model = "
         outputFormat: { supported: true },
         maxOutputs: 15,
     };
+    if (protocol === "openai-image" && ["gpt-image-2.5-flare", "gpt-image-2.5-sunburst"].includes(model.trim().toLowerCase())) {
+        image.quality.values = ["auto", "low", "medium", "high", "xhigh", "max"];
+    }
     const contract = protocol === "openai-image" ? beefAPIImageContract(model) : undefined;
     if (contract) {
         return {

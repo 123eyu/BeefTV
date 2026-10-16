@@ -8,7 +8,7 @@ import { beefAPIVideoContract, isBeefAPIEndpoint } from "@/lib/beefapi-video-con
 import { beefAPIImageContract } from "@/lib/beefapi-image-contracts";
 import { defaultProtocolForCapability, defaultProtocolForModel, inferProtocolCapabilityFromModel, modelProtocolCapability, normalizeModelProtocol, usesOpenAICompatibleProtocolDefault, type ModelProtocol } from "@/lib/model-protocols";
 import { normalizeVideoBoolean, normalizeVideoDuration, normalizeVideoResolution } from "@/lib/video-generation-options";
-import { defaultModelCapabilityConfig, workflowFieldRole, workflowFieldSafeToOverride, workflowVideoFieldsFromJson, type ModelCapabilityConfig } from "@/lib/model-capabilities";
+import { defaultModelCapabilityConfig, upgradeGPTImageCapability, workflowFieldRole, workflowFieldSafeToOverride, workflowVideoFieldsFromJson, type ModelCapabilityConfig } from "@/lib/model-capabilities";
 import { useUserStore } from "@/stores/use-user-store";
 import type { CapabilitySpec } from "@/services/api/logical-models";
 import { seedancePortraitLabel, seedancePortraitModel, type VideoPriceQuote } from "@/lib/seedance-portrait";
@@ -889,12 +889,13 @@ function enrichBeefApiMediaChannel(channel: ModelChannel): ModelChannel {
         const contract = beefAPIImageContract(model);
         const staleTextProtocol = (/^(gpt-image(?:-|$)|dall-e(?:-|$))/i.test(model) || Boolean(contract)) && modelProtocolCapability(current?.protocol) === "text";
         const protocol = contract?.protocol || (staleTextProtocol ? "openai-image" : current?.protocol || "openai-image");
+        const capabilityConfig = contract ? defaultModelCapabilityConfig(contract.protocol, model) : current?.capabilityConfig || defaultModelCapabilityConfig(protocol, model);
         existing.set(model, {
             ...(current || {}),
             model,
             capability: "image",
             protocol,
-            capabilityConfig: contract ? defaultModelCapabilityConfig(contract.protocol, model) : current?.capabilityConfig || defaultModelCapabilityConfig(protocol, model),
+            capabilityConfig: capabilityConfig.image ? { ...capabilityConfig, image: upgradeGPTImageCapability(capabilityConfig.image, protocol, model) } : capabilityConfig,
         });
     }
     for (const model of models.filter(isTextModelName)) {
