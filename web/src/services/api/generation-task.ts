@@ -1,3 +1,4 @@
+import { createClientId } from "@/lib/client-id";
 import { getMediaBlob } from "@/services/file-storage";
 import { resolveReferenceMediaDuration } from "@/lib/reference-media-metadata";
 import { getImageBlob } from "@/services/image-storage";
@@ -67,7 +68,7 @@ export type GenerationTaskDependencies = {
 const defaultDependencies: GenerationTaskDependencies = {
     createTask: createGenerationTask,
     waitTask: waitForGenerationTask,
-    createId: () => crypto.randomUUID(),
+    createId: () => createClientId(),
     findTask: findGenerationTaskByOperation,
 };
 

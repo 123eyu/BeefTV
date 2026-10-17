@@ -1,4 +1,5 @@
 import { isCanvasNodeGenerating } from "@/lib/canvas/canvas-node-task-state";
+import { createClientId } from "@/lib/client-id";
 import { useCallback, useRef, type Dispatch, type SetStateAction } from "react";
 import { App } from "antd";
 
@@ -113,7 +114,7 @@ export function useCanvasGenerationExecutor({
                 nodeId,
                 async () => {
                     let stage = "validation";
-                    const attemptId = crypto.randomUUID();
+                    const attemptId = createClientId();
                     let preparing = false;
                     let selectedModel = options?.confirmedModelKey || "";
                     let refSummary = "";
@@ -428,7 +429,7 @@ export function useCanvasGenerationExecutor({
                             skillMetadata: skillExecution.metadata,
                             taskContext: options?.context,
                             retryContext: options?.retryContext,
-                            clientOperationId: options?.clientOperationId || options?.retryContext?.clientOperationId || `canvas:${crypto.randomUUID()}`,
+                                clientOperationId: options?.clientOperationId || options?.retryContext?.clientOperationId || `canvas:${createClientId()}`,
                             setNodes,
                             setConnections,
                             setSelectedNodeIds,

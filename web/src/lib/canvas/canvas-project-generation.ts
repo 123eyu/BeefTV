@@ -1,4 +1,5 @@
 import { type GenerationTask } from "@/services/api/task-center";
+import { createClientId } from "@/lib/client-id";
 import { backendProviderConfig, logicalModelIDForConfig, runBackendGenerationTask, type GenerationTaskDependencies } from "@/services/api/generation-task";
 import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
@@ -139,7 +140,7 @@ export async function runCanvasGenerationTaskToConsumer(
         onSubmission?: (metadata: Pick<CanvasNodeMetadata, "taskClientOperationId" | "generationSubmissionState" | "taskStage">) => void;
     },
 ) {
-    input = { ...input, clientOperationId: input.clientOperationId || crypto.randomUUID() };
+    input = { ...input, clientOperationId: input.clientOperationId || createClientId() };
     return runGenerationOperationOnce(input.clientOperationId, async () => {
         const expectedScope = input.expectedScope ?? captureUserScope();
         const isCurrent = () => !input.signal?.aborted && userScopeMatches(expectedScope) && (dependencies.isCurrent ? dependencies.isCurrent() : true);

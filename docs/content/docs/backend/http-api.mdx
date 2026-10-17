@@ -170,6 +170,8 @@ Windows 的运行地址描述文件位于用户目录的 `.beeftv/runtime/`，�
 
 ## 任务诊断
 
+`POST /diagnostics/environment` 接收 `repair` 布尔值，检查当前工作区的存储、剩余空间、媒体工具、可选模型和代理配置。`repair=true` 只重建缺失的固定临时目录；已有文件、符号链接和项目均保留。接口不接受路径或命令，沿用工作区身份和桌面信任校验。导出的 ZIP 增加 `context/environment.json`，浏览器能力作为固定布尔字段写入 `context/runtime.json`。详细状态和适用范围见 [环境自检](./environment-check)。
+
 任务提交前无法读取或解密本地算力凭据时，返回 HTTP 500、`reason=local_credential_failed`，不创建生成任务。安全摘要区分密钥文件缺失、读取权限不足、密钥长度异常和解密失败，不返回密钥、密文或本地路径。客户端将其显示为本地算力连接错误，禁止自动重试；复制排查信息保留响应的 `X-Request-ID`、HTTP 状态及凭据读取阶段，不归类为模型参数错误。
 
 本地生成结果写入遇到 Windows 磁盘空间不足、POSIX `ENOSPC` 或 SQLite 磁盘写满时，生成错误分类为 `local_disk_full`。提示清理 BeefTV 数据目录所在磁盘，并优先取回原任务结果，避免重复生成。上游返回的磁盘错误不据此推断为用户电脑磁盘不足。

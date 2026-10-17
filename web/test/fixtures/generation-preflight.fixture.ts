@@ -1,6 +1,9 @@
 import { mock } from "bun:test";
 import { strict as assert } from "node:assert";
 
+// HTTP WebViews expose getRandomValues, but may not expose randomUUID.
+Object.defineProperty(crypto, "randomUUID", { value: undefined, configurable: true });
+
 const confirmations: any[] = [];
 const diagnostics: any[] = [];
 const errors: string[] = [];

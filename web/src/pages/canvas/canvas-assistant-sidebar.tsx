@@ -1,3 +1,4 @@
+import { createClientId } from "@/lib/client-id";
 import { Button, Dropdown, Tooltip } from "antd";
 import { History, MessageSquarePlus, X, ArrowUpRight } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
@@ -104,7 +105,7 @@ export function CanvasAssistantSidebar(props: Props) {
         if (attachmentCount.current + files.length > 8) { setInputError("一次最多添加 8 份参考素材"); return; }
         setInputError("");
         attachmentCount.current += files.length;
-        const entries = files.map(file => ({ id: crypto.randomUUID(), file, busy: true }));
+        const entries = files.map(file => ({ id: createClientId(), file, busy: true }));
         setUploads(items => [...items, ...entries]);
         entries.forEach(item => void upload(item.id, item.file));
     }, [attachments.length, draftIdentity, draftLoaded, loadedDraftIdentity, readOnly, upload, uploads.length]);
