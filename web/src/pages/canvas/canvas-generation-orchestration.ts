@@ -1,5 +1,6 @@
 import type { Dispatch, SetStateAction } from "react";
 import { nanoid } from "nanoid";
+import { beefAPIImageContract } from "@/lib/beefapi-image-contracts";
 
 import { getNodeSpec } from "@/constant/canvas";
 import { applyGenerationTaskResultToNodes, generationTaskMode } from "@/lib/canvas/canvas-generation-task-sync";
@@ -157,34 +158,40 @@ export async function insertCanvasGenerationHistoryTask(input: {
 }): Promise<{ node: CanvasNodeData; nextNodes: CanvasNodeData[]; abandoned?: boolean }> {
     const mode = generationTaskMode(input.task);
     const nodeType = mode === "video" ? CanvasNodeType.Video : mode === "audio" ? CanvasNodeType.Audio : CanvasNodeType.Image;
-    const node = createCanvasNode(nodeType, input.center, {
-        prompt: input.task.prompt,
-        composerContent: input.task.prompt,
-        status: "loading",
-        taskId: input.task.id,
-        taskStatus: input.task.status,
-        taskStage: input.task.stage,
-        taskProvider: input.task.provider,
-        taskCreatedAt: input.task.createdAt,
-        taskCompletedAt: input.task.completedAt,
-        model: input.task.model,
-    });
-    node.title = mode === "video" ? "历史视频" : mode === "audio" ? "历史音频" : "历史图片";
-    const applied = await (input.applyResult || applyGenerationTaskResultToNodes)([node], input.task, node.id);
-    if (!applied.node) throw new Error("生成结果无法定位到画布节点");
-    if (input.canContinueWrite && !input.canContinueWrite()) return { node: applied.node, nextNodes: [], abandoned: true };
-    const bound = await bindMissingCanvasResourceAssets([applied.node], input.assets, async (item) => {
-        if (input.canContinueWrite && !input.canContinueWrite()) throw new CanvasOwnerAbandonedError();
-        return input.ensureAsset(item);
-    });
-    const inserted = bound[0];
-    if (!inserted || canvasNodesMissingResourceAssetBinding(bound).length) {
-        throw new Error("生成结果尚未进入素材库，无法插入画布");
+    const count = mode === "image" ? beefAPIImageContract(input.task.model || "")?.fixedOutputs || 1 : 1;
+    const insertedNodes: CanvasNodeData[] = [];
+    for (let index = 0; index < count; index++) {
+        const node = createCanvasNode(nodeType, { x: input.center.x + (index % 2) * 400, y: input.center.y + Math.floor(index / 2) * 400 }, {
+            prompt: input.task.prompt,
+            composerContent: input.task.prompt,
+            status: "loading",
+            taskId: input.task.id,
+            taskStatus: input.task.status,
+            taskStage: input.task.stage,
+            taskProvider: input.task.provider,
+            taskCreatedAt: input.task.createdAt,
+            taskCompletedAt: input.task.completedAt,
+            model: input.task.model,
+            ...(count > 1 ? { taskOutputIndex: index } : {}),
+        });
+        node.title = mode === "video" ? "历史视频" : mode === "audio" ? "历史音频" : "历史图片";
+        const applied = await (input.applyResult || applyGenerationTaskResultToNodes)([node], input.task, node.id);
+        if (!applied.node) throw new Error("生成结果无法定位到画布节点");
+        if (input.canContinueWrite && !input.canContinueWrite()) return { node: applied.node, nextNodes: [], abandoned: true };
+        const bound = await bindMissingCanvasResourceAssets([applied.node], input.assets, async (item) => {
+            if (input.canContinueWrite && !input.canContinueWrite()) throw new CanvasOwnerAbandonedError();
+            return input.ensureAsset(item);
+        });
+        const inserted = bound[0];
+        if (!inserted || canvasNodesMissingResourceAssetBinding(bound).length) {
+            throw new Error("生成结果尚未进入素材库，无法插入画布");
+        }
+        if (input.canContinueWrite && !input.canContinueWrite()) return { node: inserted, nextNodes: [], abandoned: true };
+        insertedNodes.push(inserted);
     }
-    if (input.canContinueWrite && !input.canContinueWrite()) return { node: inserted, nextNodes: [], abandoned: true };
-    const nextNodes = rebaseInsertedCanvasNode(input.readLiveNodes(), inserted);
+    const nextNodes = insertedNodes.reduce((nodes, inserted) => rebaseInsertedCanvasNode(nodes, inserted), input.readLiveNodes());
     await input.persist(nextNodes);
-    return { node: inserted, nextNodes };
+    return { node: insertedNodes[0], nextNodes };
 }
 
 export async function runOwnedCanvasHistoryInsert(input: {

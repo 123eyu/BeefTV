@@ -24,7 +24,10 @@ not discard the other candidates or create another paid task.
 Polling, result retrieval and reload use that output index. A new generation
 clears the previous index. Submission-unknown state is propagated to the batch
 root and every candidate; it blocks another generation and directs the user to
-query the original task. Known output-application errors retain the existing
+query the original task. Canceling the wait preserves all candidate identities; history
+inserts all four indexed images and retry delegates the fixed batch only once.
+A missing logical output fails immediately instead of polling or aliasing another
+image. Known output-application errors retain the existing
 continue-retrieval behavior.
 
 Other image models keep their existing count and submission behavior. No schema
@@ -47,7 +50,9 @@ The wire tests cover one `n=4` create for JSON and reference-image multipart,
 all four returned results, the full execution path and rejection before create.
 The frontend fixture uses the real canvas executor with a synthetic submission
 boundary to verify one task, four distinct indices, serialized bindings, partial
-binding failure and unknown submission with no new task. Neighboring save/bind
+binding failure, cancellation before/after acceptance and unknown submission with
+no new task. History recovery and insertion check all four indices, and a sparse
+output fails without querying or binding the wrong image. Neighboring save/bind
 regressions run alongside it.
 
 These deterministic tests do not prove a production generation or native app

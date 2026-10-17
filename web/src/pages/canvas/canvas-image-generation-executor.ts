@@ -57,7 +57,8 @@ export async function executeImageGeneration({
     registerPendingNodeIds,
 }: CanvasGenerationExecution) {
     if (canvasImageGenerationHasPendingResult(sourceNode, canvasNodes)) {
-        showError(imageSubmissionUnknown(sourceNode?.metadata) ? "提交结果尚未确认，请查询原任务" : "生成结果已保留，请点击「继续取回」");
+        const missing = canvasNodes.find((node) => (node.id === sourceNode?.id || node.metadata?.batchRootId === sourceNode?.id) && node.metadata?.generationErrorCode === "results_missing");
+        showError(imageSubmissionUnknown(sourceNode?.metadata) ? "提交结果尚未确认，请查询原任务" : missing?.metadata?.errorDetails || sourceNode?.metadata?.errorDetails || "生成结果已保留，请点击「继续取回」");
         return;
     }
     const expectedScope = captureUserScope();
@@ -230,7 +231,7 @@ export async function executeImageGeneration({
                                 metadata: { sourceNodeId: nodeId, ...taskContext, resolvedCharacterVersions: generationContext.resolvedCharacterVersions, promptTemplateOperation: sourceNode?.metadata?.promptTemplateOperation, promptTemplateVariables: sourceNode?.metadata?.promptTemplateVariables, ...styleMetadata, ...skillMetadata },
                             },
                             {
-                                bindTask: (task) => targetIds.forEach((id) => bindGenerationTask(id, task)),
+                                bindTask: (task) => [rootId, ...targetIds].forEach((id) => bindGenerationTask(id, task)),
                                 consumeTask: async (task) => { completed = task; },
                                 isCurrent,
                                 onSubmission: (metadata) => {
@@ -349,6 +350,21 @@ export async function executeImageGeneration({
     if (abandoned || !userScopeMatches(expectedScope)) return;
     if (controller.signal.aborted) {
         setNodes((current) => {
+            const ids = new Set([rootId, ...childIds]);
+            if (nativeOutputCount && current.some((node) => ids.has(node.id) && (node.metadata?.taskId || node.metadata?.taskClientOperationId) && node.metadata?.generationSubmissionState !== "rejected")) {
+                const next = current.map((node) => ids.has(node.id) && (node.id === rootId || !node.metadata?.content) ? {
+                    ...node,
+                    metadata: {
+                        ...node.metadata,
+                        status: node.metadata?.content ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR,
+                        resourceReloadAvailable: true,
+                        generationSubmissionState: node.metadata?.taskId ? "accepted" as const : "unknown" as const,
+                        errorDetails: "已停止等待，任务已保留，请继续查询原任务",
+                    },
+                } : node);
+                if (projectId) useCanvasStore.getState().updateProject(projectId, { nodes: next });
+                return next;
+            }
             const cancelled = cancelIncompleteImageBatch(rootId, childIds, current, []);
             if (cancelled.removedIds.length) {
                 const removed = new Set(cancelled.removedIds);

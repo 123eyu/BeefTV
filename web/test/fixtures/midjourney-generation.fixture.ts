@@ -11,22 +11,31 @@ const original = { ...await import("@/lib/canvas/canvas-project-generation") };
 const { canvasGenerationTaskNodes } = await import("@/pages/canvas/canvas-generation-failure");
 let scenario = "success";
 let submissions = 0;
+let activeController: AbortController;
 mock.module("@/lib/canvas/canvas-project-generation", () => ({
     ...original,
     runCanvasGenerationTaskToConsumer: async (input: any, dependencies: any) => {
         submissions++;
         assert.equal(input.config.count, "4");
-        dependencies.onSubmission?.({ taskClientOperationId: "one-operation", generationSubmissionState: scenario === "unknown" ? "unknown" : "accepted" });
+        dependencies.onSubmission?.({ taskClientOperationId: "one-operation", generationSubmissionState: scenario === "unknown" ? "unknown" : scenario === "cancel-before-accept" ? "submitting" : "accepted" });
         if (scenario === "unknown") throw new GenerationSubmissionUnknownError("one-operation", new Error("connection lost"));
+        if (scenario === "cancel-before-accept") {
+            activeController.abort();
+            throw new DOMException("Aborted", "AbortError");
+        }
         const task = { id: "one-paid-task", clientOperationId: "one-operation", type: "canvas_image", status: "succeeded", prompt: input.prompt, createdAt: "2026-10-17", updatedAt: "2026-10-17", attempts: 1 };
         dependencies.bindTask(task);
+        if (scenario === "cancel-after-accept") {
+            activeController.abort();
+            throw new DOMException("Aborted", "AbortError");
+        }
         await dependencies.consumeTask(task);
         return { images: [] };
     },
 }));
 const { executeImageGeneration } = await import("@/pages/canvas/canvas-image-generation-executor");
 
-for (scenario of ["success", "bind-failed", "unknown"]) {
+for (scenario of ["success", "bind-failed", "unknown", "cancel-after-accept", "cancel-before-accept"]) {
     submissions = 0;
     const source: CanvasNodeData = { id: "source", type: CanvasNodeType.Image, title: "MJ", position: { x: 0, y: 0 }, width: 320, height: 320, metadata: {} };
     const project = { id: "canvas", title: "MJ fixture", nodes: [source], connections: [], chatSessions: [], activeChatId: null, directorScenes: [], viewport: { x: 0, y: 0, k: 1 }, backgroundMode: "grid", showImageInfo: false, createdAt: "2026-10-17", updatedAt: "2026-10-17" } as CanvasProject;
@@ -39,9 +48,10 @@ for (scenario of ["success", "bind-failed", "unknown"]) {
     const config = { ...defaultConfig, model: "beefapi::midjourney-v8.2", imageModel: "beefapi::midjourney-v8.2", count: "1", channels: [{ id: "beefapi", name: "BeefTV", baseUrl: "https://beeftv.app/v1", models: ["midjourney-v8.2"], modelProfiles: [{ model: "midjourney-v8.2", capability: "image", protocol: "openai-image" }] }] } as typeof defaultConfig;
     const boundIndices: number[] = [];
     let binding = false;
+    activeController = new AbortController();
     const input: any = {
         sourceNode: source, nodeId: source.id, canvasNodes: project.nodes, canvasConnections: [], prompt: "red cube", effectivePrompt: "red cube",
-        projectId: project.id, generationConfig: config, generationContext: { referenceImages: [], referenceVideos: [], referenceAudios: [] }, controller: new AbortController(), nodesRef, setNodes,
+        projectId: project.id, generationConfig: config, generationContext: { referenceImages: [], referenceVideos: [], referenceAudios: [] }, controller: activeController, nodesRef, setNodes,
         setConnections() {}, setSelectedNodeIds() {}, setSelectedConnectionId() {}, setDialogNodeId() {}, registerPendingNodeIds() {},
         startGenerationRequest() {}, finishGenerationRequest() {}, styleMetadata: {}, skillMetadata: {}, showError() {},
         bindGenerationTask: (id: string, task: any) => setNodes(canvasGenerationTaskNodes(nodesRef.current, id, task)),
@@ -64,8 +74,11 @@ for (scenario of ["success", "bind-failed", "unknown"]) {
     assert.equal(children.length, 4);
     assert.deepEqual(children.map((node) => node.metadata!.taskOutputIndex), [0, 1, 2, 3]);
     assert.ok(children.every((node) => node.metadata!.taskClientOperationId === "one-operation"));
-    if (scenario === "unknown") {
+    if (scenario === "unknown" || scenario === "cancel-before-accept") {
         assert.ok(children.every((node) => node.metadata!.generationSubmissionState === "unknown"));
+        assert.deepEqual(boundIndices, []);
+    } else if (scenario === "cancel-after-accept") {
+        assert.ok(children.every((node) => node.metadata!.resourceReloadAvailable && node.metadata!.taskId === "one-paid-task"));
         assert.deepEqual(boundIndices, []);
     } else {
         assert.deepEqual(boundIndices, [0, 1, 2, 3]);
@@ -74,7 +87,7 @@ for (scenario of ["success", "bind-failed", "unknown"]) {
         if (scenario === "bind-failed") assert.equal(children[2]!.metadata!.resourceReloadAvailable, true);
     }
     if (scenario !== "success") {
-        await executeImageGeneration({ ...input, sourceNode: nodesRef.current.find((node) => node.id === source.id), canvasNodes: nodesRef.current });
+        await executeImageGeneration({ ...input, controller: new AbortController(), sourceNode: nodesRef.current.find((node) => node.id === source.id), canvasNodes: nodesRef.current });
         assert.equal(submissions, 1, "retained/unknown results must block another paid task");
     }
 }

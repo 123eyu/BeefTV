@@ -80,6 +80,30 @@ func TestExecuteMidjourneyUsesOneFourImageRequest(t *testing.T) {
 	}
 }
 
+func TestExecuteMidjourneyUsesOfficialImageRegistry(t *testing.T) {
+	registry := LoadOfficialFallbackRegistry()
+	if _, ok := registry.Resolve("openai-image"); !ok {
+		t.Fatal("build official protocol packages before running this test")
+	}
+	port := &midjourneyImagePort{}
+	ctx := WithProtocolRegistry(WithRuntime(context.Background(), taskRuntime(func(runtime *Runtime) { runtime.Images = port })), registry)
+	result, err := Execute(ctx, midjourneyImageInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(result["images"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var images []map[string]any
+	if err := json.Unmarshal(encoded, &images); err != nil {
+		t.Fatal(err)
+	}
+	if port.calls != 1 || port.n != "4" || len(images) != 4 {
+		t.Fatalf("official registry wire=%#v result=%#v", port, result)
+	}
+}
+
 func TestMidjourneyRejectsUnsupportedInputBeforeSubmit(t *testing.T) {
 	for _, change := range []func(*Input){
 		func(i *Input) { i.Config.Count = "1" },

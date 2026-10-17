@@ -52,6 +52,7 @@ type UseCanvasGenerationRetryOptions = {
     finishGenerationRequest: (targetNodeId: string, controller: AbortController) => void;
     bindGenerationTask: (targetNodeId: string, task: GenerationTask) => void;
     applyGenerationTaskResult: (targetNodeId: string, task: GenerationTask) => Promise<void>;
+    regenerateImageBatch: (nodeId: string, prompt: string) => Promise<void>;
 };
 
 const NODE_STATUS_LOADING = "loading" as const;
@@ -71,6 +72,7 @@ export function useCanvasGenerationRetry({
     finishGenerationRequest,
     bindGenerationTask,
     applyGenerationTaskResult,
+    regenerateImageBatch,
 }: UseCanvasGenerationRetryOptions) {
     const { message } = App.useApp();
     const effectiveConfig = useEffectiveConfig();
@@ -115,6 +117,10 @@ export function useCanvasGenerationRetry({
             }
 
             const retryPromptSource = sourceNode.metadata?.composerContent || sourceNode.metadata?.prompt || node.metadata?.prompt || "";
+            if (retryMode === "image" && modelCapabilityConfigFor(generationConfig, generationConfig.model).image?.fixedOutputs) {
+                await regenerateImageBatch((batchRoot || node).id, retryPromptSource);
+                return;
+            }
             const retryContextPrompt = retryMode === "image" && sourceNode.metadata?.portraitTexture ? buildPortraitTexturePrompt(retryPromptSource, sourceNode.metadata.portraitTexture) : retryPromptSource;
             let rawContext: Awaited<ReturnType<typeof hydrateNodeGenerationContext>> | null;
             try {
@@ -411,7 +417,7 @@ export function useCanvasGenerationRetry({
                 setRunningNodeId(null);
             }
         },
-        [addedSkills, applyGenerationTaskResult, assets, bindGenerationTask, connectionsRef, domainProjectId, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, nodesRef, projectId, setNodes, setRunningNodeId, startGenerationRequest],
+        [addedSkills, applyGenerationTaskResult, assets, bindGenerationTask, connectionsRef, domainProjectId, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, nodesRef, projectId, regenerateImageBatch, setNodes, setRunningNodeId, startGenerationRequest],
     );
 }
 

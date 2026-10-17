@@ -410,7 +410,7 @@ export function defaultImageCapabilityConfig(protocol?: ModelProtocol, model = "
     if (contract) {
         return {
             references: { promptMaxChars: contract.promptMaxChars, maxImages: contract.maxImages, maxImageBytes: contract.maxImageBytes, maskSupported: false },
-            size: { parameter: "size", values: Object.keys(contract.sizes), default: "1:1", allowCustom: contract.minSide !== contract.maxSide },
+            size: { parameter: "size", values: [...Object.keys(contract.sizes), ...(contract.fixedOutputs ? Object.values(contract.sizes) : [])], default: "1:1", allowCustom: contract.minSide !== contract.maxSide },
             quality: { supported: false, values: [], default: "auto" },
             transparentBackground: { supported: false, default: false },
             responseFormat: { supported: Boolean(contract.fixedOutputs) }, outputFormat: { supported: false }, maxOutputs: contract.fixedOutputs || 1, fixedOutputs: contract.fixedOutputs,

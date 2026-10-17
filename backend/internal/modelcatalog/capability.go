@@ -59,6 +59,9 @@ func DefaultImageCapabilityConfig(protocol string, modelName string) *ImageCapab
 		values := make([]string, 0, len(contract.Sizes))
 		for ratio := range contract.Sizes {
 			values = append(values, ratio)
+			if contract.FixedOutputs > 0 {
+				values = append(values, contract.Sizes[ratio])
+			}
 		}
 		sort.Strings(values)
 		return &ImageCapabilityConfig{
