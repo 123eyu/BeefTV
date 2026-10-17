@@ -58,6 +58,7 @@ export type GenerationFailureExplanation = {
     retryable: boolean;
     uncertain: boolean;
     blockAutomaticRetry: boolean;
+    blockManualRetry: boolean;
     moderation: boolean;
 };
 
@@ -193,6 +194,7 @@ const PROVIDER_CODE_CATEGORIES: Record<string, GenerationErrorCategory> = {
     upstream_crowded: "throttled",
     upstream_unavailable: "provider_unavailable",
     image_reference_upload_failed: "provider_unavailable",
+    reference_media_upload_failed: "provider_unavailable",
     upstream_rejected: "unknown",
     upstream_error: "unknown",
     invalid_api_key: "auth",
@@ -291,6 +293,8 @@ export function explainGenerationError(error: unknown, context: GenerationFailur
     const message = joinSentences(copy.reason, copy.action, debugIdLine(classified.taskId || context.taskId, classified.requestId || context.providerRequestId));
     const moderation = isModerationCategory(classified.category);
     const uncertain = classified.uncertain || classified.category === "submission_uncertain" || classified.category === "download_failed" || (classified.category === "timeout" && classified.status === 524);
+    const preparation = confirmedReferencePreparation(classified);
+    const blockAutomaticRetry = uncertain || moderation || preparation || ["image_reference_upload_failed", "reference_media_upload_failed"].includes(classified.providerCode || "") || !["throttled", "concurrency", "provider_unavailable", "cancelled", "request_not_sent"].includes(classified.category);
     return {
         category: classified.category,
         httpStatus: classified.status,
@@ -302,9 +306,10 @@ export function explainGenerationError(error: unknown, context: GenerationFailur
         providerCode: classified.providerCode || undefined,
         requestId: sanitizeDebugId(classified.requestId || (error && typeof error === "object" && "requestId" in error && typeof error.requestId === "string" ? error.requestId : "") || context.providerRequestId) || undefined,
         taskId: sanitizeDebugId(classified.taskId || context.taskId) || undefined,
-        retryable: Boolean(classified.retryable) && !uncertain && !moderation,
+        retryable: Boolean(classified.retryable) && !uncertain && !moderation && !preparation,
         uncertain,
-        blockAutomaticRetry: uncertain || moderation || !["throttled", "concurrency", "provider_unavailable", "cancelled", "request_not_sent"].includes(classified.category),
+        blockAutomaticRetry,
+        blockManualRetry: blockAutomaticRetry && !preparation,
         moderation,
     };
 }
@@ -346,6 +351,10 @@ export function isContentModerationError(value: unknown) {
 export function shouldBlockAutomaticRetry(error: unknown, stage?: string) {
     if (stage === "submission_unknown") return true;
     return explainGenerationError(error, { stage }).blockAutomaticRetry;
+}
+
+export function shouldBlockManualRetry(error: unknown, stage?: string) {
+    return explainGenerationError(error, { stage }).blockManualRetry;
 }
 
 export function unchangedModeratedPrompt(
@@ -494,6 +503,10 @@ function classifyUnknown(error: unknown, context: GenerationFailureContext): Cla
             const classified = classifyHttp(status, data ?? record);
             if (classified.category !== "unknown" || status) return classified;
         }
+        if (record.code === "provider_unavailable" && typeof record.message === "string") {
+            const preparation = persistedReferencePreparation(record.message);
+            if (preparation) return preparation;
+        }
         const structured = classifyText(stringifyAllowlisted(record));
         if (structured.fromCode || structured.category !== "unknown") return structured;
         if (typeof record.reason === "string" && record.reason) {
@@ -509,6 +522,7 @@ function classifyUnknown(error: unknown, context: GenerationFailureContext): Cla
 
 function classifyHttp(status: number | undefined, body: unknown): Classified {
     const text = typeof body === "string" ? body : providerPayloadMessage(body) || (body && typeof body === "object" ? JSON.stringify(body) : "");
+    if (persistedReferencePreparation(text)) return { category: "submission_uncertain", status, uncertain: true, retryable: false };
     let classified = classifyText(text || (body && typeof body === "object" ? stringifyAllowlisted(body) : ""));
     if (body && typeof body === "object") {
         const fromObject = classifyText(stringifyAllowlisted(body));
@@ -550,6 +564,8 @@ function classifyHttp(status: number | undefined, body: unknown): Classified {
 function classifyText(raw: string): Classified {
     const text = raw.trim();
     if (!text) return { category: "unknown", retryable: false };
+    const preparation = persistedReferencePreparation(text);
+    if (preparation) return preparation;
     if (text === LOCAL_TASK_ADMISSION_FAILURE.reason || text.startsWith(`${LOCAL_TASK_ADMISSION_FAILURE.reason}。`)) {
         return { category: "local_storage", ...LOCAL_TASK_ADMISSION_FAILURE, fromCode: true, retryable: false };
     }
@@ -1109,6 +1125,29 @@ function providerPayloadMessage(payload: unknown): string {
         if (typeof value === "string" && value.trim()) return value.trim();
     }
     return typeof record.error === "string" ? record.error.trim() : "";
+}
+
+const REFERENCE_PREPARATION_COPY: Record<string, CategoryCopy> = {
+    image_reference_upload_failed: { reason: "参考图片上传失败，本次尚未开始生成", action: "请稍后重试" },
+    reference_media_upload_failed: { reason: "参考素材上传失败，本次尚未开始生成", action: "请检查对象存储配置和公开读取权限后重试" },
+};
+
+function persistedReferencePreparation(raw: string): Classified | undefined {
+    const text = raw.trim();
+    const debug = text.match(/。排查编号：([^。]+)。?$/)?.[1] || "";
+    const requestId = sanitizeDebugId(debug.match(/(?:^| · )请求 ([A-Za-z0-9._:-]{6,127})$/)?.[1]);
+    const taskId = sanitizeDebugId(debug.match(/^任务 ([A-Za-z0-9._:-]{6,127})(?: · |$)/)?.[1]);
+    for (const [providerCode, copy] of Object.entries(REFERENCE_PREPARATION_COPY)) {
+        const message = joinSentences(copy.reason, copy.action, debugIdLine(taskId, requestId));
+        if (text === message || text === message.replace(/。$/, "")) {
+            return { category: "provider_unavailable", ...copy, providerCode, requestId, taskId, fromCode: true, retryable: false };
+        }
+    }
+}
+
+function confirmedReferencePreparation(classified: Classified) {
+    const copy = REFERENCE_PREPARATION_COPY[classified.providerCode || ""];
+    return Boolean(copy && !classified.uncertain && classified.category === "provider_unavailable" && classified.reason === copy.reason && classified.action === copy.action);
 }
 
 function resourceStorageFailureMessage(value: string) {
