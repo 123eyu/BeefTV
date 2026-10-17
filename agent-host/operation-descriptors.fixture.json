@@ -676,7 +676,7 @@
         },
         "patches": {
           "items": {
-            "description": "只覆盖给出的字段；任何一个 rowId 不存在则整批拒绝",
+            "description": "只覆盖给出的字段；任何一个 rowId 不存在、绑定节点不在本画布或类型不符则整批拒绝",
             "properties": {
               "audioEffects": {
                 "description": "音效要求",
@@ -706,6 +706,10 @@
               },
               "imageGenerationPrompt": {
                 "description": "首帧图片生成提示词",
+                "type": "string"
+              },
+              "imageNodeId": {
+                "description": "把同一画布的 image 节点绑定为本行首帧图片；空字符串解除绑定。本行只保留一条指向它的产出连线",
                 "type": "string"
               },
               "lightingAndAtmosphere": {
@@ -759,6 +763,10 @@
               },
               "videoMotionPrompt": {
                 "description": "视频运动提示词",
+                "type": "string"
+              },
+              "videoNodeId": {
+                "description": "把同一画布的 video 节点绑定为本行镜头视频；空字符串解除绑定。本行只保留一条指向它的产出连线",
                 "type": "string"
               },
               "viewerPOV": {

@@ -112,7 +112,7 @@ export function normalizeSkillCatalog(value) {
 export function formatSkillCatalog(items) {
   if (!items?.length) return undefined;
   const lines = [
-    '用户已安装下列技能，每个技能提供特定任务的步骤。用户的要求符合某个技能的说明时，先调用 skill_load 并传入它的 id 读取完整步骤，再按步骤执行。对话里已有的技能不用重复读取。',
+    '用户已安装下列技能，每个技能提供特定任务的步骤。用户明确选用技能，或要求完成该技能描述的整体任务时，先调用 skill_load 并传入它的 id 读取完整步骤，再按步骤执行。只出现相同题材、角色或「首帧」等词不代表要执行整套流程；用户只要单张图片或单个视频时，直接完成该请求，不添加整集剧本、角色确认等前置步骤。对话里已有的技能不用重复读取；用户明确缩小范围或改要求时按最新要求执行。',
     '',
     '<available_skills>',
   ];
