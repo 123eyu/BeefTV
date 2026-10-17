@@ -263,6 +263,7 @@ export function resetGenerationTaskMetadata(metadata: CanvasNodeMetadata | undef
         failedInputFingerprint: undefined,
     };
     delete next.taskId;
+    delete next.taskOutputIndex;
     delete next.taskClientOperationId;
     delete next.retryOf;
     delete next.attemptGroupId;

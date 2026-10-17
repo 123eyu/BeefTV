@@ -17,6 +17,7 @@ BeefTV 是一个本地优先、轻量、AI Native 的视频工作台。本页只
 - [模型配置持久化](local-model-config-persistence.md)
 - [桌面账号与钱包](content/docs/backend/desktop-account.mdx)
 - [模型服务商验证](model-provider-validation.md)
+- [Midjourney 固定四张输出与恢复](refactor/midjourney-fixed-output-20261017.md)
 - [MiniMax H3 Max Turbo 接入与验收](fal-h3-max-turbo.md)
 - [MiniMax H3 三款模型与多素材参考](fal-h3-family.md)
 - [H3 完整生成、Styles 与 Director 续接边界](fal-h3-full-capabilities.md)
