@@ -22,7 +22,7 @@ function render(node: CanvasNodeData) {
 const loadingVideo: CanvasNodeData = { id: "video-1", type: CanvasNodeType.Video, title: "镜头", position: { x: 0, y: 0 }, width: 320, height: 220, metadata: { status: "loading", taskId: "task-1", taskStatus: "succeeded" } };
 
 test("取回结果时节点显示进度、大小和速度，而不是「生成中」", () => {
-    byTask["task-1"] = { outputIndex: 0, downloadedBytes: 12_900_000, totalBytes: 41_943_040, bytesPerSecond: 1_258_291, state: "downloading" };
+    byTask["task-1"] = { outputIndex: 0, downloadedBytes: 12_900_000, totalBytes: 41_943_040, bytesPerSecond: 1_258_291, state: "downloading", updatedAt: Date.now() };
     const markup = render(loadingVideo);
     delete byTask["task-1"];
     expect(markup).toContain("正在取回结果");
