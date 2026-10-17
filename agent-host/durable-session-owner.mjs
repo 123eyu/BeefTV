@@ -58,6 +58,47 @@ export function durableCompletion(settled, assistant, budgetFailure, stopped = f
     cancelled: false, error: null, errorReason: null };
 }
 
+// Official retry text can carry upstream bodies. The panel only receives one of these reasons.
+const RETRY_REASONS = [
+  ['rate_limited', /rate.?limit|too many requests|\b429\b|resource.?exhausted/i],
+  ['timeout', /timed? out|timeout/i],
+  ['provider_unavailable', /overloaded|server.?busy|currently busy|high demand|at capacity|\b5\d\d\b|service.?unavailable|server.?error|internal.?error|provider.?returned/i],
+  ['network', /network|connection|other side closed|fetch failed|getaddrinfo|ENOTFOUND|EAI_AGAIN|upstream.?connect|reset before headers|socket|terminated|websocket|ended without|ended before|did not get a response|canceled/i],
+];
+export function durableRetryReason(message) {
+  const text = String(message || '');
+  return RETRY_REASONS.find(([, pattern]) => pattern.test(text))?.[0] || 'model_error';
+}
+const retryLifecycle = (attempt, error) => ({ type: 'lifecycle', phase: 'retry', attempt, reason: durableRetryReason(error) });
+function snapshotLifecycle(event) {
+  if (event.generation?.retry) return retryLifecycle(event.generation.attempt, event.generation.retry.error);
+  const tool = (event.tools || []).find((slot) => slot.status === 'running');
+  return tool ? { type: 'lifecycle', phase: 'tool', toolName: tool.name } : null;
+}
+// Official Durable AgentEvent -> host NDJSON lines (existing text_delta / lifecycle shapes).
+export function durableStreamEvents(event) {
+  switch (event?.type) {
+    case 'message_update':
+      return (event.changes || []).filter((change) => change.type === 'text_delta').map((change) => ({ type: 'text_delta', delta: change.delta }));
+    case 'tool_execution_start': return [{ type: 'lifecycle', phase: 'tool', toolName: event.toolName }];
+    case 'tool_execution_end': return [{ type: 'lifecycle', phase: 'tool_end', toolName: event.toolName }];
+    case 'auto_retry_start': return [retryLifecycle(event.attempt, event.errorMessage)];
+    case 'auto_retry_end': return [{ type: 'lifecycle', phase: 'retry_end', attempt: event.attempt }];
+    case 'snapshot': { const progress = snapshotLifecycle(event); return progress ? [progress] : []; }
+    default: return [];
+  }
+}
+// Latest transient progress of a live turn, kept in memory for history reads; never persisted.
+export function durableLifecycleState(current, event) {
+  switch (event?.type) {
+    case 'snapshot': return snapshotLifecycle(event);
+    case 'auto_retry_start': case 'tool_execution_start': return durableStreamEvents(event)[0];
+    case 'auto_retry_end': return current?.phase === 'retry' ? null : current;
+    case 'tool_execution_end': return current?.phase === 'tool' ? null : current;
+    default: return current;
+  }
+}
+
 export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModels, getModelRef,
   buildTools, authorizeTurn, completeTurn = async () => {}, runWithBudget = (_entry, fn) => fn(),
   extensions = () => [], settings = {}, skills = null, thinkingLevel = agentThinkingLevel() }) {
@@ -65,6 +106,27 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
   if (typeof authorizeTurn !== 'function') throw fail('durable_authorizer_required');
   const sessions = new Map();
   const locks = new Map();
+  // A Stop names one request ID and may arrive before that request reaches this host.
+  // Memory covers this process synchronously (a submit holding the canvas lock still sees
+  // it); STATE.stopRequests and active.stopped carry it across restarts (cancelRequest).
+  const STOP_INTENT_LIMIT = 64;
+  const stopIntents = new Map();
+  const stopIntentKey = (sessionId, requestId) => JSON.stringify([sessionId, requestId]);
+  function rememberStop(canvasId, sessionId, requestId) {
+    const ids = stopIntents.get(canvasId) || new Set();
+    const key = stopIntentKey(sessionId, requestId);
+    ids.delete(key); ids.add(key);
+    while (ids.size > STOP_INTENT_LIMIT) ids.delete(ids.values().next().value);
+    stopIntents.set(canvasId, ids);
+  }
+  function forgetStop(canvasId, sessionId, requestId) {
+    const ids = stopIntents.get(canvasId);
+    if (ids?.delete(stopIntentKey(sessionId, requestId)) && !ids.size) stopIntents.delete(canvasId);
+  }
+  function stopIntended(entry, doc, requestId) {
+    return Boolean(stopIntents.get(entry.canvasId)?.has(stopIntentKey(entry.sessionId, requestId)) || (doc?.stopRequests || []).includes(requestId)
+      || (doc?.active?.requestId === requestId && doc.active.stopped));
+  }
   let closed = false;
   const directory = (canvasId) => path.join(sessionRoot, canvasKey(canvasId));
   const durableDirectory = (canvasId) => path.join(directory(canvasId), 'durable');
@@ -198,7 +260,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     fs.mkdirSync(cwd, { recursive: true });
     const entry = { kind: 'durable', canvasId, sessionId, identity: { prefix: sessionId, source: 'durable-session-id' },
       log: [], generation: { durable: true, aborted: false, intentEpoch: 0, modelEpoch: 0 }, turn: newTurnAccumulator(), busy: false, persistence: 'restored',
-      budgetDirectory: path.join(dir, `${uuid}.budget`), skillCatalog: {} };
+      budgetDirectory: path.join(dir, `${uuid}.budget`), skillCatalog: {}, waiters: 0, recovering: null, submittedRequest: null };
     fs.mkdirSync(entry.budgetDirectory, { recursive: true, mode: 0o700 });
     const registry = createRegistry();
     entry.generation.persistEffects = () => persistEffects(entry);
@@ -285,13 +347,23 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       return entry;
     } catch (error) { await entry.harness.close(CTX); throw error; }
   }
+  function handoffSessionId(canvasId, handoffSourceId) {
+    const digest = crypto.createHash('sha256').update(JSON.stringify([canvasId, handoffSourceId])).digest('hex');
+    return `durable:${digest.slice(0,8)}-${digest.slice(8,12)}-${digest.slice(12,16)}-${digest.slice(16,20)}-${digest.slice(20,32)}`;
+  }
+  // Whether this durable session was created for this canvas (its manifest lives in that canvas).
+  function hasSession(canvasId, sessionId) {
+    if (!isDurableSessionId(sessionId)) return false;
+    try {
+      const manifest = JSON.parse(fs.readFileSync(path.join(durableDirectory(canvasId), `${idPattern.exec(sessionId)[1]}.json`), 'utf8'));
+      return manifest.canvasId === canvasId && manifest.sessionId === sessionId;
+    } catch { return false; }
+  }
   // 新建候选：写清单、打开官方 Harness，但不发布指针、不写入 sessions。
   async function prepareSession(canvasId, handoffSourceId = '') {
     // A legacy source has one durable successor even if the process dies before
     // publishing current.json or the client receives no response.
-    const digest = handoffSourceId && crypto.createHash('sha256').update(JSON.stringify([canvasId, handoffSourceId])).digest('hex');
-    const uuid = digest ? `${digest.slice(0,8)}-${digest.slice(8,12)}-${digest.slice(12,16)}-${digest.slice(16,20)}-${digest.slice(20,32)}` : crypto.randomUUID();
-    const sessionId = `durable:${uuid}`;
+    const sessionId = handoffSourceId ? handoffSessionId(canvasId, handoffSourceId) : `durable:${crypto.randomUUID()}`;
     fs.mkdirSync(durableDirectory(canvasId), { recursive: true, mode: 0o700 });
     const file = path.join(durableDirectory(canvasId), `${idPattern.exec(sessionId)[1]}.json`);
     const created = !handoffSourceId || !fs.existsSync(file);
@@ -358,7 +430,18 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       if (!requestId || !input.turnId || !input.content) throw fail('invalid_request');
       if (existing.active && existing.active.requestId !== requestId) throw fail('session_busy');
       const finished = existing.turns.find((turn) => turn.requestId === requestId);
-      if (finished) return entry.harness.submission(finished.submissionId, CTX);
+      if (finished) {
+        // The same request sent again never runs again. Go opened a new turn for this send;
+        // nothing can use it, so it is closed here and the original record answers.
+        if (finished.turnId !== input.turnId) await completeTurn({ canvasId: entry.canvasId, turnId: input.turnId, sessionId: entry.sessionId, record: finished });
+        // A request stopped before submit has a record but no official submission.
+        return finished.submissionId === undefined ? null : entry.harness.submission(finished.submissionId, CTX);
+      }
+      // A Stop named this request before it got here: record it stopped, with no model request.
+      if (stopIntended(entry, existing, requestId)) {
+        return existing.active ? stoppedRequest(entry, existing.active)
+          : stopBeforeSubmit(entry, { ...input, requestId, createdAt: new Date().toISOString() });
+      }
       if (existing.active && (existing.active.turnId !== input.turnId || JSON.stringify(existing.active.content) !== JSON.stringify(input.content))) throw fail('submission_request_conflict');
       const auth=await authorization(entry, input.turnId);
       const modelRef = await turnModel(entry, existing.active);
@@ -370,6 +453,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
         entry.turn.supplements = [];
         entry.log.length = 0;
         entry.generation = Object.assign(entry.generation, { aborted: false, intentEpoch: 0, modelEpoch: 0, pendingInput: null, pendingInputError: null });
+        entry.submittedRequest = null;
         const expansion = await expandSelectedSkills(entry, existing, input.skills, input.content, input.turnId);
         await update(entry, (doc) => {
           // content stays the client's own input (idempotency and history);
@@ -380,20 +464,116 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
           if (expansion.records.length) doc.loadedSkills = [...(doc.loadedSkills || []), ...expansion.records];
         });
       }
-      const admitted = (await state(entry)).active;
+      const current = await state(entry);
+      const admitted = current.active;
       hydrate(entry, admitted);
+      // The reset above must not swallow a Stop sent while this request was being prepared.
+      // Checked synchronously before the official submit; a later Stop finds it running.
+      if (stopIntended(entry, current, requestId)) return stoppedRequest(entry, admitted);
+      entry.submittedRequest = requestId;
       const submission = await entry.root.submit({ type: 'input', requestId, content: admitted.submittedContent ?? admitted.content, whenBusy: 'reject' }, CTX);
       await update(entry, (doc) => { if (doc.active) doc.active.submissionId = submission.id; });
       return submission;
     });
   }
+  async function officialSubmission(entry, requestId) {
+    const admitted = await entry.harness.commit((tx) => tx.submissionByRequest(entry.root.id, requestId), CTX);
+    return admitted ? entry.harness.submission(admitted.id, CTX) : null;
+  }
+  // A stopped admitted request: if the official queue already has it (e.g. just before a
+  // crash), it is fenced and aborted and its settlement records it; otherwise nothing ran.
+  async function stoppedRequest(entry, active) {
+    const submission = await officialSubmission(entry, active.requestId);
+    if (!submission) return stopBeforeSubmit(entry, active);
+    await fenceStop(entry);
+    await entry.root.abort(CTX);
+    return submission;
+  }
+  // Never submitted: no model request, tool or canvas write. Recorded as stopped so
+  // history (and a waiting panel) shows it; skills it would have loaded are not kept.
+  async function stopBeforeSubmit(entry, active) {
+    const record = { ...publicDurableTurn(active), reply: '', cancelled: true, error: null, errorReason: null,
+      toolCalls: [], change: null, proposals: [], status: 'unanswered', sessionId: entry.sessionId };
+    let pending = null;
+    // Use the same acknowledgement ordering as a submitted turn. A crash or failed
+    // Go completion leaves active.result available to recovery, even without a submission.
+    await update(entry, (doc) => {
+      if (doc.active && doc.active.requestId !== active.requestId) return;
+      if (doc.turns.some((turn) => turn.requestId === active.requestId)) return;
+      doc.loadedSkills = (doc.loadedSkills || []).filter((skill) => !(skill.source === 'selected' && skill.turnId === active.turnId));
+      pending = JSON.parse(JSON.stringify({ ...(doc.active || active), stopped: true, result: doc.active?.result || record }));
+      doc.active = pending;
+    });
+    if (pending) {
+      hydrate(entry, pending);
+      await completeTurn({ canvasId: entry.canvasId, turnId: pending.turnId, sessionId: entry.sessionId, record: pending.result });
+      await settleLocal(entry, pending, pending.result);
+    }
+    return null;
+  }
+  // One commit: a settled request reports finished; otherwise the intent is journaled so a
+  // later /chat, a resend or recovery after a restart records it stopped instead of running it.
+  async function recordStopIntent(entry, requestId) {
+    let finished = false;
+    await update(entry, (doc) => {
+      finished = doc.turns.some((turn) => turn.requestId === requestId);
+      if (finished) return;
+      doc.stopRequests = [...(doc.stopRequests || []).filter((id) => id !== requestId), requestId].slice(-STOP_INTENT_LIMIT);
+      if (doc.active?.requestId === requestId) doc.active.stopped = true;
+    });
+    return finished;
+  }
+  // A Stop that names one request of one conversation. Other requests are never touched.
+  // running: the caller fences Go and aborts (as a canvas Stop does); finished: already
+  // settled; pending: not running here, and it will not run when it arrives or recovers.
+  async function cancelRequest(canvasId, sessionId, requestId) {
+    const target = isDurableSessionId(sessionId) ? sessionId : handoffSessionId(canvasId, sessionId);
+    rememberStop(canvasId, target, requestId);
+    const live = sessions.get(canvasId);
+    if (live?.sessionId === target && live.busy && live.input?.requestId === requestId && live.submittedRequest === requestId) {
+      live.generation.aborted = true;
+      live.generation.pendingInput?.cancel?.();
+      return { state: 'running', entry: live };
+    }
+    // The live owner is written without the canvas lock: a submit preparing this very
+    // request holds that lock, and it reads the in-memory intent before its official submit.
+    const finished = live?.sessionId === target ? await recordStopIntent(live, requestId)
+      : await lock(canvasId, async () => {
+        const current = sessions.get(canvasId);
+        if (current?.sessionId === target) return recordStopIntent(current, requestId);
+        // A legacy conversation not handed off yet has no durable state: memory only.
+        if (!hasSession(canvasId, target)) return false;
+        const entry = await open(canvasId, target);
+        try { return await recordStopIntent(entry, requestId); }
+        finally { await entry.harness.close(CTX); }
+      });
+    if (finished) { forgetStop(canvasId, target, requestId); return { state: 'finished' }; }
+    return { state: 'pending' };
+  }
   async function recover(entry) {
-    const active = (await state(entry)).active;
+    // A live official wait already owns the turn: a read must not hydrate over its
+    // in-memory effects, re-authorize, or re-submit. Concurrent reads share one recovery.
+    if (entry.waiters > 0) return null;
+    if (!entry.recovering) entry.recovering = recoverOnce(entry).finally(() => { entry.recovering = null; });
+    return entry.recovering;
+  }
+  async function recoverOnce(entry) {
+    const doc = await state(entry);
+    const active = doc.active;
     if (!active) return null;
     hydrate(entry, active);
     // Opening/reading never schedules pending work. Only validated recovery does.
     const auth = await authorization(entry, active.turnId, true);
-    if (active.stopped) { await stop(entry); return null; }
+    if (entry.waiters > 0) return null;
+    // Completion is already committed: only acknowledge it, never re-run or rebuild it.
+    // Pre-submit stops have no official submission, including after Go has already closed.
+    if (active.result) {
+      if (auth?.open !== false) await completeTurn({ canvasId: entry.canvasId, turnId: active.turnId, sessionId: entry.sessionId, record: active.result });
+      await settleLocal(entry, active, active.result);
+      return active.submissionId == null ? null : entry.harness.submission(active.submissionId, CTX);
+    }
+    // A stopped request is settled as stopped, never (re)submitted.
+    if (stopIntended(entry, doc, active.requestId)) { await stop(entry, active.requestId); return null; }
     if (auth?.open === false) {
       const admitted = await entry.harness.commit((tx) => tx.submissionByRequest(entry.root.id, active.requestId), CTX);
       const submission = admitted ? await entry.harness.submission(admitted.id, CTX) : null;
@@ -403,11 +583,6 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       const record = active.result || await completionRecord(entry, active, settled);
       await settleLocal(entry, active, record);
       return submission;
-    }
-    if (active.result) {
-      await completeTurn({ canvasId: entry.canvasId, turnId: active.turnId, sessionId: entry.sessionId, record: active.result });
-      await settleLocal(entry, active, active.result);
-      return entry.harness.submission(active.submissionId, CTX);
     }
     await turnModel(entry, active);
     // Re-admit persisted supplements by stable request ID before scheduling the
@@ -488,7 +663,13 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       },
     };
   }
-  async function wait(entry, submission, { onEvent = () => {}, signal } = {}) {
+  async function wait(entry, submission, options = {}) {
+    // Counted before the first await so a recovery read in the same tick sees the live owner.
+    entry.waiters += 1;
+    try { return await observe(entry, submission, options); }
+    finally { entry.waiters -= 1; }
+  }
+  async function observe(entry, submission, { onEvent = () => {}, signal } = {}) {
     const context = signal ? withAbortSignal(signal, CTX) : CTX;
     const stream = await watchEvents(entry.harness, entry.root.id, context);
     await onEvent({ type: 'snapshot', ...stream.snapshot, sessionId: entry.sessionId });
@@ -501,7 +682,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
         const pending = entry.generation.pendingInput;
         if (pending?.state === 'pending') await pending.promise.catch(() => {});
         const snapshot = await state(entry);
-        if (!snapshot.active) return snapshot.turns.find((turn) => turn.submissionId === submission.id) || null;
+        if (snapshot.active?.requestId !== original.requestId) return snapshot.turns.find((turn) => turn.submissionId === submission.id) || null;
         const ids = [...(snapshot.active.supplementIds || [])];
         let settled = original;
         for (const id of ids) {
@@ -518,7 +699,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
         }
         const result = await lock(entry.canvasId, async () => {
           const current = await state(entry);
-          if (!current.active) return { done: true, record: current.turns.find((turn) => turn.submissionId === submission.id) || null };
+          if (current.active?.requestId !== original.requestId) return { done: true, record: current.turns.find((turn) => turn.submissionId === submission.id) || null };
           if (entry.generation.pendingInput?.state === 'pending' || JSON.stringify(current.active.supplementIds || []) !== JSON.stringify(ids)) return { done: false };
           entry.completing = true;
           try {
@@ -563,24 +744,42 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
   async function settleLocal(entry, active, record) {
     await update(entry, (doc) => {
       if (doc.active?.requestId === active.requestId) { doc.turns = [...doc.turns, record]; doc.active = null; }
+      if (doc.stopRequests?.includes(active.requestId)) doc.stopRequests = doc.stopRequests.filter((id) => id !== active.requestId);
     });
+    forgetStop(entry.canvasId, entry.sessionId, active.requestId);
     entry.busy = false;
   }
-  async function fenceStop(entry) {
-    entry.generation.aborted = true;
-    // A user stop owns cancellation; it must not wait for an unrelated image
-    // decoder/network response, nor turn a late prep failure into a run error.
-    entry.generation.pendingInput?.cancel?.();
-    await update(entry, (doc) => { if (doc.active) doc.active.stopped = true; });
-  }
-  async function stop(entry) {
-    await fenceStop(entry);
-    await entry.root.abort(CTX);
-    const active = (await state(entry)).active;
-    if (active?.submissionId) {
-      const submission = await entry.harness.submission(active.submissionId, CTX);
-      if (submission) return wait(entry, submission);
+  async function fenceStop(entry, requestId = entry.input?.requestId) {
+    if (!requestId) return null;
+    // Fence only the captured request, before awaiting storage. A later request may
+    // reuse this entry while a caller waits for the Go completion response.
+    if (entry.busy && entry.input?.requestId === requestId) {
+      entry.generation.aborted = true;
+      entry.generation.pendingInput?.cancel?.();
     }
+    let turnId = null;
+    await update(entry, (doc) => {
+      if (doc.active?.requestId === requestId) {
+        doc.active.stopped = true;
+        turnId = doc.active.turnId;
+      }
+    });
+    return turnId;
+  }
+  async function stop(entry, requestId = entry.input?.requestId) {
+    if (!requestId || !await fenceStop(entry, requestId)) return;
+    // Official abort is conversation-wide. Keep admission locked until it finishes
+    // so it cannot abort a newer request, then observe only this exact submission.
+    const submission = await lock(entry.canvasId, async () => {
+      if (!await fenceStop(entry, requestId)) return null;
+      await entry.root.abort(CTX);
+      const active = (await state(entry)).active;
+      if (active?.requestId !== requestId) return null;
+      const official = active.submissionId != null ? await entry.harness.submission(active.submissionId, CTX)
+        : await officialSubmission(entry, requestId);
+      return official || stopBeforeSubmit(entry, active);
+    });
+    if (submission) return wait(entry, submission);
   }
   async function history(canvasId, sessionId) {
     const cached = sessions.get(canvasId);
@@ -616,5 +815,5 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     return entries.length;
   }
   return { sessions, createSession, handoffSession, activateSession, ensureSession, submit, recover, supplement, beginPendingInput, fenceStop, wait,
-    stop, history, status, listCanvasSessions, disposeAll };
+    stop, cancelRequest, hasSession, history, status, listCanvasSessions, disposeAll };
 }
