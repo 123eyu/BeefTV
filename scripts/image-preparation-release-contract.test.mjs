@@ -6,7 +6,7 @@ const digest = 'a'.repeat(64);
 function fixture() {
   const bound = { sourceDigest: digest, evidence: ['synthetic-test-fixture'] };
   return {
-    ...bound, version: 'v1.7.26', baseRelease: 'v1.7.25', baseCommit: '5f3c15c04c25eb4a786cfbe208091360c3eeb5e5', includedPullRequests: [182, 183, 185, 186],
+    ...bound, version: 'v1.7.26', baseRelease: 'v1.7.25', baseCommit: '5f3c15c04c25eb4a786cfbe208091360c3eeb5e5', includedPullRequests: [182, 183, 185, 186, 188],
     ownerException: { ...bound, scope: 'combined-desktop-release-20261017', approvedBy: 'Ender', instruction: '本版豁免付费矩阵，专项回归、独立 review、CI 和四平台安装升级门禁通过后发布；历史未知账务继续保留（推荐）' },
     releaseAuthorization: { ...bound, scope: 'v1.7.26 only', combinedScopeInstruction: '一并发布 #182/#185：补齐它们的验收，再审查完整版本后发布', additionalHumanReplyRequired: false },
     paidSubmissionLimit: 0, newBudgetCNY: 0, newSpentCNY: 0, newPendingCNY: 0, cases: [], billingAttempts: [],
