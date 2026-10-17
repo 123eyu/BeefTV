@@ -40,6 +40,12 @@ REST 使用 `{success:true,data}` / `{success:false,message,reason}`。MCP 使�
 
 `tags` 与 `aliases` 是可选投稿字段，各最多16项、每项最多80字符。中文与英文别名按字面匹配；不提供向量搜索或“全社区都能搜到”的承诺。历史官方包仅更新检索索引，不改写旧发布身份、ZIP 或签名载荷。
 
+### 官网 PR #18 的接入差异
+
+官网 PR #18（`433f9f7`）目前从 `release.compatibility[]` 读取目标矩阵。这不是服务返回的合同：`/catalog` 和原 Release 都不包含该动态数组。详情页应按实际目标调用 `/discovery?target=beeftv&capability=beeftv.canvas`、`/discovery?target=codex`、`/discovery?target=claude-code`，分别读取响应外层的 `compatibility.status`、`compatibility.reasons[]` 和 `verification`，由页面合成矩阵。未提供的能力不能被推断为已有；`supported` 只代表声明要求满足，页面应将“声明要求满足”和“宿主尚未验证”分别表达。原 Release 必须保持不变，不能为配合页面补写已签名发布对象。
+
+`reasons` 是机器码，例如 `missing_capability:beeftv.canvas`，应由前端映射成用户能理解的提示。搜索字段 REST 使用 `q`，MCP `skill_search` 使用 `query`。官网目前仍读取 `/catalog?q=…`；新增 `/search` 是紧凑的 Agent 查询接口，不能直接把其条目当作完整 Release。两者都保留，按页面所需资料选用。
+
 `skill_read_file` 的 offset/nextOffset 是原始字节位置，默认32 KiB、最多64 KiB；UTF-8 不截断字符，二进制用 base64。必须读取到 eof 才能声称读完；读取内容不等于授权执行或激活。原始 REST 文件最大2 MiB，服务先验证发布包和对应文件的大小与 SHA。
 
 完整账号、投稿、审核 API 与 OpenAPI 位于 API 仓库 `docs/beeftv-skillhub-api.md`、`docs/beeftv-skillhub.openapi.json`。
