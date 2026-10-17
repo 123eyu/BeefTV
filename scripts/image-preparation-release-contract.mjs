@@ -11,7 +11,7 @@ export function validateImagePreparationRelease(receipt, sourceDigest, proofs = 
     || receipt.releaseAuthorization.additionalHumanReplyRequired !== false || !bound(receipt.releaseAuthorization)
     || receipt.releaseAuthorization.combinedScopeInstruction !== '一并发布 #182/#185：补齐它们的验收，再审查完整版本后发布'
     || receipt.baseRelease !== 'v1.7.25' || receipt.baseCommit !== '5f3c15c04c25eb4a786cfbe208091360c3eeb5e5'
-    || JSON.stringify(receipt.includedPullRequests) !== '[182,183,185,186]') fail('exact authorization, base and combined release scope required');
+    || JSON.stringify(receipt.includedPullRequests) !== '[182,183,185,186,188]') fail('exact authorization, base and combined release scope required');
   if (['paidSubmissionLimit', 'newBudgetCNY', 'newSpentCNY', 'newPendingCNY'].some(key => receipt[key] !== 0)
     || !Array.isArray(receipt.cases) || receipt.cases.length || !Array.isArray(receipt.billingAttempts) || receipt.billingAttempts.length
     || ['budgetCNY', 'spentCNY', 'pendingCNY'].some(key => receipt[key] !== null)
