@@ -29,3 +29,11 @@ export class CanvasGenerationTargetSaveError extends Error {
         this.name = "CanvasGenerationTargetSaveError";
     }
 }
+
+export class CanvasGenerationOutputMissingError extends Error {
+    readonly code = "results_missing";
+    constructor(index: number) {
+        super(`原任务未返回第 ${index + 1} 张图片，已有结果已保留，请查看任务详情`);
+        this.name = "CanvasGenerationOutputMissingError";
+    }
+}

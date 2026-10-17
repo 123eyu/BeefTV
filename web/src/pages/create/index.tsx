@@ -769,11 +769,11 @@ export default function CreatePage() {
                     updateOriginAssistant((item) => ({ ...item, content: result.text || "", reasoning: result.reasoning }));
                 }
             } else if (mode === "image") {
-                const taskCount = Math.max(1, Math.min(imageProfile.maxOutputs, Math.floor(Number(count) || 1)));
+                const taskCount = imageProfile.fixedOutputs ? 1 : Math.max(1, Math.min(imageProfile.maxOutputs, Math.floor(Number(count) || 1)));
                 const settled = await runtime.runGenerationOperationOnce(retryContext?.clientOperationId, () => runtime.runBackendGenerationTaskBatch({
                     mode: "image",
                     prompt: expandedPrompt,
-                    config: { ...requestConfig, count: "1" },
+                    config: { ...requestConfig, count: String(imageProfile.fixedOutputs || 1) },
                     referenceImages,
                     signal: requestLifecycle.signal,
                     metadata: { source: "create-page", conversationId: activeConversation.id, messageId: assistantMessage.id, ...referenceMetadata },
@@ -787,24 +787,26 @@ export default function CreatePage() {
                     if (entry.status !== "fulfilled") return [];
                     return (entry.value.images || []).map((image, resultIndex) => ({
                         image,
+                        resultImages: entry.value.images || [],
                         taskId: boundTaskIdsByBatchIndex.get(batchIndex) || boundTaskIdList[batchIndex],
                         batchIndex,
                         resultIndex,
                     }));
                 });
                 const taskFailures = settled.filter((entry): entry is PromiseRejectedResult => entry.status === "rejected");
-                const storedImages = await Promise.allSettled(generatedImages.map(async ({ image, taskId, batchIndex }) => {
+                const imageTasks = imageProfile.fixedOutputs ? generatedImages.filter((item) => item.resultIndex === 0) : generatedImages;
+                const storedImages = await Promise.allSettled(imageTasks.map(async ({ image, resultImages, taskId, batchIndex }) => {
                     if (!taskId) throw new Error("生成任务缺少稳定任务标识");
-                    const task = completedCreationGenerationTask(runtime, { taskId, task: boundTasks.get(taskId), mode: "image", prompt: expandedPrompt, result: { mode: "image", images: [image] }, conversationId: activeConversation.id, messageId: assistantMessage.id, batchIndex, batchCount: taskCount });
+                    const task = completedCreationGenerationTask(runtime, { taskId, task: boundTasks.get(taskId), mode: "image", prompt: expandedPrompt, result: { mode: "image", images: imageProfile.fixedOutputs ? resultImages : [image] }, conversationId: activeConversation.id, messageId: assistantMessage.id, batchIndex, batchCount: taskCount });
                     const materialized = await runtime.consumeGenerationTaskMessage(task, assistantMessage.id, async ({ conversation, bindingStatus }) => {
                         if (bindingStatus === "deleted") return;
                         if (conversation) applyCanonicalConversation(originConversationId, conversation as CreationConversation);
                     }, { signal: requestLifecycle.signal });
-                    const url = runtime.generationTaskMaterializedUrls(materialized)[0];
-                    if (!url) throw new Error("图片结果资源不可用");
-                    return url;
+                    const urls = runtime.generationTaskMaterializedUrls(materialized);
+                    if (!urls[0]) throw new Error("图片结果资源不可用");
+                    return imageProfile.fixedOutputs ? urls : [urls[0]];
                 }));
-                const resultUrls = storedImages.flatMap((entry) => entry.status === "fulfilled" ? [entry.value] : []);
+                const resultUrls = storedImages.flatMap((entry) => entry.status === "fulfilled" ? entry.value : []);
                 const resourceFailures = storedImages.filter((entry) => entry.status === "rejected");
                 const failedCount = taskFailures.length + resourceFailures.length;
                 if (!resultUrls.length) {

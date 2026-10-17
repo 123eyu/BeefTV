@@ -76,18 +76,20 @@ export function canvasGenerationRetryBlocked(metadata: CanvasNodeMetadata | unde
 }
 
 export function canvasImageGenerationHasPendingResult(node: CanvasNodeData | undefined, nodes: CanvasNodeData[]) {
-    return Boolean(node?.metadata?.resourceReloadAvailable || isKeptGenerationResultCode(node?.metadata?.generationErrorCode)
-        || node?.metadata?.batchChildIds?.some((id) => {
-            const child = nodes.find((item) => item.id === id);
-            return child?.metadata?.resourceReloadAvailable || isKeptGenerationResultCode(child?.metadata?.generationErrorCode);
-        }));
+    const pending = (item: CanvasNodeData | undefined) => Boolean(imageSubmissionUnknown(item?.metadata) || item?.metadata?.generationErrorCode === "results_missing" || item?.metadata?.resourceReloadAvailable || isKeptGenerationResultCode(item?.metadata?.generationErrorCode));
+    return pending(node) || nodes.some((item) => (node?.metadata?.batchChildIds?.includes(item.id) || item.metadata?.generatedFromNodeId === node?.id) && pending(item));
+}
+
+export function imageSubmissionUnknown(metadata: CanvasNodeMetadata | undefined) {
+    return metadata?.generationSubmissionState === "unknown" || metadata?.taskStage === "submission_unknown" || metadata?.generationErrorCode === "submission_uncertain";
 }
 
 export function canvasGenerationTaskNodes(nodes: CanvasNodeData[], targetNodeId: string, task: GenerationTask): CanvasNodeData[] {
     return nodes.map((node) => {
         if (node.id !== targetNodeId) return node;
         const failed = task.status === "failed" || task.status === "cancelled";
-        const output = task.outputs?.find((item) => item.outputIndex === 0) ?? task.outputs?.[0];
+        const outputIndex = node.metadata?.taskOutputIndex ?? 0;
+        const output = task.outputs?.find((item) => item.outputIndex === outputIndex);
         const paused = task.status === "succeeded" && !output?.materializedAssetId && [task.stage, output?.materializationErrorCode].some((code) => code === "delivery_paused" || code === "delivery_timed_out");
         const hasCompletedContent = task.status === "succeeded" && !paused && (!output || Boolean(output.materializedAssetId)) && Boolean(node.metadata?.content || node.metadata?.storageKey);
         const retainRecovery = task.status === "succeeded" && !hasCompletedContent && Boolean(node.metadata?.resourceReloadAvailable || isKeptGenerationResultCode(node.metadata?.generationErrorCode));
