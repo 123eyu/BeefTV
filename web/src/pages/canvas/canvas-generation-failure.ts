@@ -1,4 +1,4 @@
-import { explainGenerationError, generationFailureMetadata, generationPromptFingerprint, shouldBlockAutomaticRetry, unchangedModeratedPrompt } from "@/lib/generation-error";
+import { explainGenerationError, generationFailureMetadata, generationPromptFingerprint, shouldBlockManualRetry, unchangedModeratedPrompt } from "@/lib/generation-error";
 import type { CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
 import type { GenerationTask } from "@/services/api/task-center";
 import { CanvasGenerationTargetSaveError } from "@/services/canvas-generation-errors";
@@ -62,7 +62,7 @@ export function canvasTaskFailureMetadata(task: GenerationTask, metadata?: Canva
 export function canvasGenerationRetryBlocked(metadata: CanvasNodeMetadata | undefined, input?: CanvasGenerationFailureInput) {
     if (metadata?.resourceReloadAvailable) return true;
     const error = { code: metadata?.generationErrorCode || metadata?.taskErrorCode, message: metadata?.errorDetails };
-    if (!shouldBlockAutomaticRetry(error, metadata?.taskStage)) return false;
+    if (!shouldBlockManualRetry(error, metadata?.taskStage)) return false;
     // Only a resolved submission can prove that moderated input was changed.
     if (input && explainGenerationError(error).moderation) {
         if (!metadata?.failedInputFingerprint) return !metadata?.failedPromptFingerprint || metadata.failedPromptFingerprint === generationPromptFingerprint(input.prompt);
