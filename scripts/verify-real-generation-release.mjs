@@ -33,7 +33,7 @@ const nonempty = value => typeof value === 'string' && value.trim() !== '';
 if (receipt.version !== version || receipt.sourceDigest !== sourceDigest) fail('receipt does not match this release source');
 if (version === 'v1.7.26') {
   validateImagePreparationRelease(receipt, sourceDigest);
-  console.log('v1.7.26 image reference preparation repair; no new paid generation; paid matrix NOT run; four-platform package gates pending.');
+  console.log('v1.7.26 combined desktop release; no new paid generation; paid matrix NOT run; four-platform package gates pending.');
   process.exit(0);
 }
 if (version === 'v1.7.25') {

@@ -4,13 +4,14 @@ export function validateImagePreparationRelease(receipt, sourceDigest) {
   const evidence = value => Array.isArray(value) && value.length > 0 && value.every(x => typeof x === 'string' && x.trim());
   const bound = value => value?.sourceDigest === sourceDigest && evidence(value.evidence);
   if (receipt.version !== 'v1.7.26' || !/^[a-f0-9]{64}$/.test(sourceDigest) || receipt.sourceDigest !== sourceDigest
-    || receipt.ownerException?.scope !== 'image-reference-preparation-20261017'
+    || receipt.ownerException?.scope !== 'combined-desktop-release-20261017'
     || receipt.ownerException.approvedBy !== 'Ender'
     || receipt.ownerException.instruction !== '本版豁免付费矩阵，专项回归、独立 review、CI 和四平台安装升级门禁通过后发布；历史未知账务继续保留（推荐）'
     || !bound(receipt.ownerException) || receipt.releaseAuthorization?.scope !== 'v1.7.26 only'
     || receipt.releaseAuthorization.additionalHumanReplyRequired !== false || !bound(receipt.releaseAuthorization)
+    || receipt.releaseAuthorization.combinedScopeInstruction !== '一并发布 #182/#185：补齐它们的验收，再审查完整版本后发布'
     || receipt.baseRelease !== 'v1.7.25' || receipt.baseCommit !== '5f3c15c04c25eb4a786cfbe208091360c3eeb5e5'
-    || JSON.stringify(receipt.includedPullRequests) !== '[186]') fail('exact authorization, base and repair scope required');
+    || JSON.stringify(receipt.includedPullRequests) !== '[182,183,185,186]') fail('exact authorization, base and combined release scope required');
   if (['paidSubmissionLimit', 'newBudgetCNY', 'newSpentCNY', 'newPendingCNY'].some(key => receipt[key] !== 0)
     || !Array.isArray(receipt.cases) || receipt.cases.length || !Array.isArray(receipt.billingAttempts) || receipt.billingAttempts.length
     || ['budgetCNY', 'spentCNY', 'pendingCNY'].some(key => receipt[key] !== null)
@@ -25,6 +26,8 @@ export function validateImagePreparationRelease(receipt, sourceDigest) {
   for (const [id, method] of Object.entries({
     userScenario: 'synthetic-reference-and-fault-tests', generationAndRecovery: 'test',
     errorContract: 'test', noNewPaidGeneration: 'source-diff', ci: 'github-actions',
+    depthMirrors: 'signed-manifest-and-public-readback', windowsDepthProcesses: 'native-windows',
+    referenceTransport: 'test', midjourneyFourOutputs: 'test', uiCrossReview: 'human-review',
   })) {
     const item = receipt.verification?.[id];
     if (item?.status !== 'passed' || item.method !== method || !bound(item)) fail(`missing check: ${id}`);
