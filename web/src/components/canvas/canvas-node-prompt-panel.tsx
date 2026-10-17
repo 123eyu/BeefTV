@@ -28,7 +28,7 @@ import { CanvasPresetPicker, type CanvasPromptPreset } from "./canvas-preset-pic
 import { CanvasPortraitTexturePopover } from "./canvas-portrait-texture-popover";
 import { CanvasPromptOptimizerDrawer } from "./canvas-prompt-optimizer-drawer";
 import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata, type CanvasWorkspaceMode } from "@/types/canvas";
-import { autoMentionCanvasResourceReferences, canvasResourceMentionToken, normalizeCanvasNodeMentionTokens, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
+import { autoMentionCanvasResourceReferences, canvasResourceDisplayName, canvasResourceMentionToken, normalizeCanvasNodeMentionTokens, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { promptOptimizerPlugin, PROMPT_OPTIMIZER_PLUGIN_ID } from "@/lib/plugins/builtin/prompt-optimizer";
 import { createPluginHostContext } from "@/services/plugin-host";
 import { usePluginStore } from "@/stores/use-plugin-store";
@@ -731,6 +731,7 @@ function ConnectedReferenceShelf({
             <div className="canvas-node-composer-references" role="group" aria-label="已连接素材">
                 <div className="canvas-node-composer-references-track thin-scrollbar">
                     {activeReferences.map((reference, index) => {
+                        const displayName = canvasResourceDisplayName(reference);
                         const canPreview = Boolean(reference.previewUrl) && (reference.kind === "image" || reference.kind === "character" || reference.kind === "video");
                         const isDropTarget = dropTargetReferenceId === reference.id;
                         return (
@@ -805,8 +806,8 @@ function ConnectedReferenceShelf({
                                         type="button"
                                         className="canvas-node-reference-drag-handle"
                                         draggable
-                                        title={`拖动调整 ${reference.label} 的顺序`}
-                                        aria-label={`调整 ${reference.label} 的顺序；使用左右方向键也可移动`}
+                                        title={`拖动调整 ${displayName} 的顺序`}
+                                        aria-label={`调整 ${displayName} 的顺序；使用左右方向键也可移动`}
                                         onDragStart={(event) => {
                                             setDraggedReferenceId(reference.nodeId);
                                             event.dataTransfer.effectAllowed = "move";
@@ -828,8 +829,8 @@ function ConnectedReferenceShelf({
                                     type="button"
                                     className="canvas-node-reference-preview"
                                     style={{ background: theme.toolbar.itemHover, color: theme.node.text, outlineColor: theme.node.activeStroke }}
-                                    title={canPreview ? `预览 ${reference.title}` : `插入 @${reference.label}`}
-                                    aria-label={canPreview ? `预览 ${reference.title}` : `插入 @${reference.label}`}
+                                    title={canPreview ? `预览 ${reference.title}` : `插入 @${displayName}`}
+                                    aria-label={canPreview ? `预览 ${reference.title}` : `插入 @${displayName}`}
                                     onClick={() => (canPreview ? setImagePreview(reference) : onInsert(reference))}
                                 >
                                     <ReferenceThumbnail reference={reference} />
@@ -842,14 +843,14 @@ function ConnectedReferenceShelf({
                                 <button
                                     type="button"
                                     className="canvas-node-reference-label"
-                                    title={`插入 @${reference.label}`}
+                                    title={`插入 @${displayName}`}
                                     onPointerDown={(event) => event.stopPropagation()}
                                     onMouseDown={(event) => event.stopPropagation()}
                                     onClickCapture={(event) => event.stopPropagation()}
                                     onClick={() => onInsert(reference)}
                                 >
                                     <span className="opacity-55">@</span>
-                                    <span className="truncate">{reference.label}</span>
+                                    <span className="truncate">{displayName}</span>
                                 </button>
                                 {onRemove ? (
                                     <button
@@ -857,7 +858,7 @@ function ConnectedReferenceShelf({
                                         className="canvas-node-reference-remove"
                                         style={{ background: theme.toolbar.panel, borderColor: theme.node.stroke, color: theme.node.text }}
                                         title="移除参考并删除连接"
-                                        aria-label={`移除参考 ${reference.label}`}
+                                        aria-label={`移除参考 ${displayName}`}
                                         onClick={(event) => {
                                             event.stopPropagation();
                                             onRemove(reference);
