@@ -29,6 +29,8 @@ continue-retrieval behavior.
 
 Other image models keep their existing count and submission behavior. No schema
 migration, credential handling, dependency or model price is changed.
+The Create page likewise submits one four-output task and consumes the complete
+task once, preserving all four conversation attachments.
 
 ## Verification
 
