@@ -20,7 +20,8 @@ import {
 
 // Tree identities survive squash/merge commits, but change whenever shipped
 // code, protocol packages, release scripts, dependencies or VERSION change.
-const sourceTree = execFileSync('git', ['ls-tree', '-r', 'HEAD', '--', 'backend', 'web', 'agent-host', 'plugin-packages', 'scripts', 'assets/app-icon.png', 'VERSION', '.github/workflows'], { encoding: 'utf8' });
+const sourcePaths = ['backend', 'web', 'agent-host', 'plugin-packages', 'scripts', 'assets/app-icon.png', 'VERSION', '.github/workflows'];
+const sourceTree = execFileSync('git', ['ls-tree', '-r', 'HEAD', '--', ...sourcePaths], { encoding: 'utf8' });
 const sourceDigest = createHash('sha256').update(sourceTree).digest('hex');
 if (process.argv.includes('--fingerprint')) {
   console.log(sourceDigest);
@@ -32,8 +33,17 @@ const fail = message => { throw new Error(`Real generation release gate: ${messa
 const nonempty = value => typeof value === 'string' && value.trim() !== '';
 if (receipt.version !== version || receipt.sourceDigest !== sourceDigest) fail('receipt does not match this release source');
 if (version === 'v1.7.26') {
-  validateImagePreparationRelease(receipt, sourceDigest);
-  console.log('v1.7.26 image reference preparation repair; no new paid generation; paid matrix NOT run; four-platform package gates pending.');
+  const reviewedHead = receipt.review?.reviewedHead;
+  if (!/^[a-f0-9]{40}$/.test(reviewedHead || '')) fail('reviewed commit is required');
+  const reviewedTree = execFileSync('git', ['ls-tree', '-r', reviewedHead, '--', ...sourcePaths], { encoding: 'utf8' });
+  validateImagePreparationRelease(receipt, sourceDigest, {
+    reviewedHead,
+    reviewedSourceDigest: createHash('sha256').update(reviewedTree).digest('hex'),
+    windowsSourceSHA256: createHash('sha256').update(readFileSync('backend/internal/depthcapture/process_windows.go')).digest('hex'),
+    windowsDepth: JSON.parse(readFileSync('docs/release-evidence/v1.7.26-windows-depth.json', 'utf8')),
+    depthMirrors: JSON.parse(readFileSync('docs/release-evidence/v1.7.26-depth-mirrors.json', 'utf8')),
+  });
+  console.log('v1.7.26 combined desktop release; no new paid generation; paid matrix NOT run; four-platform package gates pending.');
   process.exit(0);
 }
 if (version === 'v1.7.25') {

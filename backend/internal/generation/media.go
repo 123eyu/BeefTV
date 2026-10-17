@@ -25,7 +25,7 @@ func HydrateMedia(ctx context.Context, userID string, input *Input, policy Media
 		}
 	}
 	if input.Mask != nil {
-		return HydrateOne(ctx, userID, input.Mask, mediaPolicyForKind(ctx, *input, "image", policy))
+		return HydrateOne(ctx, userID, input.Mask, mediaPolicyForKind(ctx, *input, "mask", policy))
 	}
 	return nil
 }
@@ -64,12 +64,12 @@ func HydrateOne(ctx context.Context, userID string, media *Media, policy MediaHy
 	if runtime.Resources.LocalMode() && policy.RequireURL && !policy.ManualURL && runtime.ReferenceStorage != nil {
 		enabled, err := runtime.ReferenceStorage.Enabled()
 		if err != nil {
-			return errors.New("参考素材对象存储配置无法读取，请检查存储设置")
+			return RequestPreparationError{Cause: ReferenceStoragePreparationError{Cause: err}}
 		}
 		if enabled {
 			link, err := runtime.ReferenceStorage.Upload(ctx, userID, resourceID)
 			if err != nil {
-				return fmt.Errorf("上传参考素材失败：%w", err)
+				return RequestPreparationError{Cause: ReferenceStoragePreparationError{Cause: err}}
 			}
 			media.URL, media.DataURL = link, ""
 			applyResourceMetadata(media, resource)
