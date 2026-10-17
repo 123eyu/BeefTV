@@ -18,7 +18,9 @@ The settings show a fixed four-image count. Canvas generation creates four
 candidate placeholders and submits one task with `count=4`; OpenAI Images JSON
 or multipart sends `n=4`. All candidates retain the same task/operation identity
 and their individual `taskOutputIndex` (0–3). Each output is saved and bound to
-its own node. Binding writes are serialized; failure to bind one candidate does
+its own node. Submission freezes `metadata.outputNodeIds`; the backend permits
+each output only at its declared destination and retains the existing ownership
+and ready-resource checks. Binding writes are serialized; failure to bind one candidate does
 not discard the other candidates or create another paid task.
 
 Polling, result retrieval and reload use that output index. A new generation

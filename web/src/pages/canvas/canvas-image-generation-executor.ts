@@ -228,7 +228,7 @@ export async function executeImageGeneration({
                                 mode: "image", resolveReferenceLinks, prompt: effectivePrompt,
                                 config: { ...generationConfig, count: String(nativeOutputCount) }, referenceImages,
                                 signal: controller.signal,
-                                metadata: { sourceNodeId: nodeId, ...taskContext, resolvedCharacterVersions: generationContext.resolvedCharacterVersions, promptTemplateOperation: sourceNode?.metadata?.promptTemplateOperation, promptTemplateVariables: sourceNode?.metadata?.promptTemplateVariables, ...styleMetadata, ...skillMetadata },
+                                metadata: { sourceNodeId: nodeId, ...taskContext, outputNodeIds: targetIds, resolvedCharacterVersions: generationContext.resolvedCharacterVersions, promptTemplateOperation: sourceNode?.metadata?.promptTemplateOperation, promptTemplateVariables: sourceNode?.metadata?.promptTemplateVariables, ...styleMetadata, ...skillMetadata },
                             },
                             {
                                 bindTask: (task) => [rootId, ...targetIds].forEach((id) => bindGenerationTask(id, task)),

@@ -76,11 +76,8 @@ export function canvasGenerationRetryBlocked(metadata: CanvasNodeMetadata | unde
 }
 
 export function canvasImageGenerationHasPendingResult(node: CanvasNodeData | undefined, nodes: CanvasNodeData[]) {
-    return Boolean(imageSubmissionUnknown(node?.metadata) || node?.metadata?.generationErrorCode === "results_missing" || node?.metadata?.resourceReloadAvailable || isKeptGenerationResultCode(node?.metadata?.generationErrorCode)
-        || node?.metadata?.batchChildIds?.some((id) => {
-            const child = nodes.find((item) => item.id === id);
-            return imageSubmissionUnknown(child?.metadata) || child?.metadata?.generationErrorCode === "results_missing" || child?.metadata?.resourceReloadAvailable || isKeptGenerationResultCode(child?.metadata?.generationErrorCode);
-        }));
+    const pending = (item: CanvasNodeData | undefined) => Boolean(imageSubmissionUnknown(item?.metadata) || item?.metadata?.generationErrorCode === "results_missing" || item?.metadata?.resourceReloadAvailable || isKeptGenerationResultCode(item?.metadata?.generationErrorCode));
+    return pending(node) || nodes.some((item) => (node?.metadata?.batchChildIds?.includes(item.id) || item.metadata?.generatedFromNodeId === node?.id) && pending(item));
 }
 
 export function imageSubmissionUnknown(metadata: CanvasNodeMetadata | undefined) {

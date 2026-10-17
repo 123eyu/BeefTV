@@ -17,6 +17,8 @@ mock.module("@/lib/canvas/canvas-project-generation", () => ({
     runCanvasGenerationTaskToConsumer: async (input: any, dependencies: any) => {
         submissions++;
         assert.equal(input.config.count, "4");
+        assert.equal(input.metadata.outputNodeIds.length, 4);
+        assert.equal(new Set(input.metadata.outputNodeIds).size, 4);
         dependencies.onSubmission?.({ taskClientOperationId: "one-operation", generationSubmissionState: scenario === "unknown" ? "unknown" : scenario === "cancel-before-accept" ? "submitting" : "accepted" });
         if (scenario === "unknown") throw new GenerationSubmissionUnknownError("one-operation", new Error("connection lost"));
         if (scenario === "cancel-before-accept") {
@@ -25,7 +27,7 @@ mock.module("@/lib/canvas/canvas-project-generation", () => ({
         }
         const task = { id: "one-paid-task", clientOperationId: "one-operation", type: "canvas_image", status: "succeeded", prompt: input.prompt, createdAt: "2026-10-17", updatedAt: "2026-10-17", attempts: 1 };
         dependencies.bindTask(task);
-        if (scenario === "cancel-after-accept") {
+        if (scenario.endsWith("after-accept")) {
             activeController.abort();
             throw new DOMException("Aborted", "AbortError");
         }
@@ -35,9 +37,9 @@ mock.module("@/lib/canvas/canvas-project-generation", () => ({
 }));
 const { executeImageGeneration } = await import("@/pages/canvas/canvas-image-generation-executor");
 
-for (scenario of ["success", "bind-failed", "unknown", "cancel-after-accept", "cancel-before-accept"]) {
+for (scenario of ["success", "bind-failed", "unknown", "cancel-after-accept", "cancel-before-accept", "cancel-text-after-accept"]) {
     submissions = 0;
-    const source: CanvasNodeData = { id: "source", type: CanvasNodeType.Image, title: "MJ", position: { x: 0, y: 0 }, width: 320, height: 320, metadata: {} };
+    const source: CanvasNodeData = { id: "source", type: scenario === "cancel-text-after-accept" ? CanvasNodeType.Text : CanvasNodeType.Image, title: "MJ", position: { x: 0, y: 0 }, width: 320, height: 320, metadata: {} };
     const project = { id: "canvas", title: "MJ fixture", nodes: [source], connections: [], chatSessions: [], activeChatId: null, directorScenes: [], viewport: { x: 0, y: 0, k: 1 }, backgroundMode: "grid", showImageInfo: false, createdAt: "2026-10-17", updatedAt: "2026-10-17" } as CanvasProject;
     useCanvasStore.setState({ projects: [project] });
     const nodesRef = { current: project.nodes };
@@ -70,14 +72,14 @@ for (scenario of ["success", "bind-failed", "unknown", "cancel-after-accept", "c
     };
     await executeImageGeneration(input);
     assert.equal(submissions, 1);
-    const children = nodesRef.current.filter((node) => node.metadata?.batchRootId === source.id);
+    const children = nodesRef.current.filter((node) => node.metadata?.batchRootId);
     assert.equal(children.length, 4);
     assert.deepEqual(children.map((node) => node.metadata!.taskOutputIndex), [0, 1, 2, 3]);
     assert.ok(children.every((node) => node.metadata!.taskClientOperationId === "one-operation"));
     if (scenario === "unknown" || scenario === "cancel-before-accept") {
         assert.ok(children.every((node) => node.metadata!.generationSubmissionState === "unknown"));
         assert.deepEqual(boundIndices, []);
-    } else if (scenario === "cancel-after-accept") {
+    } else if (scenario.endsWith("after-accept")) {
         assert.ok(children.every((node) => node.metadata!.resourceReloadAvailable && node.metadata!.taskId === "one-paid-task"));
         assert.deepEqual(boundIndices, []);
     } else {
