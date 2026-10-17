@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { BACKGROUND_CONTEXT, withAbortSignal } from '@earendil-works/chord/context';
 import { Harness, createRegistry, defineDoc, defineExtension, defineTool, watchEvents,
-  GenerationTask, hook } from '@earendil-works/pi-durable';
+  GenerationTask, hook, section } from '@earendil-works/pi-durable';
 import { openNodeSqliteStorage } from '@earendil-works/pi-durable/storage/sqlite/node';
 import { getCurrentSystemMessage } from '@earendil-works/pi-ai/utils/transcript';
 import { canvasKey } from './session-owner.mjs';
@@ -14,12 +14,14 @@ import { newTurnAccumulator, resetTurnAccumulator, turnChange, sessionTitle } fr
 import { SYSTEM_PROMPT } from './system-prompt.mjs';
 import { SKILL_LOAD_PARAMETERS, createSkillCatalogSection, expandSkillContent, loadPinnedSkills, loadedSkillRecord,
   normalizeSkillCatalog, sameSkillPin, skillsToLoad, activeSkillProjection, createActiveSkillSection, guardSkillModelRequests } from './skill-resource.mjs';
+import { PLAN_UPDATE_PARAMETERS, applyPlanUpdate, emptyPlan, planContinuation, publicPlan, renderPlanSection } from './plan.mjs';
+import { buildStudioDigest, describeChangesSince } from './studio-digest.mjs';
 
 // On-disk format tag written into manifests and host state since 1.0.4; not the
 // package version. Changing it rejects every existing session as mismatched.
 export const DURABLE_VERSION = '1.0.4';
 const STATE = defineDoc({ kind: 'beeftv.host', version: 1, scope: 'session',
-  initial: () => ({ version: DURABLE_VERSION, canvasId: '', sessionId: '', active: null, turns: [], loadedSkills: [] }) });
+  initial: () => ({ version: DURABLE_VERSION, canvasId: '', sessionId: '', active: null, turns: [], loadedSkills: [], plan: emptyPlan(), studioDigestText: '', lastStudioSnapshot: null }) });
 export const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high'];
 // The root agent's reasoning level; budgets follow pi-ai's DEFAULT_THINKING_BUDGETS.
 export function agentThinkingLevel(env = process.env) {
@@ -31,6 +33,12 @@ const supplementMarker = (id) => `[BEEFTV_INPUT:${id}]`;
 function supplementContent(id, content) {
   return [{ type: 'text', text: supplementMarker(id) }, ...(typeof content === 'string' ? [{ type: 'text', text: content }] : content)];
 }
+function prependStudioChanges(content, diffText) {
+  if (!diffText) return content;
+  const text = `<canvas_changes>\n${diffText}\n</canvas_changes>`;
+  if (typeof content === 'string') return `${text}\n\n${content}`;
+  return [{ type: 'text', text }, ...content];
+}
 const idPattern = /^durable:([a-f0-9-]{36})$/;
 const fail = (reason) => Object.assign(new Error(reason), { reason });
 const requestSignature = messages => crypto.createHash('sha256').update(JSON.stringify(messages)).digest('hex');
@@ -41,7 +49,7 @@ export function durableToolReplay(tool) {
 export function publicDurableTurn(active, running = false) {
   if (!active) return null;
   const keys = ['permissionMode','turnId', 'requestId', 'submissionId', 'userText', 'selectedNodeIds', 'attachments', 'skills',
-    'references', 'supplements', 'supplementInputs', 'createdAt', 'reply', 'toolCalls', 'change', 'proposals',
+    'references', 'supplements', 'supplementInputs', 'createdAt', 'reply', 'toolCalls', 'change', 'proposals', 'plan',
     'cancelled', 'error', 'errorReason', 'sessionId', 'status'];
   const result = Object.fromEntries(keys.filter((key) => active[key] !== undefined).map((key) => [key, active[key]]));
   if (running) { delete result.toolCalls; result.status = 'running'; }
@@ -103,7 +111,7 @@ export function durableLifecycleState(current, event) {
 
 export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModels, getModelRef,
   buildTools, authorizeTurn, completeTurn = async () => {}, runWithBudget = (_entry, fn) => fn(),
-  extensions = () => [], settings = {}, skills = null, thinkingLevel = agentThinkingLevel() }) {
+  extensions = () => [], settings = {}, skills = null, readCanvas = null, maxPlanContinuations = 6, thinkingLevel = agentThinkingLevel() }) {
   if (!THINKING_LEVELS.includes(thinkingLevel)) throw fail('invalid_thinking_level');
   if (typeof authorizeTurn !== 'function') throw fail('durable_authorizer_required');
   const sessions = new Map();
@@ -177,6 +185,23 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
   }
   async function update(entry, mutate) {
     return entry.harness.commit(async (tx) => mutate(await tx.doc(STATE)), CTX);
+  }
+  async function refreshStudioDigest(entry, turnId = entry.turn.turnId, { selectedNodeIds = [], computeDiff = false, signal } = {}) {
+    if (typeof readCanvas !== 'function') return '';
+    try {
+      const canvas = await readCanvas(entry, signal, turnId);
+      if (!canvas || typeof canvas !== 'object') return '';
+      const digest = buildStudioDigest(canvas, { selectedNodeIds });
+      let diffText = '';
+      await update(entry, (doc) => {
+        if (computeDiff) diffText = describeChangesSince(doc.lastStudioSnapshot, digest.snapshot);
+        doc.studioDigestText = digest.text;
+        doc.lastStudioSnapshot = digest.snapshot;
+      });
+      return diffText;
+    } catch {
+      return '';
+    }
   }
   async function turnModel(entry, active) {
     const agent = await entry.root.agent(CTX);
@@ -270,29 +295,54 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     });
   }
   function hostTools(entry) {
-    if (!skills) return [];
-    return [{
-      name: 'skill_load', label: 'skill.load', readOnly: true, replay: 'safe',
-      description: '按技能目录里的 id 读取一个已安装技能的完整步骤；读取后的步骤会留在对话里，后续按它执行。',
-      parameters: SKILL_LOAD_PARAMETERS,
-      execute: async (_toolCallId, args, signal) => {
-        const id = String(args?.id || '').trim();
-        const find = (items) => (items || []).find((item) => item.pin.skillId === id);
-        const active=await readSkillContext(entry);
-        const pinned=active.activePins.find(pin=>pin.skillId===id);
-        let item = pinned ? {pin:pinned} : find(entry.skillCatalog.items);
-        if (!item) item = find(normalizeSkillCatalog(await skills.readCatalog(entry, signal, entry.turn.turnId,{id})));
-        if (!item) throw fail('skill_not_installed: 技能目录里没有这个 id');
-        const [resource] = await loadPinnedSkills({ pins: [item.pin], signal,
-          readVersion: (pin, readSignal) => skills.readVersion(entry, pin, readSignal, entry.turn.turnId) });
-        await prepareSkillContext(entry,[item.pin],`tool:${_toolCallId}`,entry.turn.turnId,{append:true});
-        await update(entry, (doc) => {
-          const loaded = doc.loadedSkills || [];
-          if (!loaded.some((record) => sameSkillPin(record, resource.pin))) doc.loadedSkills = [...loaded, loadedSkillRecord(resource, 'tool', entry.turn.turnId)];
-        });
-        return { content: [{ type: 'text', text: expandSkillContent('按上面技能的步骤继续当前任务。', [resource]) }] };
+    const items = [{
+      name: 'plan_update', label: 'plan.update', readOnly: true, replay: 'safe',
+      description: '维护当前对话的创作制作计划（整体替换步骤清单；每完成一步及时更新状态）。',
+      parameters: PLAN_UPDATE_PARAMETERS,
+      execute: async (toolCallId, args) => {
+        const started = Date.now();
+        let nextPlan;
+        try {
+          await update(entry, (doc) => {
+            nextPlan = applyPlanUpdate(doc.plan, args);
+            doc.plan = nextPlan;
+            if (doc.active) doc.active.plan = publicPlan(nextPlan);
+          });
+          entry.turn.plan = publicPlan(nextPlan);
+          entry.generation.planTouchedInTurn = true;
+          entry.log.push({ toolCallId: toolCallId || null, tool: 'plan.update', args: args || {}, isError: false, ms: Date.now() - started });
+          return { content: [{ type: 'text', text: renderPlanSection(nextPlan) || '当前制作计划已清空。' }] };
+        } catch (error) {
+          entry.log.push({ toolCallId: toolCallId || null, tool: 'plan.update', args: args || {}, isError: true, error: error.message, ms: Date.now() - started });
+          throw error;
+        }
       },
     }];
+    if (skills) {
+      items.push({
+        name: 'skill_load', label: 'skill.load', readOnly: true, replay: 'safe',
+        description: '按技能目录里的 id 读取一个已安装技能的完整步骤；读取后的步骤会留在对话里，后续按它执行。',
+        parameters: SKILL_LOAD_PARAMETERS,
+        execute: async (_toolCallId, args, signal) => {
+          const id = String(args?.id || '').trim();
+          const find = (list) => (list || []).find((item) => item.pin.skillId === id);
+          const active=await readSkillContext(entry);
+          const pinned=active.activePins.find(pin=>pin.skillId===id);
+          let item = pinned ? {pin:pinned} : find(entry.skillCatalog.items);
+          if (!item) item = find(normalizeSkillCatalog(await skills.readCatalog(entry, signal, entry.turn.turnId,{id})));
+          if (!item) throw fail('skill_not_installed: 技能目录里没有这个 id');
+          const [resource] = await loadPinnedSkills({ pins: [item.pin], signal,
+            readVersion: (pin, readSignal) => skills.readVersion(entry, pin, readSignal, entry.turn.turnId) });
+          await prepareSkillContext(entry,[item.pin],`tool:${_toolCallId}`,entry.turn.turnId,{append:true});
+          await update(entry, (doc) => {
+            const loaded = doc.loadedSkills || [];
+            if (!loaded.some((record) => sameSkillPin(record, resource.pin))) doc.loadedSkills = [...loaded, loadedSkillRecord(resource, 'tool', entry.turn.turnId)];
+          });
+          return { content: [{ type: 'text', text: expandSkillContent('按上面技能的步骤继续当前任务。', [resource]) }] };
+        },
+      });
+    }
+    return items;
   }
   async function open(canvasId, sessionId) {
     if (!isDurableSessionId(sessionId)) throw fail('session_not_found');
@@ -323,12 +373,20 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
         try {
           // Bridge tools return {content}; Durable's ToolExecutionResult names it output.
           const { content, ...result } = await runWithBudget(entry, () => tool.execute(String(api.taskId), args, context.abortSignal));
+          entry.generation.toolCalledSinceYield = true;
+          if (!tool.readOnly && typeof readCanvas === 'function') {
+            await refreshStudioDigest(entry, entry.turn.turnId, { selectedNodeIds: entry.input?.selectedNodeIds || [], computeDiff: false, signal: context.abortSignal });
+          }
           return { ...result, output: content };
         } finally { await persistEffects(entry); }
       },
     }));
     entry.toolNames = tools.map((tool) => tool.name);
-    const operationExtension=defineExtension({ name: 'beeftv.operations.v1', tools, hooks: [hook(GenerationTask, {
+    const operationSections = [
+      section('beeftv_plan', async () => renderPlanSection((await state(entry))?.plan)),
+      ...(typeof readCanvas === 'function' ? [section('beeftv_studio', async () => (await state(entry))?.studioDigestText || undefined)] : []),
+    ];
+    const operationExtension=defineExtension({ name: 'beeftv.operations.v1', tools, sections: operationSections, hooks: [hook(GenerationTask, {
       beforeRequest: async (request) => {
         for (;;) {
           if (entry.generation.pendingInputError) throw fail(entry.generation.pendingInputError.reason);
@@ -363,6 +421,21 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
           if (messages !== request.messages) return { messages };
           return;
         }
+      },
+      onYield: async () => {
+        if (entry.generation.aborted || entry.generation.pendingInput?.state === 'pending' || entry.generation.pendingInputError) return;
+        if (entry.turn.proposals?.length) return;
+        if (!entry.generation.planTouchedInTurn || !entry.generation.toolCalledSinceYield) return;
+        const doc = await state(entry);
+        if (doc?.active?.stopped || (doc?.active?.supplementIds?.length || 0) > 0) return;
+        const prompt = planContinuation(doc?.plan, {
+          continuations: entry.generation.planContinuations || 0,
+          maxContinuations: maxPlanContinuations,
+        });
+        if (!prompt) return;
+        entry.generation.planContinuations = (entry.generation.planContinuations || 0) + 1;
+        entry.generation.toolCalledSinceYield = false;
+        return { continue: prompt };
       },
     })] });
     registry.install(operationExtension);
@@ -514,17 +587,21 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
         resetTurnAccumulator(entry.turn, input.revisionBefore, input.turnId);
         entry.turn.canvasId=entry.canvasId;
         entry.turn.supplements = [];
+        entry.turn.plan = publicPlan(existing.plan);
         entry.log.length = 0;
-        entry.generation = Object.assign(entry.generation, { aborted: false, intentEpoch: 0, modelEpoch: 0, pendingInput: null, pendingInputError: null, skillContextFailure: null, preparedRequests: new Set() });
+        entry.generation = Object.assign(entry.generation, { aborted: false, intentEpoch: 0, modelEpoch: 0, pendingInput: null, pendingInputError: null, skillContextFailure: null, preparedRequests: new Set(), planTouchedInTurn: false, toolCalledSinceYield: false, planContinuations: 0 });
         entry.submittedRequest = null;
         if (skills) await prepareSkillContext(entry, input.skills, requestId, input.turnId);
         const expansion = await expandSelectedSkills(entry, existing, input.skills, input.content, input.turnId);
+        const studioDiff = await refreshStudioDigest(entry, input.turnId, { selectedNodeIds: input.selectedNodeIds || [], computeDiff: true });
+        const submittedContent = prependStudioChanges(expansion.content, studioDiff);
         await update(entry, (doc) => {
           // content stays the client's own input (idempotency and history);
           // submittedContent is what the transcript receives, skills included.
           doc.active = { ...input, requestId, createdAt: new Date().toISOString(), stopped: false,
             effects: JSON.parse(JSON.stringify(entry.turn)), log: [], supplements: [], intentEpoch: 0, modelEpoch: 0,
-            ...(expansion.records.length ? { submittedContent: expansion.content } : {}) };
+            ...(publicPlan(doc.plan) ? { plan: publicPlan(doc.plan) } : {}),
+            ...((expansion.records.length || studioDiff) ? { submittedContent } : {}) };
           if (expansion.records.length) doc.loadedSkills = [...(doc.loadedSkills || []), ...expansion.records];
         });
       }
@@ -804,8 +881,10 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     }
     const preparationError = entry.generation.pendingInputError || entry.generation.skillContextFailure;
     const completion = preparationError ? { reply: assistant?.content?.filter(block => block.type === 'text').map(block => block.text).join('') || '', cancelled: false, error: preparationError.message, errorReason: preparationError.reason } : durableCompletion(settled, assistant, entry.budget?.failure, active.stopped);
+    const planView = entry.turn.plan || active.plan || null;
     return { ...publicDurableTurn(active), ...completion,
       toolCalls: [...entry.log], change: turnChange(entry.turn), proposals: [...entry.turn.proposals],
+      ...(planView ? { plan: planView } : {}),
       status: settled.status, sessionId: entry.sessionId };
   }
   async function settleLocal(entry, active, record) {
@@ -851,16 +930,39 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
   async function history(canvasId, sessionId) {
     const cached = sessions.get(canvasId);
     const entry = cached?.sessionId === sessionId ? cached : await open(canvasId, sessionId);
-    try { const value = await state(entry); return { sessionId, turns: value.turns.map((turn) => publicDurableTurn(turn)), active: publicDurableTurn(value.active, true) }; }
+    try { const value = await state(entry); return { sessionId, turns: value.turns.map((turn) => publicDurableTurn(turn)), active: publicDurableTurn(value.active, true), plan: publicPlan(value.plan) }; }
     finally { if (entry !== cached) await entry.harness.close(CTX); }
   }
   async function status(entry) {
     const value = await state(entry);
     const inspection = await entry.harness.inspect(CTX);
-    return { sessionId: entry.sessionId, kind: 'durable', active: publicDurableTurn(value.active, true),
+    return { sessionId: entry.sessionId, kind: 'durable', active: publicDurableTurn(value.active, true), plan: publicPlan(value.plan),
       inspection: { scheduling: inspection.scheduling,
         tasks: inspection.tasks.map((task) => ({ id: task.record.id, state: task.state.kind })),
         submissions: inspection.submissions.map((submission) => ({ id: submission.id, status: submission.status })) } };
+  }
+  async function recordEvent(canvasId, { sessionId = '', requestId = crypto.randomUUID(), kind = 'event', message = '', data = {} } = {}) {
+    const cleanCanvasId = String(canvasId || '').trim();
+    const cleanKind = String(kind || 'event').trim();
+    const cleanMessage = String(message || '').trim();
+    if (!cleanCanvasId || !cleanKind || !cleanMessage) throw fail('invalid_request');
+    const entry = await ensureSession(cleanCanvasId, String(sessionId || '').trim());
+    return lock(cleanCanvasId, async () => {
+      const submission = await entry.root.submit({
+        type: 'write',
+        requestId: `event:${requestId}`,
+        entry: {
+          kind: `beeftv.${cleanKind}`,
+          data,
+          model: [{
+            role: 'user',
+            content: [{ type: 'text', text: `<canvas_event kind="${cleanKind}">\n${cleanMessage}\n</canvas_event>` }],
+            timestamp: Date.now(),
+          }],
+        },
+      }, CTX);
+      return { accepted: true, sessionId: entry.sessionId, submissionId: submission.id, requestId: `event:${requestId}` };
+    });
   }
   async function listCanvasSessions(canvasId) {
     const dir = durableDirectory(canvasId);
@@ -882,5 +984,5 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     return entries.length;
   }
   return { sessions, createSession, handoffSession, activateSession, ensureSession, submit, recover, supplement, beginPendingInput, fenceStop, wait,
-    stop, cancelRequest, hasSession, history, status, listCanvasSessions, disposeAll, skillContext, changeSkillContext };
+    stop, cancelRequest, hasSession, history, status, recordEvent, listCanvasSessions, disposeAll, skillContext, changeSkillContext };
 }

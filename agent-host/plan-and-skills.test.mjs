@@ -22,6 +22,7 @@ describe('plan', () => {
   });
   test('渲染计划段落；空计划不产生段落', () => {
     expect(renderPlanSection(emptyPlan())).toBeUndefined();
+    expect(renderPlanSection(applyPlanUpdate(emptyPlan(), { items: [] }, 't1'))).toContain('所有步骤已完成');
     const text = renderPlanSection(applyPlanUpdate(emptyPlan(), { goal: 'G', items: [item('s1', 'done'), item('s2', 'needs_user', '首帧确认')] }));
     expect(text).toContain('目标：G');
     expect(text).toContain('1. [完成] 步骤s1');

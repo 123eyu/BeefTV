@@ -60,7 +60,7 @@ export function applyPlanUpdate(current, args, now = new Date().toISOString()) {
 
 // 系统提示里的计划段落：每轮都是最新状态，压缩后也不会丢。
 export function renderPlanSection(plan) {
-  if (!plan?.items?.length) return undefined;
+  if (!plan?.items?.length) return plan?.updatedAt ? '当前制作计划：所有步骤已完成。' : undefined;
   const lines = ['当前制作计划（你自己维护；用 plan_update 更新）：'];
   if (plan.goal) lines.push(`目标：${plan.goal}`);
   plan.items.forEach((item, index) => lines.push(`${index + 1}. [${LABEL[item.status]}] ${item.title}${item.note ? `（${item.note}）` : ''}  (${item.id})`));

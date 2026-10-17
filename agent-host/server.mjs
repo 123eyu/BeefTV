@@ -190,6 +190,7 @@ const durable = createDurableSessionStore({
     readVersion:async (entry,pin,signal,turnId) => (await ops.opsRequest('POST','/ops/skill.get',{params:pin},signal,turnId || entry.turn.turnId)).result,
     readCatalog:async (entry,signal,turnId,query={}) => (await ops.opsRequest('POST','/ops/skill.catalog',{params:query},signal,turnId || entry.turn.turnId)).result,
   },
+  readCanvas: async (entry, signal, turnId) => (await ops.opsRequest('POST', '/ops/canvas.get', { params: { canvasId: entry.canvasId } }, signal, turnId || entry.turn.turnId)).result,
   authorizeTurn: async ({canvasId, turnId,sessionId}) => {
     const state = await ops.opsRequest('GET', `/assistant/runtime/turns/${encodeURIComponent(turnId)}`);
     if(sessionId && state.open) await ops.opsRequest('POST',`/assistant/runtime/turns/${encodeURIComponent(turnId)}/bind-session`,{sessionId});
@@ -497,6 +498,22 @@ const server = http.createServer(async (req, res) => {
         pending.resolve();
         respond(res,202,{accepted:true}); return;
       } catch (error) { pending.reject(error); throw error; }
+    }
+    if (req.method === 'POST' && url.pathname === '/events') {
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const canvasId = String(body.canvasId || '').trim();
+      const message = String(body.message || '').trim();
+      if (!canvasId || !message || message.length > 8000) {
+        respond(res, 400, { code: 400, reason: 'invalid_request' }); return;
+      }
+      const result = await durable.recordEvent(canvasId, {
+        sessionId: body.sessionId || currentId(canvasId),
+        requestId: body.requestId,
+        kind: body.kind || 'event',
+        message,
+        data: body.data && typeof body.data === 'object' ? body.data : {},
+      });
+      respond(res, 202, result); return;
     }
     if (req.method === 'POST' && url.pathname === '/chat') {
       const body = JSON.parse((await readBody(req)) || '{}');
