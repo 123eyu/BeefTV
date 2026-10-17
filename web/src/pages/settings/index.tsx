@@ -9,6 +9,7 @@ import { ChannelSettingsPane, channelValidationError, focusInvalidChannelField, 
 import { ModelDefaultGrid } from "./model-default-grid";
 import DiagnosticsPanel from "./diagnostics-panel";
 import { StorageSettingsPane } from "./storage-settings-pane";
+import { DepthComponentsPanel } from "@/components/depth-components-panel";
 import { ReferenceStoragePane } from "./reference-storage-pane";
 import { getDesktopAppBinding } from "@/services/desktop-runtime";
 import { PageHeader } from "@/components/layout/workspace-page";
@@ -85,6 +86,10 @@ export default function SettingsPage() {
                 <PageHeader title="存储设置" />
                 <div className="storage-settings-sections">
                     <StorageSettingsPane />
+                    <section className="settings-section space-y-4" aria-label="深度捕捉组件">
+                        <div className="settings-pane-header"><h2>深度捕捉组件</h2></div>
+                        <DepthComponentsPanel />
+                    </section>
                     <ReferenceStoragePane />
                 </div>
             </SettingsPane>
