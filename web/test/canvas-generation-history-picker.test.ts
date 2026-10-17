@@ -344,7 +344,9 @@ describe("LibTV generation history picker", () => {
         expect(orchestrationHook).toContain("createInsertingHistoryGate");
         expect(insert).toContain("persistCanvasDocument(owner.canvasId, { nodes: persisted })");
         expect(insert).toContain("ensureCanvasNodeAsset");
-        expect(insert).toContain("rebaseInsertedCanvasNode");
+        expect(insert).toContain("insertedNodes.reduce");
+        expect(insert).toContain("rebaseInsertedCanvasNode(nodes, inserted)");
+        expect(insert).toContain("expectedScope: captureUserScope()");
         expect(insert.indexOf("runOwnedCanvasHistoryInsert")).toBeLessThan(insert.indexOf("setGenerationHistoryOpen(false)"));
         expect(insert.indexOf("runOwnedCanvasHistoryInsert")).toBeLessThan(insert.indexOf('message.success("已从生成历史插入到画布")'));
         expect(insert.indexOf("flushCanvasStorePersistence")).toBe(-1);

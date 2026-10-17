@@ -253,7 +253,7 @@ export function useCanvasGenerationOrchestration({
             if (!insertingHistory.current.tryEnter()) return;
             const owner = lifetime.capture(projectId);
             try {
-                await hydrateBackendGeneratedOutputs(task);
+                await hydrateBackendGeneratedOutputs(task, undefined, { expectedScope: captureUserScope() });
                 await runOwnedCanvasHistoryInsert({
                     owner,
                     getLiveCanvasId: () => projectIdRef.current,
