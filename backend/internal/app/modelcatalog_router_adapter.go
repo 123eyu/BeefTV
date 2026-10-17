@@ -152,6 +152,11 @@ func routeFailureInfo(err error) modelcatalog.FailureInfo {
 	if err == nil {
 		return info
 	}
+	var unknown generation.SubmissionUnknownError
+	if errors.As(err, &unknown) {
+		// Earlier uncertainty invalidates any nested rejection evidence.
+		return info
+	}
 	if isImageRecoveryError(err) {
 		info.ImageRecovery = true
 	}

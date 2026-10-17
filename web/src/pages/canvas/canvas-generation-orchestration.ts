@@ -8,7 +8,7 @@ import { failedImageBatchChildren, markImageBatchRetrying, reconcileImageBatchRo
 import { bindMissingCanvasResourceAssets, canvasNodesMissingResourceAssetBinding } from "@/lib/canvas/canvas-node-asset";
 import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
 import { getGenerationCount } from "@/lib/canvas/canvas-project-generation";
-import { shouldBlockAutomaticRetry } from "@/lib/generation-error";
+import { shouldBlockManualRetry } from "@/lib/generation-error";
 import type { GenerationTask } from "@/services/api/task-center";
 import type { Asset } from "@/stores/use-asset-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type Position } from "@/types/canvas";
@@ -43,7 +43,7 @@ export function canvasNodeRetryPlan(node: CanvasNodeData, nodes: CanvasNodeData[
 }
 
 export function selectRetryableImageBatchChildren(children: CanvasNodeData[]) {
-    const retryable = children.filter((child) => !shouldBlockAutomaticRetry({ code: child.metadata?.generationErrorCode || child.metadata?.taskErrorCode, message: child.metadata?.errorDetails }, child.metadata?.taskStage));
+    const retryable = children.filter((child) => !shouldBlockManualRetry({ code: child.metadata?.generationErrorCode || child.metadata?.taskErrorCode, message: child.metadata?.errorDetails }, child.metadata?.taskStage));
     return { retryable, blocked: retryable.length < children.length };
 }
 

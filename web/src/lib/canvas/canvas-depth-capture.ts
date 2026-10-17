@@ -50,10 +50,10 @@ export function canvasNodeFailureExplanation(node: CanvasNodeData) {
     const explanation = explainGenerationError({ code: node.metadata?.generationErrorCode || node.metadata?.taskErrorCode, message: node.metadata?.errorDetails }, { taskId: node.metadata?.taskId, model: node.metadata?.model, createdAt: node.metadata?.taskCreatedAt, stage: node.metadata?.taskStage });
     if (!canRecoverOrRetryDepthCapture(node)) return explanation;
     if (node.metadata?.taskStage === "已暂停，等待手动继续") {
-        return { ...explanation, reason: "深度捕捉已暂停", action: "确认组件已安装后，点击重试继续", uncertain: false, retryable: true, blockAutomaticRetry: false };
+        return { ...explanation, reason: "深度捕捉已暂停", action: "确认组件已安装后，点击重试继续", uncertain: false, retryable: true, blockAutomaticRetry: false, blockManualRetry: false };
     }
     if (node.metadata?.taskStatus === "succeeded") {
-        return { ...explanation, reason: "深度视频已生成，暂时未能显示在画布上", action: "点击「恢复结果」重新加载原任务", uncertain: false, retryable: true, blockAutomaticRetry: false };
+        return { ...explanation, reason: "深度视频已生成，暂时未能显示在画布上", action: "点击「恢复结果」重新加载原任务", uncertain: false, retryable: true, blockAutomaticRetry: false, blockManualRetry: false };
     }
     return {
         ...explanation,
@@ -61,5 +61,6 @@ export function canvasNodeFailureExplanation(node: CanvasNodeData) {
         uncertain: false,
         retryable: true,
         blockAutomaticRetry: false,
+        blockManualRetry: false,
     };
 }
