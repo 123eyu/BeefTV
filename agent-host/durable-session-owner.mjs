@@ -425,9 +425,53 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       onYield: async () => {
         if (entry.generation.aborted || entry.generation.pendingInput?.state === 'pending' || entry.generation.pendingInputError) return;
         if (entry.turn.proposals?.length) return;
-        if (!entry.generation.planTouchedInTurn || !entry.generation.toolCalledSinceYield) return;
         const doc = await state(entry);
         if (doc?.active?.stopped || (doc?.active?.supplementIds?.length || 0) > 0) return;
+        if (!entry.generation.unboundReminderSent && entry.turn.createdNodeIds?.length > 0 && typeof readCanvas === 'function') {
+          const canvas = await readCanvas(entry, undefined, entry.turn.turnId).catch(() => null);
+          const nodes = Array.isArray(canvas?.nodes) ? canvas.nodes : [];
+          const connections = Array.isArray(canvas?.connections) ? canvas.connections : [];
+          const byId = new Map(nodes.map((n) => [n.id, n]));
+          const scriptNodes = nodes.filter((n) => n.type === 'script' && (n.metadata?.storyboard?.rows?.length || 0) > 0);
+          if (scriptNodes.length > 0) {
+            const boundIds = new Set();
+            for (const s of scriptNodes) {
+              for (const r of s.metadata?.storyboard?.rows || []) {
+                if (r.imageNodeId) boundIds.add(r.imageNodeId);
+                if (r.videoNodeId) boundIds.add(r.videoNodeId);
+              }
+            }
+            const createdSet = new Set(entry.turn.createdNodeIds);
+            const unboundMedia = nodes.filter(
+              (n) => createdSet.has(n.id) && (n.type === 'image' || n.type === 'video') && !boundIds.has(n.id),
+            );
+            const createdImages = nodes.filter((n) => createdSet.has(n.id) && n.type === 'image');
+            const unlinkedVideos = createdImages.length > 0
+              ? nodes.filter(
+                  (n) =>
+                    createdSet.has(n.id) &&
+                    n.type === 'video' &&
+                    !connections.some((e) => e.toNodeId === n.id && byId.get(e.fromNodeId)?.type === 'image'),
+                )
+              : [];
+            if (unboundMedia.length > 0 || unlinkedVideos.length > 0) {
+              entry.generation.unboundReminderSent = true;
+              const hints = [];
+              if (unboundMedia.length > 0) {
+                const list = unboundMedia.map((n) => `${n.id}「${n.title || n.type}」`).join('、');
+                hints.push(`本轮新建的媒体节点（${list}）尚未通过 canvas_script_row_update 的 imageNodeId/videoNodeId 写回对应分镜行`);
+              }
+              if (unlinkedVideos.length > 0) {
+                const vList = unlinkedVideos.map((n) => `${n.id}「${n.title || n.type}」`).join('、');
+                hints.push(`本轮新建的视频节点（${vList}）尚未通过 canvas_edge_create 连接对应的首帧图节点`);
+              }
+              return {
+                continue: `[制作现场检查] ${hints.join('；')}（当前画布 expectedRevision=${canvas.revision}）。请先补齐上述绑定/连线后再回复用户。`,
+              };
+            }
+          }
+        }
+        if (!entry.generation.planTouchedInTurn || !entry.generation.toolCalledSinceYield) return;
         const prompt = planContinuation(doc?.plan, {
           continuations: entry.generation.planContinuations || 0,
           maxContinuations: maxPlanContinuations,
@@ -582,6 +626,10 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       const auth=await authorization(entry, input.turnId);
       const modelRef = await turnModel(entry, existing.active);
       input={...input,modelRef,permissionMode:auth?.permissionMode || 'canvas'};
+      if (stopIntended(entry, await state(entry), requestId)) {
+        return existing.active ? stoppedRequest(entry, existing.active)
+          : stopBeforeSubmit(entry, { ...input, requestId, createdAt: new Date().toISOString() });
+      }
       if (!existing.active) {
         entry.budget = null;
         resetTurnAccumulator(entry.turn, input.revisionBefore, input.turnId);
@@ -589,7 +637,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
         entry.turn.supplements = [];
         entry.turn.plan = publicPlan(existing.plan);
         entry.log.length = 0;
-        entry.generation = Object.assign(entry.generation, { aborted: false, intentEpoch: 0, modelEpoch: 0, pendingInput: null, pendingInputError: null, skillContextFailure: null, preparedRequests: new Set(), planTouchedInTurn: false, toolCalledSinceYield: false, planContinuations: 0 });
+        entry.generation = Object.assign(entry.generation, { aborted: false, intentEpoch: 0, modelEpoch: 0, pendingInput: null, pendingInputError: null, skillContextFailure: null, preparedRequests: new Set(), planTouchedInTurn: false, toolCalledSinceYield: false, planContinuations: 0, unboundReminderSent: false });
         entry.submittedRequest = null;
         if (skills) await prepareSkillContext(entry, input.skills, requestId, input.turnId);
         const expansion = await expandSelectedSkills(entry, existing, input.skills, input.content, input.turnId);
@@ -930,7 +978,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
   async function history(canvasId, sessionId) {
     const cached = sessions.get(canvasId);
     const entry = cached?.sessionId === sessionId ? cached : await open(canvasId, sessionId);
-    try { const value = await state(entry); return { sessionId, turns: value.turns.map((turn) => publicDurableTurn(turn)), active: publicDurableTurn(value.active, true), plan: publicPlan(value.plan) }; }
+    try { const value = await state(entry); const plan = publicPlan(value.plan); return { sessionId, turns: value.turns.map((turn) => publicDurableTurn(turn)), active: publicDurableTurn(value.active, true), ...(plan ? { plan } : {}) }; }
     finally { if (entry !== cached) await entry.harness.close(CTX); }
   }
   async function status(entry) {

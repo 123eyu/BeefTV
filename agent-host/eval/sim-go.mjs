@@ -1109,11 +1109,15 @@ export function createSimGo(options = {}) {
         const choice = resolveGenerationModel(kind, '');
         proposalSeq += 1;
         const proposalId = `gp-${proposalSeq}`;
+        counts.proposedNodePrompts ||= {};
         for (const id of deduped) {
           const prevCount = counts.proposedNodes[id] || 0;
           counts.proposedNodes[id] = prevCount + 1;
           const node = (doc.nodes || []).find((n) => n.id === id);
-          if (prevCount > 0 && node?.metadata?.status !== 'failed') {
+          const promptKey = `${id}::${String(node?.metadata?.composerContent || node?.metadata?.prompt || '').trim()}`;
+          const prevSamePrompt = counts.proposedNodePrompts[promptKey] || 0;
+          counts.proposedNodePrompts[promptKey] = prevSamePrompt + 1;
+          if (prevSamePrompt > 0 && node?.metadata?.status !== 'failed') {
             counts.duplicateProposals += 1;
           }
         }

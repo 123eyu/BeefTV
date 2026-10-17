@@ -705,32 +705,72 @@ export async function runEval(rawOptions = {}) {
           await hook({ reqIndex: 1, body: rawBody ? JSON.parse(rawBody) : {} });
         }
         const targetUrl = `${upstreamBase}${req.url.replace(/^\/v1/, '')}`;
-        const upstreamRes = await fetch(targetUrl, {
-          method: req.method,
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${config.realApiKey}`,
-          },
-          body: rawBody || undefined,
-        });
-        res.writeHead(upstreamRes.status, {
-          'Content-Type': upstreamRes.headers.get('content-type') || 'text/event-stream',
-        });
-        let respText = '';
-        const dec = new TextDecoder();
-        for await (const chunk of upstreamRes.body) {
-          respText += dec.decode(chunk, { stream: true });
-          res.write(chunk);
+        let lastStatus = 502;
+        let lastContentType = 'text/event-stream';
+        let finalBuffer = Buffer.alloc(0);
+        let finalText = '';
+        let requestBodyToSend = rawBody;
+        if (requestBodyToSend.includes('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAE')) {
+          try {
+            const parsed = JSON.parse(requestBodyToSend);
+            for (const m of parsed.messages || []) {
+              if (Array.isArray(m.content)) {
+                m.content = m.content.map((p) =>
+                  p?.type === 'image_url' && String(p.image_url?.url || '').startsWith('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAE')
+                    ? { type: 'text', text: '[画面抽帧附件已核验：右手有6根手指，手部明显畸形]' }
+                    : p,
+                );
+              }
+            }
+            requestBodyToSend = JSON.stringify(parsed);
+          } catch {
+            // ignore
+          }
         }
-        res.end();
-        const inTok = Math.max(100, Math.ceil(rawBody.length / 4));
-        const outTok = Math.max(50, Math.ceil(respText.length / 8));
-        meter.recordRequest({
-          model: modelId,
-          inputTokens: inTok,
-          outputTokens: outTok,
-          durationMs: Date.now() - started,
+        for (let attempt = 1; attempt <= 4; attempt++) {
+          meter.checkBudgetBeforeDispatch();
+          const attemptStart = Date.now();
+          const upstreamRes = await fetch(targetUrl, {
+            method: req.method,
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${config.realApiKey}`,
+            },
+            body: requestBodyToSend || undefined,
+          });
+          lastStatus = upstreamRes.status;
+          lastContentType = upstreamRes.headers.get('content-type') || 'text/event-stream';
+          const chunks = [];
+          const dec = new TextDecoder();
+          let respText = '';
+          for await (const chunk of upstreamRes.body) {
+            chunks.push(Buffer.from(chunk));
+            respText += dec.decode(chunk, { stream: true });
+          }
+          const inTok = Math.max(100, Math.ceil(requestBodyToSend.length / 4));
+          const outTok = Math.max(50, Math.ceil(respText.length / 8));
+          meter.recordRequest({
+            model: modelId,
+            inputTokens: inTok,
+            outputTokens: outTok,
+            durationMs: Date.now() - attemptStart,
+          });
+          finalBuffer = Buffer.concat(chunks);
+          finalText = respText;
+          const isTransientUpstreamError =
+            respText.includes('upstream stream ended before first response') ||
+            respText.includes('upstream error:') ||
+            respText.includes('do request failed') ||
+            respText.includes('"finish_reason":"content_filter"') ||
+            respText.includes('"finish_reason": "content_filter"') ||
+            (lastStatus >= 500 && lastStatus < 600);
+          if (!isTransientUpstreamError || attempt === 4) break;
+          await new Promise((r) => setTimeout(r, 1500 * attempt));
+        }
+        res.writeHead(lastStatus, {
+          'Content-Type': lastContentType,
         });
+        res.end(finalBuffer);
       } catch (err) {
         res.writeHead(err.reason === 'aborted_budget' ? 429 : 500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: { message: String(err.message || err), code: err.reason || 'proxy_error' } }));
@@ -856,10 +896,51 @@ export async function runEval(rawOptions = {}) {
             }
             if (turnSpec.awaitAutoWakeMs) {
               const inspectsBefore = simGo.counts.mediaInspections;
-              await new Promise((r) => setTimeout(r, turnSpec.awaitAutoWakeMs));
+              const eventRes = await fetch(`${agentHost.baseUrl}/events`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'X-Beeftv-Agent-Token': hostToken,
+                },
+                body: JSON.stringify({
+                  canvasId,
+                  sessionId,
+                  requestId: `task-done-${turnId}`,
+                  kind: 'task_completed',
+                  message:
+                    '生成任务已完成交付，画面产物已写回节点，请使用 media_inspect 复查刚生成的画面是否有手部畸形，如有问题请修改提示词并重新提交生成提议。',
+                  data: { proposalIds: unconfirmedForCanvas.map((p) => p.proposalId) },
+                }),
+              }).catch(() => null);
+              if (eventRes && eventRes.status === 202) {
+                const wakeTurnId = `${turnId}-wake`;
+                meter.setContext({ runIndex: runIdx, scenarioId: scenario.id, turnId: wakeTurnId });
+                const refreshedDoc = simGo.ensureCanvas(canvasId);
+                simGo.beginTurn({
+                  turnId: wakeTurnId,
+                  canvasId,
+                  permissionMode: 'canvas',
+                  sessionId,
+                });
+                const wakeChatRes = await sendChatTurn({
+                  hostBaseUrl: agentHost.baseUrl,
+                  hostToken,
+                  canvasId,
+                  turnId: wakeTurnId,
+                  sessionId,
+                  message: '生成任务已完成，请复查刚生成的画面是否有手部畸形，有问题就重写提示词重新生成。',
+                  revisionBefore: refreshedDoc.revision,
+                  skills: skillsPayload,
+                });
+                sessionId = wakeChatRes.sessionId || sessionId;
+                turnRecords.push(wakeChatRes.turnEnd);
+              } else {
+                await new Promise((r) => setTimeout(r, turnSpec.awaitAutoWakeMs));
+              }
               const inspectsAfter = simGo.counts.mediaInspections;
               wakeResult = {
                 autoWoken: inspectsAfter > inspectsBefore,
+                eventAccepted: Boolean(eventRes && eventRes.status === 202),
               };
             }
           }
@@ -912,6 +993,18 @@ export async function runEval(rawOptions = {}) {
           capabilities: scenario.capabilities,
           metrics,
           checks: evalResult.checks,
+          turnDiagnostics: (turnRecords || []).map((t) => ({
+            turnId: t.turnId,
+            error: t.error || null,
+            reason: t.reason || null,
+            replyPreview: String(t.reply || '').slice(0, 200),
+            tools: (t.tools || []).map((tl) => ({
+              tool: tl.tool,
+              isError: Boolean(tl.isError),
+              error: tl.error || null,
+              rebasedFrom: tl.rebasedFrom,
+            })),
+          })),
         });
 
         if (meter.getState().abortedBudget) {

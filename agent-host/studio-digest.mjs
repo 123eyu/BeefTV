@@ -84,7 +84,7 @@ export function buildStudioDigest(canvas, { maxBytes = 3600, selectedNodeIds = [
   if (loose.length && !nodes.some((node) => node.type === 'script')) {
     lines.push(`媒体节点：${loose.slice(0, 16).map((node) => `${node.id}「${clip(node.title, 14)}」${TYPE_LABEL[node.type]}${STATE_LABEL[nodeState(node)]}`).join('、')}${loose.length > 16 ? `…共 ${loose.length}` : ''}`);
   } else if (loose.length) {
-    lines.push(`不在分镜行里的媒体节点 ${loose.length} 个（需要时用 canvas_get 查看）`);
+    lines.push(`不在分镜行里的媒体节点 ${loose.length} 个：${loose.slice(0, 8).map((node) => `${node.id}「${clip(node.title, 14)}」${TYPE_LABEL[node.type]}`).join('、')}${loose.length > 8 ? `…共 ${loose.length}` : ''}（如需关联分镜行请用 canvas_script_row_update 绑定 imageNodeId/videoNodeId）`);
   }
   const selected = selectedNodeIds.map((id) => byId.get(id)).filter(Boolean);
   if (selected.length) lines.push(`用户选中：${selected.slice(0, 8).map((node) => `${node.id}「${clip(node.title, 14)}」`).join('、')}`);

@@ -190,7 +190,10 @@ const durable = createDurableSessionStore({
     readVersion:async (entry,pin,signal,turnId) => (await ops.opsRequest('POST','/ops/skill.get',{params:pin},signal,turnId || entry.turn.turnId)).result,
     readCatalog:async (entry,signal,turnId,query={}) => (await ops.opsRequest('POST','/ops/skill.catalog',{params:query},signal,turnId || entry.turn.turnId)).result,
   },
-  readCanvas: async (entry, signal, turnId) => (await ops.opsRequest('POST', '/ops/canvas.get', { params: { canvasId: entry.canvasId } }, signal, turnId || entry.turn.turnId)).result,
+  readCanvas: async (entry, signal, turnId) => {
+    if (!ops.descriptors.has('canvas_get') || !ops.descriptors.has('canvas_nodes_create')) return null;
+    return (await ops.opsRequest('POST', '/ops/canvas.get', { params: { canvasId: entry.canvasId } }, signal, turnId || entry.turn.turnId)).result;
+  },
   authorizeTurn: async ({canvasId, turnId,sessionId}) => {
     const state = await ops.opsRequest('GET', `/assistant/runtime/turns/${encodeURIComponent(turnId)}`);
     if(sessionId && state.open) await ops.opsRequest('POST',`/assistant/runtime/turns/${encodeURIComponent(turnId)}/bind-session`,{sessionId});
