@@ -9,6 +9,15 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.7.25
+
+- 生成前保存完整参数和参考素材；提交结果不确定时先查询原任务，避免重复生成。已完成结果可继续取回，并限制同时下载数量。
+- 优化画布对象命名、参考素材选择和视频设置；参考视频缩略图按需加载，减少大量素材时的等待与内存占用。
+- 修复模型菜单定位、明暗主题对比和提示词字号设置；环境自检补充浏览器存储与运行环境检查，诊断内容按账号隔离。
+- GPT Image 2.5 开放完整质量与尺寸选项，默认使用低质量档位；成功图片可恢复原图下载，避免未完成回执覆盖结果。
+- 支持连接本机及局域网模型服务，并在未设置代理环境变量时继续使用系统代理设置。
+- 修复国内视频参数与水印设置，更新对象存储依赖；桌面包补齐媒体探测工具，macOS 安装镜像改进挂载兼容性。
+
 ## v1.7.24
 
 - 修复视频未预载时长时「截取尾帧」退化为首帧的问题，解码失败自动回退拉取 H.264 播放副本并弹出截取完成提示；Windows 桌面端启用原生暗色标题栏与深色启动底色。
