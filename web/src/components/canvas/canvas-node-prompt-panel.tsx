@@ -16,6 +16,8 @@ import { CanvasCameraControlPopover } from "./canvas-camera-control-popover";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
 import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas-audio-settings-popover";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
+import { CanvasPromptFontControl } from "./canvas-prompt-font-control";
+import { DEFAULT_PROMPT_FONT_SIZE, useCreationPreferencesStore } from "@/stores/use-creation-preferences-store";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
 import { videoSettingsConstraints } from "@/lib/video-settings-constraints";
 import { CanvasVideoPromptTools } from "./canvas-video-prompt-tools";
@@ -56,7 +58,7 @@ type CanvasNodePromptPanelProps = {
 type CanvasTheme = (typeof canvasThemes)[keyof typeof canvasThemes];
 
 const PROMPT_REFERENCE_SHELF_HEIGHT = 58;
-// Keep the compact editor readable at rest: three 20px lines plus 12px vertical padding.
+// Larger user fonts increase the three-line compact editor bounds.
 const PROMPT_EDITOR_MIN_HEIGHT = 72;
 const PROMPT_EDITOR_EXPANDED_MIN_HEIGHT = 200;
 const PROMPT_EDITOR_LINE_HEIGHT = 20;
@@ -73,6 +75,9 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     const globalConfig = useEffectiveConfig();
     const themeName = useActiveTheme();
     const theme = canvasThemes[themeName];
+    const preferredFontSize = useCreationPreferencesStore((state) => state.preferences.promptFontSize);
+    const promptFontSize = preferredFontSize ?? DEFAULT_PROMPT_FONT_SIZE;
+    const expandedFontSize = promptFontSize;
     const promptOptimizerInstallation = usePluginStore((state) => state.installations.find((item) => item.manifest.id === PROMPT_OPTIMIZER_PLUGIN_ID));
     const promptOptimizerEnabled = usePluginStore((state) => state.pluginStates[PROMPT_OPTIMIZER_PLUGIN_ID]?.effectiveEnabled ?? Boolean(state.installations.find((item) => item.manifest.id === PROMPT_OPTIMIZER_PLUGIN_ID)?.enabled));
     const simpleMode = workspaceMode === "simple";
@@ -149,8 +154,8 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
         boxShadow: theme.node.shadow,
     } as CSSProperties;
     const controlSurface = "var(--canvas-composer-control-surface)";
-    const promptBounds = promptEditorBounds(false, activeReferenceCount > 0);
-    const expandedPromptBounds = promptEditorBounds(true, activeReferenceCount > 0);
+    const promptBounds = promptEditorBounds(false, activeReferenceCount > 0, promptFontSize);
+    const expandedPromptBounds = promptEditorBounds(true, activeReferenceCount > 0, expandedFontSize);
     const composerHeight = clampPromptHeight(manualPromptHeight ?? promptContentHeight + (activeReferenceCount ? PROMPT_REFERENCE_SHELF_HEIGHT : 0), promptBounds);
     const expandedComposerHeight = clampPromptHeight(expandedPromptContentHeight + (activeReferenceCount ? PROMPT_REFERENCE_SHELF_HEIGHT : 0), expandedPromptBounds);
     const measureExpandedModalSize = () => {
@@ -258,6 +263,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                 </div>
             )}
             <div className="ml-auto flex shrink-0 items-center justify-end gap-1">
+                {expanded ? <CanvasPromptFontControl /> : null}
             {canOptimizePrompt ? (
                 <Tooltip title="用 AI 润色提示词">
                     <button
@@ -447,6 +453,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
     const renderPromptEditor = (expanded: boolean, fill = false) => {
         const bounds = expanded ? expandedPromptBounds : promptBounds;
         const height = expanded ? expandedComposerHeight : composerHeight;
+        const fontSize = expanded ? expandedFontSize : promptFontSize;
         return (
             <>
                 <div className={fill ? "canvas-node-composer-editor flex-1" : "canvas-node-composer-editor"} style={fill ? { minHeight: bounds.min } : { height, ...(expanded ? { flexShrink: 0 } : null) }}>
@@ -473,7 +480,7 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
                         className={expanded
                             ? "thin-scrollbar h-full w-full resize-none overflow-y-auto border-none bg-transparent px-3 py-2.5 text-[var(--fs-body-lg)] leading-6 !outline-none !ring-0 !shadow-none focus:!outline-none focus:!ring-0 focus:!shadow-none placeholder:text-current placeholder:opacity-35"
                             : "thin-scrollbar h-full w-full resize-none overflow-y-auto border-none bg-transparent px-2.5 py-1.5 text-[var(--fs-body)] leading-5 !outline-none !ring-0 !shadow-none focus:!outline-none focus:!ring-0 focus:!shadow-none placeholder:text-current placeholder:opacity-35"}
-                        style={{ color: theme.node.text, outline: "none", boxShadow: "none" }}
+                        style={{ color: theme.node.text, outline: "none", boxShadow: "none", fontSize, lineHeight: `${Math.round(fontSize * 1.5)}px` }}
                         placeholder={promptPlaceholder(mode, hasImageContent, hasTextContent)}
                         aria-label={`${modeDisplayName(mode)}提示词`}
                     />
@@ -532,6 +539,11 @@ export function CanvasNodePromptPanel({ projectId, node, isRunning, onPromptChan
             {renderComposerHeader(false)}
 
             {renderVideoToolStrip()}
+
+            <div className="canvas-node-composer-prompt-tools">
+                <CanvasPromptFontControl />
+                {canExpandPrompt ? <button type="button" className="canvas-node-composer-header-action grid size-6 place-items-center rounded-md" onClick={() => setExpandedPromptOpen(true)} aria-label="放大编辑提示词" title="放大编辑提示词"><Maximize2 className="size-3" /></button> : null}
+            </div>
 
             {renderPromptEditor(false)}
 
@@ -1025,10 +1037,11 @@ function PromptModalResizeHandle({ size, measure, onResize, accent }: { size: { 
     );
 }
 
-function promptEditorBounds(expanded: boolean, hasReferences: boolean) {
+function promptEditorBounds(expanded: boolean, hasReferences: boolean, fontSize: number) {
     const shelfHeight = hasReferences ? PROMPT_REFERENCE_SHELF_HEIGHT : 0;
-    const min = (expanded ? PROMPT_EDITOR_EXPANDED_MIN_HEIGHT : PROMPT_EDITOR_MIN_HEIGHT) + shelfHeight;
-    const max = (expanded ? PROMPT_EDITOR_EXPANDED_LINE_HEIGHT * PROMPT_EDITOR_EXPANDED_MAX_LINES + PROMPT_EDITOR_EXPANDED_VERTICAL_PADDING : PROMPT_EDITOR_LINE_HEIGHT * PROMPT_EDITOR_MAX_LINES + PROMPT_EDITOR_VERTICAL_PADDING) + shelfHeight;
+    const lineHeight = Math.round(fontSize * 1.5);
+    const min = (expanded ? PROMPT_EDITOR_EXPANDED_MIN_HEIGHT : Math.max(PROMPT_EDITOR_MIN_HEIGHT, lineHeight * 3 + PROMPT_EDITOR_VERTICAL_PADDING)) + shelfHeight;
+    const max = (expanded ? lineHeight * PROMPT_EDITOR_EXPANDED_MAX_LINES + PROMPT_EDITOR_EXPANDED_VERTICAL_PADDING : lineHeight * PROMPT_EDITOR_MAX_LINES + PROMPT_EDITOR_VERTICAL_PADDING) + shelfHeight;
     return { min, max };
 }
 
