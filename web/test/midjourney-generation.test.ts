@@ -19,3 +19,11 @@ test("Midjourney creates one four-image task and preserves all output identities
     expect({ status, stderr }).toEqual({ status: 0, stderr: "" });
     expect(stdout).toContain("PASS: one paid task, four indexed outputs");
 }, 15000);
+
+
+test("Midjourney history reuses all four durable local assets", async () => {
+    const child = Bun.spawn([process.execPath, "run", "test/fixtures/midjourney-history.fixture.ts"], { cwd: import.meta.dir + "/..", stdout: "pipe", stderr: "pipe" });
+    const [status, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    expect({ status, stderr }).toEqual({ status: 0, stderr: "" });
+    expect(stdout).toContain("PASS: four local history outputs");
+}, 15000);

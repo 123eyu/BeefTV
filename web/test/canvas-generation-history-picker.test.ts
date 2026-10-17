@@ -334,7 +334,7 @@ describe("LibTV generation history picker", () => {
         expect(helper).toContain("readLiveNodes");
         expect(helper).toContain("canvasNodesMissingResourceAssetBinding");
         expect(helper).toContain("await input.persist(nextNodes)");
-        expect(helper.indexOf("await input.persist(nextNodes)")).toBeLessThan(helper.indexOf("return { node: insertedNodes[0], nextNodes }"));
+        expect(helper.indexOf("await input.persist(nextNodes)")).toBeLessThan(helper.indexOf("return { node: insertedNodes[0], nextNodes, insertedNodes }"));
 
         const hookStart = orchestrationHook.indexOf("const insertGenerationHistoryTask = useCallback");
         const hookEnd = orchestrationHook.indexOf("const reconcileImageBatchRootNode", hookStart);
@@ -344,7 +344,7 @@ describe("LibTV generation history picker", () => {
         expect(orchestrationHook).toContain("createInsertingHistoryGate");
         expect(insert).toContain("persistCanvasDocument(owner.canvasId, { nodes: persisted })");
         expect(insert).toContain("ensureCanvasNodeAsset");
-        expect(insert).toContain("rebaseInsertedCanvasNode(current, node)");
+        expect(insert).toContain("rebaseInsertedCanvasNode");
         expect(insert.indexOf("runOwnedCanvasHistoryInsert")).toBeLessThan(insert.indexOf("setGenerationHistoryOpen(false)"));
         expect(insert.indexOf("runOwnedCanvasHistoryInsert")).toBeLessThan(insert.indexOf('message.success("已从生成历史插入到画布")'));
         expect(insert.indexOf("flushCanvasStorePersistence")).toBe(-1);

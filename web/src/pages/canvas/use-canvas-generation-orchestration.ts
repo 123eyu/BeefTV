@@ -1,3 +1,4 @@
+import { hydrateBackendGeneratedOutputs } from "@/services/project-asset-sync";
 import { useCallback, useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { App } from "antd";
@@ -252,6 +253,7 @@ export function useCanvasGenerationOrchestration({
             if (!insertingHistory.current.tryEnter()) return;
             const owner = lifetime.capture(projectId);
             try {
+                await hydrateBackendGeneratedOutputs(task);
                 await runOwnedCanvasHistoryInsert({
                     owner,
                     getLiveCanvasId: () => projectIdRef.current,
@@ -271,8 +273,8 @@ export function useCanvasGenerationOrchestration({
                     }),
                     persist: (persisted) => persistCanvasDocument(owner.canvasId, { nodes: persisted }),
                     ensureAsset: (item) => ensureCanvasNodeAsset({ canvasId: owner.canvasId, domainProjectId, node: item, source: "canvas-generation", taskId: task.id }),
-                    onCommit: (node) => {
-                        setNodes((current) => rebaseInsertedCanvasNode(current, node));
+                    onCommit: (node, insertedNodes) => {
+                        setNodes((current) => insertedNodes.reduce((nodes, inserted) => rebaseInsertedCanvasNode(nodes, inserted), current));
                         setSelectedNodeIds(new Set([node.id]));
                         setGenerationHistoryOpen(false);
                         message.success("已从生成历史插入到画布");
