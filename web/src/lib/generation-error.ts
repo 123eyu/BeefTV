@@ -192,6 +192,7 @@ const PROVIDER_CODE_CATEGORIES: Record<string, GenerationErrorCategory> = {
     pre_consume_token_quota_failed: "unknown",
     upstream_crowded: "throttled",
     upstream_unavailable: "provider_unavailable",
+    image_reference_upload_failed: "provider_unavailable",
     upstream_rejected: "unknown",
     upstream_error: "unknown",
     invalid_api_key: "auth",

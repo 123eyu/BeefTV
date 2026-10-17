@@ -4,6 +4,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { validateH3FamilyRelease } from './h3-family-release-contract.mjs';
 import { validateVideoDirectDeliveryRelease } from './video-direct-delivery-release-contract.mjs';
 import { validateTeamRelease } from './team-release-contract.mjs';
+import { validateImagePreparationRelease } from './image-preparation-release-contract.mjs';
 import {
   REQUIRED_AGENT_CHECK_IDS,
   DETERMINISTIC_FAULT_CHECK_IDS,
@@ -30,6 +31,11 @@ const receipt = JSON.parse(readFileSync(`docs/release-evidence/${version}.json`,
 const fail = message => { throw new Error(`Real generation release gate: ${message}`); };
 const nonempty = value => typeof value === 'string' && value.trim() !== '';
 if (receipt.version !== version || receipt.sourceDigest !== sourceDigest) fail('receipt does not match this release source');
+if (version === 'v1.7.26') {
+  validateImagePreparationRelease(receipt, sourceDigest);
+  console.log('v1.7.26 image reference preparation repair; no new paid generation; paid matrix NOT run; four-platform package gates pending.');
+  process.exit(0);
+}
 if (version === 'v1.7.25') {
   validateTeamRelease(receipt, sourceDigest);
   console.log('v1.7.25 targeted team release; PR #176 deferred; no new paid generation; full matrix NOT run; four-platform package gates pending.');

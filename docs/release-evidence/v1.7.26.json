@@ -1,0 +1,144 @@
+{
+  "version": "v1.7.26",
+  "sourceDigest": "8558a733d51bcc1896884d64c82fd33f0557bc33f4660b5e0e82895ef82b6c1a",
+  "ownerException": {
+    "sourceDigest": "8558a733d51bcc1896884d64c82fd33f0557bc33f4660b5e0e82895ef82b6c1a",
+    "evidence": [
+      "docs/release-evidence/v1.7.26-review.md"
+    ],
+    "scope": "image-reference-preparation-20261017",
+    "approvedBy": "Ender",
+    "instruction": "本版豁免付费矩阵，专项回归、独立 review、CI 和四平台安装升级门禁通过后发布；历史未知账务继续保留（推荐）"
+  },
+  "releaseAuthorization": {
+    "sourceDigest": "8558a733d51bcc1896884d64c82fd33f0557bc33f4660b5e0e82895ef82b6c1a",
+    "evidence": [
+      "docs/release-evidence/v1.7.26-review.md"
+    ],
+    "scope": "v1.7.26 only",
+    "additionalHumanReplyRequired": false
+  },
+  "baseRelease": "v1.7.25",
+  "baseCommit": "5f3c15c04c25eb4a786cfbe208091360c3eeb5e5",
+  "includedPullRequests": [
+    186
+  ],
+  "paidSubmissionPathChanged": true,
+  "paidSubmissionLimit": 0,
+  "newBudgetCNY": 0,
+  "newSpentCNY": 0,
+  "newPendingCNY": 0,
+  "cases": [],
+  "billingAttempts": [],
+  "budgetCNY": null,
+  "spentCNY": null,
+  "pendingCNY": null,
+  "liveMatrixStatus": "not_run_owner_waived",
+  "agentAcceptanceStatus": "not_run_owner_waived",
+  "acceptanceComplete": false,
+  "priorFinancialUncertainty": {
+    "status": "unresolved",
+    "carriedFromVersion": "v1.7.25",
+    "pendingCNY": null,
+    "evidence": [
+      "docs/release-evidence/v1.7.25.json",
+      "docs/release-evidence/v1.7.26-review.md"
+    ]
+  },
+  "review": {
+    "sourceDigest": "8558a733d51bcc1896884d64c82fd33f0557bc33f4660b5e0e82895ef82b6c1a",
+    "evidence": [
+      "docs/release-evidence/v1.7.26-review.md"
+    ],
+    "result": "approved",
+    "independent": true,
+    "reviewer": "Grok 20261017-164603-continue-626a7726 and 20261017-165239-continue-6c09805a",
+    "reviewedHead": "40572f346676ffe6e3713bc2c7063fe525705f3b",
+    "productAndBuildSourceUnchanged": true
+  },
+  "upgrade": {
+    "sourceDigest": "8558a733d51bcc1896884d64c82fd33f0557bc33f4660b5e0e82895ef82b6c1a",
+    "evidence": [
+      "docs/release-evidence/v1.7.26-review.md"
+    ],
+    "preservedData": true
+  },
+  "verification": {
+    "userScenario": {
+      "sourceDigest": "8558a733d51bcc1896884d64c82fd33f0557bc33f4660b5e0e82895ef82b6c1a",
+      "evidence": [
+        "docs/release-evidence/v1.7.26-review.md"
+      ],
+      "method": "synthetic-reference-and-fault-tests",
+      "status": "passed"
+    },
+    "generationAndRecovery": {
+      "sourceDigest": "8558a733d51bcc1896884d64c82fd33f0557bc33f4660b5e0e82895ef82b6c1a",
+      "evidence": [
+        "docs/release-evidence/v1.7.26-review.md"
+      ],
+      "method": "test",
+      "status": "passed",
+      "runtimeTestedHead": "2757c4d585790d8a639545ecce3b4fd883914492"
+    },
+    "errorContract": {
+      "sourceDigest": "8558a733d51bcc1896884d64c82fd33f0557bc33f4660b5e0e82895ef82b6c1a",
+      "evidence": [
+        "docs/release-evidence/v1.7.26-review.md"
+      ],
+      "method": "test",
+      "status": "passed"
+    },
+    "noNewPaidGeneration": {
+      "sourceDigest": "8558a733d51bcc1896884d64c82fd33f0557bc33f4660b5e0e82895ef82b6c1a",
+      "evidence": [
+        "docs/release-evidence/v1.7.26-review.md"
+      ],
+      "method": "source-diff",
+      "status": "passed"
+    },
+    "ci": {
+      "sourceDigest": "8558a733d51bcc1896884d64c82fd33f0557bc33f4660b5e0e82895ef82b6c1a",
+      "evidence": [
+        "docs/release-evidence/v1.7.26-review.md",
+        "https://github.com/glanderness/BeefTV/actions/runs/39018982692",
+        "https://github.com/glanderness/BeefTV/actions/runs/39018982667",
+        "https://github.com/glanderness/BeefTV/actions/runs/39018982677"
+      ],
+      "method": "github-actions",
+      "status": "passed",
+      "testedHead": "40572f346676ffe6e3713bc2c7063fe525705f3b"
+    },
+    "localReleaseGate": {
+      "sourceDigest": "8558a733d51bcc1896884d64c82fd33f0557bc33f4660b5e0e82895ef82b6c1a",
+      "evidence": [
+        ".github/workflows/release-desktop.yml",
+        "docs/release-evidence/v1.7.26-review.md"
+      ],
+      "method": "local-script",
+      "status": "pending_release_workflow",
+      "beforeDraft": true
+    }
+  },
+  "packages": {
+    "platforms": [
+      "darwin-arm64",
+      "darwin-amd64",
+      "windows-amd64",
+      "linux-amd64"
+    ],
+    "status": "pending_release_workflow",
+    "archives": null,
+    "windowsReleasedUpgradeAndRollbackBeforeUpload": true,
+    "finalArchiveSmokeBeforeUpload": true,
+    "linuxNativeWindowBeforeUpload": true,
+    "signedManifestBeforePublish": true,
+    "publicReadbackAfterPublish": true,
+    "workflowEvidence": [
+      ".github/workflows/release-desktop.yml",
+      "docs/release-evidence/v1.7.26-review.md"
+    ]
+  },
+  "releasePublished": false,
+  "releaseComplete": false
+}

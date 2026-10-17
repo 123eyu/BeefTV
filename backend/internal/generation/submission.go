@@ -37,6 +37,10 @@ func SafeRouteRejection(err error) bool {
 	if err == nil {
 		return false
 	}
+	var preparation RequestPreparationError
+	if errors.As(err, &preparation) {
+		return true
+	}
 	if code, _ := platform.ChannelSlotFailureDetails(err); code != "" {
 		return true
 	}

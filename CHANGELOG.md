@@ -9,6 +9,11 @@ All notable public changes to BeefTV are documented in this file.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
 
+## v1.7.26
+
+- 参考图片上传失败时，准确说明本次尚未开始生成，允许稍后主动重试。
+- 提交结果仍未知的任务继续保留原记录，避免把查询或取回变成重复生成。
+
 ## v1.7.25
 
 - 生成前保存完整参数和参考素材；提交结果不确定时先查询原任务，避免重复生成。已完成结果可继续取回，并限制同时下载数量。

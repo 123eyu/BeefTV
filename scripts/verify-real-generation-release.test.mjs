@@ -28,7 +28,7 @@ const BUNNY_FIXTURES = {
 function copyGate(dir) {
   mkdirSync(join(dir, 'scripts'), { recursive: true });
   mkdirSync(join(dir, 'docs/release-evidence'), { recursive: true });
-  for (const name of ['verify-real-generation-release.mjs', 'real-generation-release-contract.mjs', 'h3-family-release-contract.mjs', 'video-direct-delivery-release-contract.mjs', 'team-release-contract.mjs']) {
+  for (const name of ['verify-real-generation-release.mjs', 'real-generation-release-contract.mjs', 'h3-family-release-contract.mjs', 'video-direct-delivery-release-contract.mjs', 'team-release-contract.mjs', 'image-preparation-release-contract.mjs']) {
     writeFileSync(join(dir, 'scripts', name), readFileSync(new URL(`./${name}`, import.meta.url)));
   }
 }
