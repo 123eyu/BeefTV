@@ -356,7 +356,7 @@ export function computeScenarioMetrics({
     revisionConflicts,
     unrecoveredConflicts,
     conflictRecoveryRate,
-    skillRetentionPassed: scenario.id === 'skill-after-compaction' ? evalResult.passed : null,
+    skillRetentionPassed: scenario.id === 'skill-across-turns' ? evalResult.passed : null,
   };
 }
 
@@ -378,7 +378,7 @@ export function buildEvalSummary(scenarioRuns, config, meterState) {
   const totalRevisionConflicts = scenarioRuns.reduce((s, r) => s + r.metrics.revisionConflicts, 0);
   const totalUnrecoveredConflicts = scenarioRuns.reduce((s, r) => s + r.metrics.unrecoveredConflicts, 0);
 
-  const s6Runs = scenarioRuns.filter((r) => r.scenarioId === 'skill-after-compaction');
+  const s6Runs = scenarioRuns.filter((r) => r.scenarioId === 'skill-across-turns');
   const skillRetentionRate =
     s6Runs.length > 0
       ? Number((s6Runs.filter((r) => r.metrics.passed).length / s6Runs.length).toFixed(4))
@@ -390,7 +390,9 @@ export function buildEvalSummary(scenarioRuns, config, meterState) {
       ? 'aborted_budget'
       : failedRuns > 0
         ? 'failed'
-        : 'passed',
+        : baselineGapRuns > 0
+          ? 'baseline_gap'
+          : 'passed',
     config: {
       scenario: config.scenario,
       modelMode: config.modelMode,
@@ -443,7 +445,7 @@ export function renderMarkdownReport(report) {
     `| 未经确认自动发起付费生成数 | ${s.totalUnconfirmedGenerations} | 必须为 0 |`,
     `| 重复创建同名节点 / 重复提议数 | 节点 ${s.totalDuplicateNodes} / 提议 ${s.totalDuplicateProposals} | 必须为 0 |`,
     `| CAS 版本冲突 / 未恢复冲突数 | ${s.totalRevisionConflicts} / ${s.totalUnrecoveredConflicts} | 未恢复冲突必须为 0 |`,
-    `| 多轮压缩后技能规则保持率 (S6) | ${s.skillRetentionRate === null ? 'N/A' : `${(s.skillRetentionRate * 100).toFixed(1)}%`} | 100% |`,
+    `| 多轮技能规则保持率 (S6，未触发压缩) | ${s.skillRetentionRate === null ? 'N/A' : `${(s.skillRetentionRate * 100).toFixed(1)}%`} | 100% |`,
     '',
     '## 2. 分场景明细',
     '',
@@ -665,11 +667,13 @@ export async function runEval(rawOptions = {}) {
   let apiKey = 'fake-eval-key';
 
   let activeTurnSteerHook = null;
+  let observeModelRequest = null;
 
   if (config.modelMode === 'fake') {
     fakeModel = createFakeModelServer({
       onRequest: async ({ reqIndex, body }) => {
         meter.checkBudgetBeforeDispatch();
+        observeModelRequest?.(body);
         if (activeTurnSteerHook) {
           const hook = activeTurnSteerHook;
           activeTurnSteerHook = null;
@@ -699,6 +703,7 @@ export async function runEval(rawOptions = {}) {
         meter.checkBudgetBeforeDispatch();
         let rawBody = '';
         for await (const chunk of req) rawBody += chunk;
+        observeModelRequest?.(rawBody ? JSON.parse(rawBody) : {});
         if (activeTurnSteerHook) {
           const hook = activeTurnSteerHook;
           activeTurnSteerHook = null;
@@ -806,6 +811,7 @@ export async function runEval(rawOptions = {}) {
         const setupState = scenario.setup(simGo, canvasId);
         const turnRecords = [];
         const steerResults = [];
+        const requestEvidence = [];
         let wakeResult = { autoWoken: false };
         let sessionId = '';
         let abortedThisScenario = false;
@@ -831,6 +837,14 @@ export async function runEval(rawOptions = {}) {
           if (turnSpec.useActiveSkillPins && setupState?.skillPin) {
             skillsPayload = [setupState.skillPin];
           }
+          observeModelRequest = (body) => {
+            if (!setupState?.skillPin) return;
+            const pin = setupState.skillPin;
+            const systemText = JSON.stringify(body.system || (body.messages || []).filter((m) => m.role === 'system' || m.role === 'developer'));
+            const activeSkillPresent = systemText.includes('当前任务技能') &&
+              ['skillId', 'versionId', 'contentHash'].every((key) => systemText.includes(`${key}=\\"${pin[key]}\\"`));
+            requestEvidence.push({ turnId, activeSkillPresent });
+          };
 
           let sessionPromiseResolve;
           const sessionReadyPromise = new Promise((resolve) => {
@@ -912,31 +926,9 @@ export async function runEval(rawOptions = {}) {
                   data: { proposalIds: unconfirmedForCanvas.map((p) => p.proposalId) },
                 }),
               }).catch(() => null);
-              if (eventRes && eventRes.status === 202) {
-                const wakeTurnId = `${turnId}-wake`;
-                meter.setContext({ runIndex: runIdx, scenarioId: scenario.id, turnId: wakeTurnId });
-                const refreshedDoc = simGo.ensureCanvas(canvasId);
-                simGo.beginTurn({
-                  turnId: wakeTurnId,
-                  canvasId,
-                  permissionMode: 'canvas',
-                  sessionId,
-                });
-                const wakeChatRes = await sendChatTurn({
-                  hostBaseUrl: agentHost.baseUrl,
-                  hostToken,
-                  canvasId,
-                  turnId: wakeTurnId,
-                  sessionId,
-                  message: '生成任务已完成，请复查刚生成的画面是否有手部畸形，有问题就重写提示词重新生成。',
-                  revisionBefore: refreshedDoc.revision,
-                  skills: skillsPayload,
-                });
-                sessionId = wakeChatRes.sessionId || sessionId;
-                turnRecords.push(wakeChatRes.turnEnd);
-              } else {
-                await new Promise((r) => setTimeout(r, turnSpec.awaitAutoWakeMs));
-              }
+              // Accepted events are only evidence of delivery. Observe the host
+              // without creating a new user turn on its behalf.
+              await new Promise((r) => setTimeout(r, turnSpec.awaitAutoWakeMs));
               const inspectsAfter = simGo.counts.mediaInspections;
               wakeResult = {
                 autoWoken: inspectsAfter > inspectsBefore,
@@ -945,6 +937,7 @@ export async function runEval(rawOptions = {}) {
             }
           }
         }
+        observeModelRequest = null;
 
         const afterSnap = simGo.snapshot();
         const requestEntries = meter.getState().entries.slice(reqCountBefore);
@@ -971,6 +964,7 @@ export async function runEval(rawOptions = {}) {
             turnRecords,
             steerResults,
             wakeResult,
+            requestEvidence,
           });
         }
 
@@ -991,6 +985,8 @@ export async function runEval(rawOptions = {}) {
           scenarioName: scenario.name,
           expectedBaselinePass: scenario.expectedBaselinePass,
           capabilities: scenario.capabilities,
+          requestEvidence,
+          wakeResult: scenario.capabilities.includes('wake-on-generation') ? wakeResult : undefined,
           metrics,
           checks: evalResult.checks,
           turnDiagnostics: (turnRecords || []).map((t) => ({
@@ -1053,7 +1049,7 @@ if (isMain) {
       console.log(
         [
           '用法: bun eval/run-eval.mjs [选项]',
-          '  --scenario <id|all>      指定场景 ID（如 S1..S6 或 shortdrama-2shot）或 all（默认 all）',
+          '  --scenario <id|all>      指定场景 ID（如 S1..S7 或 shortdrama-2shot）或 all（默认 all）',
           '  --model <fake|real>      模型模式：fake（默认零成本本地桩）或 real（真实模型，需显式配置单价）',
           '  --runs <N>               每个场景重复运行次数（默认 1）',
           '  --max-requests <N>       单回合最大模型请求数（默认 25）',

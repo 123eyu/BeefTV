@@ -24,7 +24,7 @@ const bodies = {
 };
 const resourceFor = (pin) => ({ pin, ...bodies[pin.skillId], version: pin.versionId.slice(1), files: [], unsupportedCapabilities: [] });
 
-async function skillFixture(directory, { thinkingLevel, script = () => null, gate = async () => {}, versionGate=()=>{}, lossy=false, catalogItems=[batches,catalogOnly] } = {}) {
+async function skillFixture(directory, { thinkingLevel, script = () => null, gate = async () => {}, versionGate=()=>{}, contextGate=async()=>{}, contextValidation=()=>{}, closedTurns=new Set(), lossy=false, catalogItems=[batches,catalogOnly] } = {}) {
   const payloads = [], reads = [], catalogs = [];
   const server = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
@@ -43,17 +43,24 @@ async function skillFixture(directory, { thinkingLevel, script = () => null, gat
     models: [{ id: 'thinker', name: 'thinker', reasoning: true, input: ['text'], contextWindow: 200000, maxTokens: 16384,
       compat: { supportsReasoningEffort: true }, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] });
   const models = createModels(); models.setProvider(runtime.getProvider('beeftv'));
+  const contexts = fixtureSkillContext(directory);
   const store = createDurableSessionStore({ sessionRoot: path.join(directory, 'sessions'), workspaceRoot: path.join(directory, 'workspace'),
     getModels: () => models, getModelRef: () => ({ provider: 'beeftv', modelId: 'thinker' }), buildTools: () => [],
     authorizeTurn: async () => ({ open: true, canvasId: 'canvas', permissionMode: 'canvas' }), settings: { retry: { maxRetries: 0 },compaction:{enabled:false,keepRecentTokens:100,reserveTokens:2048,backgroundTokens:0} },
     extensions:()=>lossy?[defineExtension({name:'fixture.lossy-summary',hooks:[hook(CompactionTask,{beforeCompact:async()=>({summary:'Earlier planning is complete.'})})]})]:[],
     ...(thinkingLevel ? { thinkingLevel } : {}),
     skills: {
-      ...fixtureSkillContext(directory),
+      ...contexts,
+      readContext: async (entry, turnId) => { if (closedTurns.has(turnId)) throw Object.assign(Error('turn_not_found'), {reason:'turn_not_found'}); return contexts.readContext(entry); },
+      changeContext: async (entry, change, turnId) => {
+        if (closedTurns.has(turnId)) throw Object.assign(Error('turn_not_found'), {reason:'turn_not_found'});
+        await contextValidation(change);
+        const result = await contexts.changeContext(entry, change); await contextGate(change, result); return result;
+      },
       readVersion: async (_entry, pin, _signal, turnId) => { reads.push({ pin, turnId }); return versionGate(pin) || resourceFor(pin); },
       readCatalog: async (_entry,_signal,_turnId,query={}) => { catalogs.push(query);const filtered=catalogItems.filter(pin=>!query.id || pin.skillId===query.id);return { skills: filtered.slice(0,50).map((pin) => ({ pin, name: bodies[pin.skillId]?.name || pin.skillId, description: bodies[pin.skillId]?.description || 'method' })),total:filtered.length }; },
     } });
-  return { store, payloads, reads, catalogs,
+  return { store, payloads, reads, catalogs, contexts,
     async close() { await store.disposeAll(); server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); } };
 }
 
@@ -182,13 +189,14 @@ test('skill_load loads an advertised skill into the transcript and records it', 
 test('lossy official compaction keeps active rules; clear retains history and new_scope resets only model-visible history', {timeout:60000},async()=>{
   const directory=temp('compaction');let fixture;
   try {
-    fixture=await skillFixture(directory,{lossy:true});const entry=await fixture.store.createSession('canvas');
+    fixture=await skillFixture(directory,{lossy:true,script:(_body,index)=>index===1?{name:'plan_update',args:{goal:'OLD_SCOPE_CASTLE',items:[{id:'old',title:'搭建城堡',status:'needs_user'}]}}:null});const entry=await fixture.store.createSession('canvas');
     const turn=async(id,content,selected=[])=>{
       const submission=await fixture.store.submit(entry,{turnId:id,content,userText:content,skills:selected});
       const record=await fixture.store.wait(entry,submission);assert.equal(record.error,null,JSON.stringify(record));
       return fixture.payloads.at(-1);
     };
     await turn('one','先做角色',[batches]);
+    assert.equal((await fixture.store.history('canvas',entry.sessionId)).plan.goal,'OLD_SCOPE_CASTLE');
     await turn('two','padding '.repeat(800));await turn('three','more '.repeat(800));
     const task=await entry.root.compact(undefined,CTX);
     assert.equal((await entry.harness.waitForTask(task,CTX)).state.outcome.status,'completed');
@@ -205,11 +213,141 @@ test('lossy official compaction keeps active rules; clear retains history and ne
     const fresh=await fixture.store.changeSkillContext(entry,request);
     assert.notEqual(fresh.scopeId,current.scopeId);assert.equal(fresh.lifecycle,'active');
     const clean=await turn('seven','独立任务只说你好');assert.doesNotMatch(JSON.stringify(clean.messages),/第一步：只做 4 张竖版角色图/);
+    assert.doesNotMatch(systemText(clean),/OLD_SCOPE_CASTLE/);
+    assert.equal((await fixture.store.history('canvas',entry.sessionId)).plan,undefined,'independent task has no previous plan');
     assert.equal((await fixture.store.history('canvas',entry.sessionId)).turns.length,7,'reset must preserve display history');
     // Replaying an old reset request must not cut the new task's later messages.
     await fixture.store.changeSkillContext(entry,request);
     const repeated=await turn('eight','延续刚才任务');assert.match(userText(repeated),/独立任务只说你好/);
   }finally{await fixture?.close();fs.rmSync(directory,{recursive:true,force:true});}
+});
+
+test('Stop during skill loading leaves the previous active choice intact', {timeout:60000}, async()=>{
+  const directory=temp('stop-loading');let fixture,release,arrived;
+  const held=new Promise(resolve=>{release=resolve;});const reading=new Promise(resolve=>{arrived=resolve;});
+  try {
+    fixture=await skillFixture(directory,{versionGate:pin=>pin.skillId==='batches'?(arrived(),held.then(()=>resourceFor(pin))):undefined});
+    const entry=await fixture.store.createSession('canvas');
+    await fixture.store.changeSkillContext(entry,{action:'activate',pins:[landscape],expectedRevision:0,requestId:'previous'});
+    const pending=fixture.store.submit(entry,{turnId:'stopped',requestId:'stopped',content:'用分批技能',skills:[batches]});
+    await reading;await fixture.store.cancelRequest('canvas',entry.sessionId,'stopped');release();
+    assert.equal(await pending,null);assert.equal(fixture.payloads.length,0);
+    assert.deepEqual((await fixture.store.skillContext(entry)).activePins,[landscape]);
+    const next=await fixture.store.submit(entry,{turnId:'next',content:'继续'});await fixture.store.wait(entry,next);
+    assert.match(systemText(fixture.payloads.at(-1)),/16:9 横版/);
+    assert.doesNotMatch(systemText(fixture.payloads.at(-1)),/第一步：只做 4 张竖版角色图/);
+  } finally {release?.();await fixture?.close();fs.rmSync(directory,{recursive:true,force:true});}
+});
+
+for (const mode of ['stop','restart','newer-choice']) test(`unsubmitted skill activation is compensated without losing history or newer choices: ${mode}`, {timeout:60000}, async()=>{
+  const directory=temp(`stop-activation-${mode}`);let fixture,release,arrived;
+  const held=new Promise(resolve=>{release=resolve;});const activated=new Promise(resolve=>{arrived=resolve;});
+  try {
+    fixture=await skillFixture(directory,{contextGate:async(change)=>{
+      if(change.requestId!=='select:stopped')return;
+      arrived();await held;
+      if(mode==='restart')throw Error('simulated lost activation response');
+    }});
+    const entry=await fixture.store.createSession('canvas');
+    await fixture.store.changeSkillContext(entry,{action:'activate',pins:[landscape],expectedRevision:0,requestId:'previous'});
+    const pending=fixture.store.submit(entry,{turnId:'stopped',requestId:'stopped',content:'用分批技能',skills:[batches]});
+    // Handle an expected simulated transport failure before releasing the gate.
+    const outcome=pending.then(value=>({value}),error=>({error}));
+    await activated;
+    if(mode==='newer-choice'){
+      const current=await fixture.contexts.readContext(entry);
+      await fixture.contexts.changeContext(entry,{action:'activate',pins:[catalogOnly],expectedRevision:current.revision,requestId:'newer'});
+    }
+    await fixture.store.cancelRequest('canvas',entry.sessionId,'stopped');release();
+    const result=await outcome;
+    if(mode==='stop')assert.equal(result.value,null);
+    else assert(result.error);
+    // Recovery must also handle a crash between Go accepting the selection and
+    // the host receiving its reply, with the Stop already persisted.
+    await fixture.close();fixture=await skillFixture(directory);
+    const restored=await fixture.store.ensureSession('canvas',entry.sessionId);
+    await fixture.store.recover(restored);
+    assert.equal(fixture.payloads.length,0);
+    assert.deepEqual((await fixture.store.skillContext(restored)).activePins,mode==='newer-choice'?[catalogOnly]:[landscape]);
+    const history=await fixture.store.history('canvas',entry.sessionId);
+    assert.equal(history.turns.length,1);assert.equal(history.turns[0].cancelled,true);
+    assert.equal(await fixture.store.submit(restored,{turnId:'stopped',requestId:'stopped',content:'用分批技能',skills:[batches]}),null);
+  } finally {release?.();await fixture?.close();fs.rmSync(directory,{recursive:true,force:true});}
+});
+
+test('Stop settles a rejected selection without activating it or losing the previous choice', {timeout:60000}, async()=>{
+  const directory=temp('stop-rejected-selection');let fixture,release,arrived;
+  const held=new Promise(resolve=>{release=resolve;});const validating=new Promise(resolve=>{arrived=resolve;});
+  try {
+    fixture=await skillFixture(directory,{contextValidation:async change=>{
+      if(change.requestId!=='select:stopped')return;
+      arrived();await held;
+      throw Object.assign(Error('removed package'),{reason:'skill_context_pin_unavailable',details:{skillId:batches.skillId}});
+    }});
+    const entry=await fixture.store.createSession('canvas');
+    await fixture.store.changeSkillContext(entry,{action:'activate',pins:[landscape],expectedRevision:0,requestId:'previous'});
+    const outcome=fixture.store.submit(entry,{turnId:'stopped',requestId:'stopped',content:'用分批技能',skills:[batches]}).catch(error=>error);
+    await validating;await fixture.store.cancelRequest('canvas',entry.sessionId,'stopped');release();
+    assert.equal((await outcome).reason,'skill_context_pin_unavailable');
+    await fixture.store.recover(entry);
+    assert.deepEqual((await fixture.store.skillContext(entry)).activePins,[landscape]);
+    const history=await fixture.store.history('canvas',entry.sessionId);
+    assert.equal(history.active,null);assert.equal(history.turns.length,1);assert.equal(history.turns[0].cancelled,true);
+    assert.equal(fixture.payloads.length,0);
+  } finally {release?.();await fixture?.close();fs.rmSync(directory,{recursive:true,force:true});}
+});
+
+test('failed official admit can stop after Go closed the turn and restore its previous selection', {timeout:60000}, async()=>{
+  const directory=temp('stop-closed-turn');const closedTurns=new Set();let fixture,release,arrived;
+  const held=new Promise(resolve=>{release=resolve;});const admitting=new Promise(resolve=>{arrived=resolve;});
+  try {
+    fixture=await skillFixture(directory,{closedTurns});
+    const entry=await fixture.store.createSession('canvas');
+    await fixture.store.changeSkillContext(entry,{action:'activate',pins:[landscape],expectedRevision:0,requestId:'previous'});
+    entry.root.submit=async()=>{arrived();await held;throw Error('official admit rejected');};
+    const outcome=fixture.store.submit(entry,{turnId:'stopped',requestId:'stopped',content:'用分批技能',skills:[batches]}).then(value=>({value}),error=>({error}));
+    await admitting;
+    assert.equal((await fixture.store.cancelRequest('canvas',entry.sessionId,'stopped')).state,'running');
+    assert.equal(await fixture.store.fenceStop(entry,'stopped'),'stopped');
+    closedTurns.add('stopped'); // The server's complete-before-stop order.
+    release();assert.match((await outcome).error.message,/official admit rejected/);
+    await fixture.store.stop(entry,'stopped');
+    assert.deepEqual((await fixture.store.skillContext(entry)).activePins,[landscape]);
+    const history=await fixture.store.history('canvas',entry.sessionId);
+    assert.equal(history.active,null);assert.equal(history.turns.length,1);assert.equal(history.turns[0].cancelled,true);
+    assert.equal(fixture.payloads.length,0);
+    await fixture.store.recover(entry);
+  } finally {release?.();await fixture?.close();fs.rmSync(directory,{recursive:true,force:true});}
+});
+
+for (const mode of ['revoked','unavailable']) test(`Stop restores valid prior pins and retains unknown failures for recovery: ${mode}`, {timeout:60000}, async()=>{
+  const directory=temp(`stop-prior-${mode}`);let fixture,release,arrived,invalid=false;
+  const held=new Promise(resolve=>{release=resolve;});const activated=new Promise(resolve=>{arrived=resolve;});
+  try {
+    fixture=await skillFixture(directory,{
+      contextGate:async change=>{if(change.requestId==='select:stopped'){arrived();await held;}},
+      contextValidation:change=>{
+        if(!invalid || change.requestId!=='undo-select:stopped' || !change.pins.some(pin=>pin.skillId===landscape.skillId))return;
+        const reason=mode==='revoked'?'skill_context_pin_unavailable':'service_unavailable';
+        throw Object.assign(Error(reason),{reason,details:{skillId:landscape.skillId}});
+      },
+    });
+    const entry=await fixture.store.createSession('canvas');
+    await fixture.store.changeSkillContext(entry,{action:'activate',pins:[landscape,catalogOnly],expectedRevision:0,requestId:'previous'});
+    const outcome=fixture.store.submit(entry,{turnId:'stopped',requestId:'stopped',content:'用分批技能',skills:[batches]}).then(value=>({value}),error=>({error}));
+    await activated;invalid=true;await fixture.store.cancelRequest('canvas',entry.sessionId,'stopped');release();
+    const result=await outcome;
+    if(mode==='unavailable'){
+      assert.equal(result.error.reason,'service_unavailable');
+      assert.deepEqual((await fixture.store.skillContext(entry)).activePins,[batches]);
+      assert.equal((await fixture.store.history('canvas',entry.sessionId)).turns.length,0);
+      invalid=false;await fixture.store.recover(entry);
+    }else assert.equal(result.value,null);
+    assert.deepEqual((await fixture.store.skillContext(entry)).activePins,mode==='revoked'?[catalogOnly]:[landscape,catalogOnly]);
+    const history=await fixture.store.history('canvas',entry.sessionId);
+    assert.equal(history.active,null);assert.equal(history.turns.length,1);assert.equal(history.turns[0].cancelled,true);
+    assert.equal(fixture.payloads.length,0);
+  } finally {release?.();await fixture?.close();fs.rmSync(directory,{recursive:true,force:true});}
 });
 
 test('skill_load can resolve the exact installed id beyond the fifty-item prompt catalog', {timeout:60000},async()=>{

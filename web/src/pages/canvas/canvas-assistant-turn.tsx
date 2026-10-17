@@ -4,7 +4,8 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { ASSISTANT_PROPOSAL_UNDONE_TEXT, agentAssistantFailureText, type AgentToolCall, type AssistantGenerationProposal, type AssistantTurn } from "@/services/api/agent-assistant";
-import { ASSISTANT_UNDONE_INCOMPLETE_TEXT, assistantChangeSummary, assistantSkillLabel, assistantChangedNodeIds, assistantProposalText, assistantTurnCanContinue, assistantUnresolvedFailures, assistantUndoFailureText, assistantVisibleReply } from "./canvas-assistant-copy";
+import { ASSISTANT_UNDONE_INCOMPLETE_TEXT, assistantChangeSummary, assistantSkillLabel, assistantChangedNodeIds, assistantProposalText, assistantProposalProgress, assistantTurnCanContinue, assistantUnresolvedFailures, assistantUndoFailureText, assistantVisibleReply } from "./canvas-assistant-copy";
+import type { CanvasNodeData } from "@/types/canvas";
 import { dismissedProposalKey, type AssistantTurnStatus } from "./use-canvas-assistant";
 import { modelOptionName, resolveModelChannel, useEffectiveConfig } from "@/stores/use-config-store";
 import { portraitPriceLines, seedancePortraitModel, seedancePortraitLabel } from "@/lib/seedance-portrait";
@@ -24,6 +25,8 @@ type Props = {
     onRunProposal: (proposal: AssistantGenerationProposal, turnId: string) => void;
     onDismissProposal: (proposalId: string) => void;
     onContinue?: () => void;
+    nodes?: CanvasNodeData[];
+    onCheckResults?: (nodeIds: string[]) => void;
 };
 
 /** 助手回复用 Markdown 渲染，只走 react-markdown 的安全默认值，不放开原始 HTML。 */
@@ -47,7 +50,7 @@ export function CanvasAssistantUserMessage({ text, selectedCount }: { text: stri
     );
 }
 
-export function CanvasAssistantTurnView({ turn, status, handledProposals, proposalFeedback, runningProposalIds, onLocate, onUndo, onRunProposal, onDismissProposal, onContinue }: Props) {
+export function CanvasAssistantTurnView({ turn, status, handledProposals, proposalFeedback, runningProposalIds, onLocate, onUndo, onRunProposal, onDismissProposal, onContinue, nodes, onCheckResults }: Props) {
     const config = useEffectiveConfig();
     const summary = assistantChangeSummary(turn.change);
     const changedNodeIds = assistantChangedNodeIds(turn.change);
@@ -132,13 +135,20 @@ export function CanvasAssistantTurnView({ turn, status, handledProposals, propos
                 const profile = seedancePortraitLabel(selectedModel) ? resolveModelChannel(config, selectedModel).modelProfiles?.find((item) => item.model === modelOptionName(selectedModel)) : undefined;
                 const priceError = portrait ? portraitGenerationError(config, selectedModel) : "";
                 const running = Boolean(runningProposalIds?.has(proposal.proposalId));
+                const progress = started && nodes ? assistantProposalProgress(proposal, nodes) : null;
                 return (
                     <div key={proposal.proposalId} className="canvas-assistant-card">
-                        <span style={{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{assistantProposalText(proposal, portraitPriceLines(profile?.videoPricing))}</span>
+                        <span style={{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{assistantProposalText(proposal, portraitPriceLines(profile?.videoPricing), !started && !skipped && !undone)}</span>
                         {priceError && !started && !skipped && !undone ? <span className="canvas-assistant-meta" role="status">{priceError}</span> : null}
                         {!skipped && !running && (!undone || started) && proposalFeedback?.[proposal.proposalId] ? <span className="canvas-assistant-meta" role="status" style={{ overflowWrap: "anywhere" }}>{proposalFeedback[proposal.proposalId]}</span> : null}
                         {started ? (
-                            <span className="canvas-assistant-meta">已开始生成</span>
+                            <>
+                                <span className="canvas-assistant-meta" role="status">{progress?.text || "已开始生成"}</span>
+                                {progress && onCheckResults && !undone ? <div className="canvas-assistant-card-actions">
+                                    <Button size="small" disabled={running || !progress.ready} onClick={() => onCheckResults(progress.nodeIds)}>检查结果</Button>
+                                    <span className="canvas-assistant-meta">填入检查要求后，由你发送。</span>
+                                </div> : null}
+                            </>
                         ) : undone ? (
                             <span className="canvas-assistant-meta">{ASSISTANT_PROPOSAL_UNDONE_TEXT}</span>
                         ) : skipped ? (

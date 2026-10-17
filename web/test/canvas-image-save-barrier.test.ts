@@ -1,5 +1,10 @@
 import { beforeEach, expect, test } from "bun:test";
-import { runCanvasGenerationTaskToConsumer } from "@/lib/canvas/canvas-project-generation";
+import { generationTaskMetadata, runCanvasGenerationTaskToConsumer } from "@/lib/canvas/canvas-project-generation";
+import { removeCanvasNodes } from "@/lib/canvas/canvas-project-domain";
+import { cancelIncompleteImageBatch } from "@/lib/canvas/canvas-image-batch-retry";
+import { isolateCopiedNodeMetadata } from "@/lib/canvas/canvas-node-copy";
+import { prepareInPlaceMediaVersion } from "@/lib/canvas/canvas-media-versions";
+import { assistantProposalProgress } from "@/pages/canvas/canvas-assistant-copy";
 import { captureUserScope, UserScopeAbandonedError } from "@/lib/user-scope-guard";
 import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked, canvasGenerationTaskNodes, canvasTaskFailureMetadata } from "@/pages/canvas/canvas-generation-failure";
 import { isCanvasNodeGenerating } from "@/lib/canvas/canvas-node-task-state";
@@ -8,7 +13,7 @@ import { CanvasGenerationDurableAckError, persistCanvasGenerationTarget } from "
 import { CanvasBackendSubmitPausedError } from "@/services/canvas-revision-conflict";
 import type { GenerationTask } from "@/services/api/task-center";
 import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
-import { CanvasNodeType } from "@/types/canvas";
+import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { executeImageGeneration } from "@/pages/canvas/canvas-image-generation-executor";
 import { executeAudioGeneration, executeVideoGeneration } from "@/pages/canvas/canvas-media-generation-executors";
 import type { CanvasGenerationExecution } from "@/pages/canvas/canvas-generation-executor-types";
@@ -218,6 +223,54 @@ test("in-place media generation preserves the existing shot name before submissi
         expect(saved[0]?.metadata?.prompt).toBe("新的完整动作提示词");
         expect(nodesRef.current[0]?.title).toBe(target.title);
     }
+});
+
+test("executor retains original batch outputs after layout deletion, cancellation, copying and regeneration", async () => {
+    const proposal = { proposalId: "p1", kind: "image" as const, nodeIds: ["source"], model: "test-model", modelKey: "test::image" };
+    const createTargets = async (source: CanvasNodeData, nodes: CanvasNodeData[], count: string) => {
+        useCanvasStore.setState({ projects: [{ ...structuredClone(project), nodes }] });
+        const stopBeforeSubmission = new Error("test stops before paid submission");
+        await expect(executeImageGeneration({
+            sourceNode: source, nodeId: source.id, canvasNodes: nodes, canvasConnections: [], nodesRef: { current: nodes },
+            prompt: "两个镜头", effectivePrompt: "两个镜头", projectId: project.id, clientOperationId: "proposal:p1:source",
+            generationConfig: { model: "test-model", count, channels: [] }, generationContext: { referenceImages: [] }, controller: new AbortController(),
+            setNodes: () => undefined, setConnections: () => undefined, registerPendingNodeIds: () => undefined,
+            setSelectedNodeIds: () => undefined, setSelectedConnectionId: () => undefined, setDialogNodeId: () => undefined,
+            startGenerationRequest: () => { throw stopBeforeSubmission; },
+        } as unknown as CanvasGenerationExecution)).rejects.toBe(stopBeforeSubmission);
+        return useCanvasStore.getState().projects[0]!.nodes;
+    };
+    const source = { ...project.nodes[0]!, id: "source", metadata: { status: "idle" as const, generationOutputNodeIds: ["old-output"] } };
+    const created = await createTargets(source, [source], "2");
+    const root = created.find(node => node.id === source.id)!;
+    const outputs = root.metadata!.generationOutputNodeIds!;
+    expect(outputs).toHaveLength(2);
+    expect(outputs).toEqual(root.metadata?.batchChildIds);
+    expect(outputs).not.toBe(root.metadata?.batchChildIds);
+    expect(outputs).not.toContain("old-output");
+    const tasks = outputs.map((id, index) => ({ ...task, id: `task-${id}`, clientOperationId: `proposal:p1:source:${index}`, status: index ? "running" : "succeeded" } as GenerationTask));
+    const receipts = created.map(node => {
+        const index = outputs.indexOf(node.id);
+        return index < 0 ? node : { ...node, metadata: { ...node.metadata, ...generationTaskMetadata(tasks[index]!), status: index ? "loading" as const : "success" as const, content: index ? undefined : "resource:ready" } };
+    });
+    expect(assistantProposalProgress(proposal, receipts).ready).toBe(false);
+    const removed = removeCanvasNodes(receipts, new Set([outputs[1]!])).nodes;
+    expect(removed.find(node => node.id === root.id)?.metadata?.batchChildIds).toEqual([outputs[0]!]);
+    expect(removed.find(node => node.id === root.id)?.metadata?.generationOutputNodeIds).toEqual(outputs);
+    expect(tasks[1]!.status).toBe("running");
+    expect(assistantProposalProgress(proposal, removed).ready).toBe(false);
+    expect(assistantProposalProgress(proposal, removed).text).toContain("无法确认这批结果是否完整");
+    const cancelled = cancelIncompleteImageBatch(root.id, outputs, receipts, []).nodes;
+    expect(assistantProposalProgress(proposal, cancelled).ready).toBe(false);
+    const finished = receipts.map(node => outputs.includes(node.id) ? { ...node, metadata: { ...node.metadata, taskStatus: "succeeded", status: "success" as const, content: "resource:ready" } } : node);
+    expect(assistantProposalProgress(proposal, finished).ready).toBe(true);
+    expect(isolateCopiedNodeMetadata(root, new Map()).generationOutputNodeIds).toBeUndefined();
+    const snapshot = prepareInPlaceMediaVersion([{ ...root, metadata: { ...root.metadata, content: "resource:ready" } }], root.id).find(node => node.id !== root.id)!;
+    expect(snapshot.metadata?.generationOutputNodeIds).toBeUndefined();
+    const regenerated = await createTargets(root, finished, "2");
+    expect(regenerated.find(node => node.id === root.id)?.metadata?.generationOutputNodeIds?.some(id => outputs.includes(id))).toBe(false);
+    const single = await createTargets(root, finished, "1");
+    expect(single.find(node => node.id === root.id)?.metadata?.generationOutputNodeIds).toBeUndefined();
 });
 
 test("a succeeded image with a bind failure keeps its original task and HTTP evidence and blocks another paid generation", async () => {

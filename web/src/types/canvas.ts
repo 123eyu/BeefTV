@@ -278,6 +278,8 @@ export type CanvasNodeMetadata = {
     isBatchRoot?: boolean;
     batchRootId?: string;
     batchChildIds?: string[];
+    /** Original output targets for this generation; independent of the editable batch layout. */
+    generationOutputNodeIds?: string[];
     batchFailedCount?: number;
     batchUsesReferenceImages?: boolean;
     primaryImageId?: string;

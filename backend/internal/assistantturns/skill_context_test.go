@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"gorm.io/gorm"
+
 	"infinite-canvas/backend/internal/assistantturns"
 	"infinite-canvas/backend/internal/skills"
 )
@@ -120,5 +122,52 @@ func TestSkillContextOwnerAndSessionIsolation(t *testing.T) {
 	}
 	if _, err := fx.turns.BoundSkillContext(fx.userID, turnID, contextSession); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestValidatedSkillContextChecksReceiptAndCASBeforePackageAccess(t *testing.T) {
+	fx := openTurnFixture(t)
+	pin := skills.Pin{SkillID: "story", VersionID: "v1", ContentHash: strings.Repeat("a", 64)}
+	calls := 0
+	unavailable := errors.New("package removed")
+	validate := func(tx *gorm.DB, pins []skills.Pin) ([]skills.Pin, error) {
+		calls++
+		if tx == nil || len(pins) != 1 || pins[0] != pin {
+			t.Fatalf("validator needs the transaction and effective pins: %+v", pins)
+		}
+		if calls > 1 {
+			return nil, unavailable
+		}
+		return pins, nil
+	}
+	change := assistantturns.SkillContextChange{SessionID: contextSession, Action: "activate", RequestID: "select", Pins: []skills.Pin{pin}}
+	activated, err := fx.turns.ChangeSkillContextValidated(fx.userID, fx.canvasID, change, validate)
+	if err != nil || calls != 1 {
+		t.Fatalf("initial activation: %+v %v, validations=%d", activated, err, calls)
+	}
+	replayed, err := fx.turns.ChangeSkillContextValidated(fx.userID, fx.canvasID, change, validate)
+	if err != nil || replayed.Revision != activated.Revision || calls != 1 {
+		t.Fatalf("receipt replay revalidated package: %+v %v, validations=%d", replayed, err, calls)
+	}
+	stale := change
+	stale.RequestID = "stale"
+	_, err = fx.turns.ChangeSkillContextValidated(fx.userID, fx.canvasID, stale, validate)
+	contextReason(t, err, "skill_context_revision_conflict")
+	if calls != 1 {
+		t.Fatal("stale mutation checked package before CAS")
+	}
+	refresh := assistantturns.SkillContextChange{SessionID: contextSession, Action: "refresh", RequestID: "refresh", ExpectedRevision: 1}
+	_, err = fx.turns.ChangeSkillContextValidated(fx.userID, fx.canvasID, refresh, validate)
+	if !errors.Is(err, unavailable) || calls != 2 {
+		t.Fatalf("refresh did not validate current pins: %v, validations=%d", err, calls)
+	}
+	clear := refresh
+	clear.Action, clear.RequestID = "clear", "clear"
+	cleared, err := fx.turns.ChangeSkillContextValidated(fx.userID, fx.canvasID, clear, validate)
+	if err != nil || cleared.Revision != 2 || len(cleared.ActivePins) != 0 || calls != 2 {
+		t.Fatalf("removing expired pins should not validate them: %+v %v, validations=%d", cleared, err, calls)
+	}
+	if _, err := fx.turns.ChangeSkillContextValidated(fx.userID, fx.canvasID, change, nil); err == nil {
+		t.Fatal("validated entrypoint accepted a missing validator")
 	}
 }

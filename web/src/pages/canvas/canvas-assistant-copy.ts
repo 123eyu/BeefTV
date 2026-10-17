@@ -2,6 +2,7 @@
 // 翻译成用户语。组件只负责排版，不自己拼文案，避免同一种状态在两处写出两句话。
 import type { AgentLifecycleEvent, AgentToolCall, AssistantGenerationProposal, AssistantSkillSelection, AssistantTurnChange, AssistantUndoFailure } from "@/services/api/agent-assistant";
 import { seedancePortraitLabel } from "@/lib/seedance-portrait";
+import type { CanvasNodeData } from "@/types/canvas";
 
 export type AssistantStatusAction = "model-settings" | "retry";
 
@@ -119,10 +120,73 @@ export function assistantUndoFailureText(failure: AssistantUndoFailure): string 
 }
 
 /** 提议可能来自自建渠道，不能把所有费用都归到 BeefAPI。 */
-export function assistantProposalText(proposal: AssistantGenerationProposal, priceLines: string[] = []): string {
+export function assistantProposalText(proposal: AssistantGenerationProposal, priceLines: string[] = [], awaitingConfirmation = true): string {
     const count = proposal.nodeIds?.length ?? 0;
     const target = proposal.kind === "video" ? "视频" : "图片";
-    return `生成 ${count} ${target === "视频" ? "段视频" : "张参考图片"} · ${seedancePortraitLabel(proposal.model) || proposal.model}\n${priceLines.length ? priceLines.join("\n") + "\n" : ""}确认后开始，按所选渠道计费。`;
+    const title = `为 ${count} 个节点生成${target} · ${seedancePortraitLabel(proposal.model) || proposal.model}`;
+    return awaitingConfirmation ? `${title}\n${priceLines.length ? priceLines.join("\n") + "\n" : ""}确认后开始，按所选渠道计费。` : title;
+}
+
+/** Match the submitted proposal, including fan-out images; old results on the source node are not receipts. */
+export function assistantProposalProgress(proposal: AssistantGenerationProposal, nodes: CanvasNodeData[]) {
+    const byId = new Map(nodes.map(node => [node.id, node]));
+    const outputs = new Map<string, CanvasNodeData>();
+    let unknown = false, batchUnverified = false;
+    for (const sourceId of new Set(proposal.nodeIds)) {
+        const operationId = `proposal:${proposal.proposalId}:${sourceId}`;
+        const matches = (node: CanvasNodeData) => {
+            const actual = node.metadata?.taskClientOperationId || "";
+            return actual === operationId || (actual.startsWith(`${operationId}:`) && /^\d+$/.test(actual.slice(operationId.length + 1)));
+        };
+        const matched = nodes.filter(matches);
+        if (!matched.length) { unknown = true; continue; }
+        const roots = new Set(matched.flatMap(node => node.metadata?.isBatchRoot ? [node.id] : node.metadata?.batchRootId ? [node.metadata.batchRootId] : []));
+        if (roots.size) {
+            for (const rootId of roots) {
+                const root = byId.get(rootId);
+                // Layout children and count are editable; only the original submission
+                // targets can establish that every output has reached a terminal state.
+                const expected = root?.metadata?.generationOutputNodeIds;
+                const children = expected?.length ? expected : root?.metadata?.batchChildIds;
+                if (!expected?.length) { unknown = true; batchUnverified = true; }
+                if (!children?.length) { unknown = true; batchUnverified = true; continue; }
+                for (const childId of children) {
+                    const child = byId.get(childId);
+                    if (!child || !matches(child)) { unknown = true; batchUnverified = true; continue; }
+                    outputs.set(child.id, child);
+                }
+            }
+        } else {
+            // Indexed submissions without their batch root cannot tell us the expected count.
+            if (matched.length !== 1 || matched[0].metadata?.taskClientOperationId !== operationId) unknown = true;
+            for (const node of matched) outputs.set(node.id, node);
+        }
+    }
+    let complete = 0, failed = 0, pending = 0, retrieving = 0;
+    for (const node of outputs.values()) {
+        const meta = node.metadata || {};
+        if (meta.taskStatus === "failed" || meta.taskStatus === "cancelled") failed++;
+        else if (meta.taskStatus === "succeeded") {
+            if (meta.status === "success" && (meta.content || meta.storageKey) && !meta.resourceReloadAvailable) complete++;
+            else retrieving++;
+        } else if (meta.taskStatus === "queued" || meta.taskStatus === "running" || meta.generationSubmissionState === "submitting") pending++;
+        else unknown = true;
+    }
+    const ready = !unknown && outputs.size > 0 && pending === 0 && retrieving === 0;
+    const visibleResults = failed ? `${complete} 个结果已就绪，${failed} 个结果因任务失败或取消而未生成。` : `${complete}/${outputs.size} 个可见结果已就绪。`;
+    const text = unknown ? batchUnverified ? `${visibleResults} 无法确认这批结果是否完整。可在画布选择已就绪结果发给助手检查。` : "部分生成状态待确认，请查看任务列表。"
+        : pending ? `生成中，${complete}/${outputs.size} 个结果已就绪。`
+        : retrieving ? `${complete}/${outputs.size} 个结果已就绪，其余结果还不可用。请查看节点上的取回提示。`
+        : failed ? `${complete} 个结果已就绪，${failed} 个结果因任务失败或取消而未生成。`
+        : `${complete} 个结果已就绪，可以请助手检查。`;
+    return { ready, text, nodeIds: [...outputs.keys()] };
+}
+
+export const ASSISTANT_CHECK_RESULTS_PROMPT = "检查这次生成的结果是否符合对应分镜要求，再继续不需要我确认的步骤。先查看已有产物，保留成功结果；如果有失败，说明原因和调整建议，不要重复提交已开始的生成任务。";
+
+export function appendAssistantDraft(draft: string, prompt: string) {
+    if (draft.includes(prompt)) return draft;
+    return draft.trim() ? `${draft}\n\n${prompt}` : prompt;
 }
 
 export const ASSISTANT_STARTER_PROMPTS = [

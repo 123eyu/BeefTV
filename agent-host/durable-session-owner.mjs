@@ -269,6 +269,8 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     // Repeating reset after a crash before acknowledgement is safe: no model
     // request can pass until the same Go-owned scope has been acknowledged.
     await entry.root.reset('用户开始一个独立任务。只使用当前明确选择的技能和本轮提供的资源。', CTX);
+    await update(entry, (doc) => { doc.plan = emptyPlan(); doc.lastStudioSnapshot = null; doc.studioDigestText = ''; });
+    entry.turn.plan = null;
     return skills.changeContext(entry,{action:'ack_reset',scopeId:context.scopeId,expectedRevision:context.revision},'');
   }
   async function prepareSkillContext(entry, pins, requestId, turnId, {append=false}={}) {
@@ -280,6 +282,59 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       if (current.scopeId!==context.scopeId || current.revision!==context.revision) throw fail('skill_context_changed');
     }
     return context;
+  }
+  async function activateTurnSkills(entry) {
+    const active = (await state(entry)).active;
+    if (!skills || !active?.skills?.length || await officialSubmission(entry, active.requestId)) return;
+    let selection = active.skillSelection;
+    if (!selection) {
+      const context = await readSkillContext(entry, active.turnId);
+      selection = { scopeId: context.scopeId, revision: context.revision, previousPins: context.activePins, pins: active.skills };
+      // Journal before the Go write: a Stop or crash can then undo only this
+      // unsubmitted selection, using the same idempotent Go receipt on recovery.
+      await update(entry, (doc) => { doc.active.skillSelection = selection; });
+    }
+    const applied = await skills.changeContext(entry, { action: 'activate', pins: selection.pins,
+      expectedRevision: selection.revision, requestId: `select:${active.requestId}` }, active.turnId);
+    const current = await readSkillContext(entry, active.turnId);
+    if (current.scopeId !== applied.scopeId || current.revision !== applied.revision) throw fail('skill_context_changed');
+  }
+  async function undoUnsubmittedSkills(entry, active) {
+    const selection = active.skillSelection;
+    if (!selection || !skills) return;
+    try {
+      // Compensation belongs to the session, including when Stop already closed
+      // its Go turn after a failed official admit. Scope/revision still fence it.
+      let applied;
+      try {
+        applied = await skills.changeContext(entry, { action: 'activate', pins: selection.pins,
+          expectedRevision: selection.revision, requestId: `select:${active.requestId}` }, '');
+      } catch (error) {
+        // Go checks the durable receipt first. A pin rejection here therefore
+        // means this selection never committed, so the old choice needs no undo.
+        if (error?.reason === 'skill_context_pin_unavailable' && selection.pins.some(pin => pin.skillId === error?.details?.skillId)) return;
+        throw error;
+      }
+      const current = await readSkillContext(entry, '');
+      if (current.scopeId !== selection.scopeId || current.revision !== applied.revision) return;
+      let pins = selection.previousPins;
+      for (;;) {
+        try {
+          await skills.changeContext(entry, { action: 'activate', pins,
+            expectedRevision: current.revision, requestId: `undo-select:${active.requestId}` }, '');
+          break;
+        } catch (error) {
+          // A user may have removed an old package while this input was preparing.
+          // Only Go's explicit pin-validation failure can remove it from the undo.
+          const unavailable = error?.details?.skillId;
+          if (error?.reason !== 'skill_context_pin_unavailable' || !pins.some(pin => pin.skillId === unavailable)) throw error;
+          pins = pins.filter(pin => pin.skillId !== unavailable);
+        }
+      }
+    } catch (error) {
+      // A newer explicit choice owns the context. Never overwrite it on Stop.
+      if (error?.reason !== 'skill_context_revision_conflict') throw error;
+    }
   }
   async function skillContext(entry) {
     return lock(entry.canvasId,()=>readSkillContext(entry,''));
@@ -631,15 +686,15 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
           : stopBeforeSubmit(entry, { ...input, requestId, createdAt: new Date().toISOString() });
       }
       if (!existing.active) {
+        if (skills) await resetPendingScope(entry, await readSkillContext(entry, input.turnId));
         entry.budget = null;
         resetTurnAccumulator(entry.turn, input.revisionBefore, input.turnId);
         entry.turn.canvasId=entry.canvasId;
         entry.turn.supplements = [];
-        entry.turn.plan = publicPlan(existing.plan);
+        entry.turn.plan = publicPlan((await state(entry)).plan);
         entry.log.length = 0;
         entry.generation = Object.assign(entry.generation, { aborted: false, intentEpoch: 0, modelEpoch: 0, pendingInput: null, pendingInputError: null, skillContextFailure: null, preparedRequests: new Set(), planTouchedInTurn: false, toolCalledSinceYield: false, planContinuations: 0, unboundReminderSent: false });
         entry.submittedRequest = null;
-        if (skills) await prepareSkillContext(entry, input.skills, requestId, input.turnId);
         const expansion = await expandSelectedSkills(entry, existing, input.skills, input.content, input.turnId);
         const studioDiff = await refreshStudioDigest(entry, input.turnId, { selectedNodeIds: input.selectedNodeIds || [], computeDiff: true });
         const submittedContent = prependStudioChanges(expansion.content, studioDiff);
@@ -653,6 +708,9 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
           if (expansion.records.length) doc.loadedSkills = [...(doc.loadedSkills || []), ...expansion.records];
         });
       }
+      const prepared = await state(entry);
+      if (stopIntended(entry, prepared, requestId)) return stoppedRequest(entry, prepared.active);
+      await activateTurnSkills(entry);
       const current = await state(entry);
       const admitted = current.active;
       hydrate(entry, admitted);
@@ -681,6 +739,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
   // Never submitted: no model request, tool or canvas write. Recorded as stopped so
   // history (and a waiting panel) shows it; skills it would have loaded are not kept.
   async function stopBeforeSubmit(entry, active) {
+    await undoUnsubmittedSkills(entry, active);
     const record = { ...publicDurableTurn(active), reply: '', cancelled: true, error: null, errorReason: null,
       toolCalls: [], change: null, proposals: [], status: 'unanswered', sessionId: entry.sessionId };
     let pending = null;

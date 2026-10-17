@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
-import { canvasNodeNeedsGenerationRecovery, consumeGenerationRecoveryRestore, isGenerationRecoveryRestored, resetInterruptedGeneration } from "@/lib/canvas/canvas-project-generation";
+import { canvasNodeNeedsGenerationRecovery, carryGenerationRecoveryRestore, consumeGenerationRecoveryRestore, isGenerationRecoveryRestored, resetInterruptedGeneration } from "@/lib/canvas/canvas-project-generation";
 import { normalizeCanvasMediaNodeSemanticsList } from "@/lib/canvas/canvas-node-semantics";
+import { mergeCanvasRefreshPatch } from "@/lib/canvas/canvas-patch-merge";
 import { proposalCanvasContent } from "@/pages/canvas/canvas-assistant-proposal-snapshot";
+import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { CanvasNodeType, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 
 const node = (id: string, metadata?: CanvasNodeMetadata, type = CanvasNodeType.Image): CanvasNodeData => ({ id, type, title: id, position: { x: 0, y: 0 }, width: 320, height: 320, metadata });
@@ -64,4 +66,47 @@ test("the restore record adds nothing to the saved node", () => {
     expect(Object.keys(restored.metadata!)).toEqual(Object.keys(source.metadata!));
     expect(JSON.stringify(restored.metadata)).toBe(JSON.stringify(source.metadata));
     expect(proposalCanvasContent([restored], [])).toBe(proposalCanvasContent([source], []));
+});
+
+test("a late task survives the real three-way merge with a prompt edited on the same node", () => {
+    const cached = node("same-node", { status: "idle", prompt: "Original prompt" });
+    const project: CanvasProject = { id: "canvas", title: "Canvas", nodes: [cached], connections: [], chatSessions: [], activeChatId: null, viewport: { x: 0, y: 0, k: 1 }, createdAt: "2026-10-01", updatedAt: "2026-10-01" };
+    const live = [{ ...cached, metadata: { ...cached.metadata, prompt: "Unsaved local prompt" } }];
+    const restored = resetInterruptedGeneration([{ ...cached, metadata: { ...cached.metadata, status: "loading", taskId: "late-task", taskStatus: "running" } }]);
+    const merged = mergeCanvasRefreshPatch(project, { ...project, nodes: restored }, live, []).nodes;
+    // The persisted-field merge deliberately does not own the in-memory restore record.
+    expect(isGenerationRecoveryRestored(merged[0])).toBe(false);
+    const adopted = carryGenerationRecoveryRestore(merged, restored);
+    expect(adopted[0].metadata?.prompt).toBe("Unsaved local prompt");
+    expect(adopted[0].metadata?.taskId).toBe("late-task");
+    expect(isGenerationRecoveryRestored(adopted[0])).toBe(true);
+    expect(adopted[0]).not.toBe(merged[0]);
+    // All copies share one claim, including the observed incoming snapshot.
+    const copy = { ...adopted[0], metadata: { ...adopted[0].metadata } };
+    consumeGenerationRecoveryRestore([adopted[0]]);
+    for (const item of [restored[0], adopted[0], copy]) expect(isGenerationRecoveryRestored(item)).toBe(false);
+    expect(carryGenerationRecoveryRestore(merged, restored)).toBe(merged);
+});
+
+test("carrying restore records preserves identity when there is nothing to add", () => {
+    const restored = resetInterruptedGeneration([node("pending", { status: "loading", taskId: "same-task" })]);
+    expect(carryGenerationRecoveryRestore(restored, restored)).toBe(restored);
+    expect(carryGenerationRecoveryRestore(restored, [])).toBe(restored);
+    const completed = [node("pending", { status: "success", taskId: "same-task", content: "/result" })];
+    expect(carryGenerationRecoveryRestore(completed, restored)).toBe(completed);
+    expect(isGenerationRecoveryRestored(completed[0])).toBe(false);
+});
+
+for (const [label, replacement] of [
+    ["task", { taskId: "new-task" }],
+    ["submission", { taskClientOperationId: "new-operation" }],
+    ["continuation", { agentGenerationContinuation: { id: "new-continuation", taskId: "continuation-task", status: "pending" } }],
+    ["continuation task", { agentGenerationContinuation: { id: "continuation", taskId: "new-continuation-task", status: "pending" } }],
+] satisfies Array<[string, CanvasNodeMetadata]>) test(`a restored record cannot claim a different ${label}`, () => {
+    const source = node("pending", { status: "loading", taskId: "old-task", taskClientOperationId: "old-operation", agentGenerationContinuation: { id: "continuation", taskId: "continuation-task", status: "pending" } });
+    const restored = resetInterruptedGeneration([source]);
+    const live = [{ ...source, metadata: { ...source.metadata, ...replacement } }];
+    expect(carryGenerationRecoveryRestore(live, restored)).toBe(live);
+    expect(isGenerationRecoveryRestored(live[0])).toBe(false);
+    expect(isGenerationRecoveryRestored(restored[0])).toBe(true);
 });

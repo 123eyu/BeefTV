@@ -15,6 +15,8 @@ GET 返回 `{canvasId, sessionId, scopeId, revision, activePins, lifecycle}`。�
 
 POST 参数为 `{sessionId?, action, expectedRevision, requestId, pins?}`，使用相同响应信封。`activePins` 是原有 `{skillId, versionId, contentHash, skillName?, version?}`。`requestId` 必须在客户端保存用于重试，同请求标识不能复用于不同的 action/pins。陈旧 revision 返回 409 `skill_context_revision_conflict`，同标识不同内容返回 `skill_context_request_conflict`；宿主正在执行时拒绝手工修改并返回 `session_busy`。
 
+已提交的同内容请求优先返回原回执，不因技能包后来被移除而失效；新写入只有确认单个技能资源不可用时才返回 `skill_context_pin_unavailable` 和 `details.skillId`，结构、正文总量、网络与数据库错误不使用此原因。
+
 | 操作 | 行为 |
 | --- | --- |
 | `activate` | 使用完整 pins 替换活动集合，最多四个固定版本；先验证当前安装资格和文件内容 |

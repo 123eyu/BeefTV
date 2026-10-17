@@ -106,8 +106,24 @@ func (s *Service) SkillContext(userID, canvasID, sessionID string) (*SkillContex
 }
 
 // ChangeSkillContext uses CAS and a durable receipt, shared by UI and host.
-// Package visibility/content validation belongs to the caller's skill service.
+// Callers that validate package access use ChangeSkillContextValidated so an
+// already committed receipt remains replayable after a package is removed.
 func (s *Service) ChangeSkillContext(userID, canvasID string, change SkillContextChange) (*SkillContext, error) {
+	return s.changeSkillContext(userID, canvasID, change, nil)
+}
+
+// SkillPinValidator must read through tx: the production SQLite pool has one
+// connection, and validation belongs to the same transaction as the mutation.
+type SkillPinValidator func(tx *gorm.DB, pins []skills.Pin) ([]skills.Pin, error)
+
+func (s *Service) ChangeSkillContextValidated(userID, canvasID string, change SkillContextChange, validate SkillPinValidator) (*SkillContext, error) {
+	if validate == nil {
+		return nil, storeUnavailable()
+	}
+	return s.changeSkillContext(userID, canvasID, change, validate)
+}
+
+func (s *Service) changeSkillContext(userID, canvasID string, change SkillContextChange, validate SkillPinValidator) (*SkillContext, error) {
 	if err := s.contextActor(userID, canvasID, change.SessionID); err != nil {
 		return nil, err
 	}
@@ -183,6 +199,13 @@ func (s *Service) ChangeSkillContext(userID, canvasID string, change SkillContex
 				return err
 			}
 			row.Lifecycle = "reset_pending"
+		}
+		if validate != nil && change.Action != "clear" {
+			pins, err = validate(tx, pins)
+			if err != nil {
+				return err
+			}
+			pins = SortedSkillPins(pins)
 		}
 		encoded, _ := json.Marshal(pins)
 		row.ActivePinsJSON = string(encoded)

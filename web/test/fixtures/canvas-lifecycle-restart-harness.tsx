@@ -29,6 +29,7 @@ if (scenario === "interrupted") {
     cached.nodes[3].metadata = { fileUpload: "uploading", fileUploadProgress: 40 };
     cached.nodes[4].metadata = { fileUpload: "uploading", fileUploadProgress: 40 };
 }
+if (scenario === "late-same-node-recovery") cached.nodes[0].metadata = { prompt: "Original prompt" };
 await useCanvasStore.persist.rehydrate();
 if (scenario !== "missing-cache-and-journal") await recordConfirmedCanvasCommit(cached as never);
 const local = structuredClone(cached);
@@ -95,14 +96,20 @@ function Harness() {
     };
     (harness as any).editTitleNow = editTitleNow;
     // Edit exactly when the backend graph lands in the store, while the editor still shows the cached graph.
-    (harness as any).editWhenBackendProjects = () => {
+    const editWhenBackendProjects = (edit: () => void) => {
         const stop = useCanvasStore.subscribe((state) => {
             const project = state.projects.find(p => p.id === "c1");
             if (!project || project.connections.length !== 6 || connectionsRef.current.length !== 0) return;
             stop();
-            editTitleNow();
+            edit();
         });
     };
+    (harness as any).editWhenBackendProjects = () => editWhenBackendProjects(editTitleNow);
+    (harness as any).editPromptWhenBackendProjects = () => editWhenBackendProjects(() => {
+        const next = nodesRef.current.map(node => node.id === "n0" ? { ...node, metadata: { ...node.metadata, prompt: "Unsaved local prompt" } } : node);
+        nodesRef.current = next;
+        setNodes(next);
+    });
     (harness as any).chatIds = () => chatSessionsRef.current.map(session => session.id);
     (harness as any).held = () => ({ paused: canvasBackendSubmitPaused("c1"), candidateTitle: (pendingExternalCanvasRevision("c1")?.candidate.nodes[0] as CanvasNodeData | undefined)?.title ?? null });
     (harness as any).title = () => nodesRef.current.find(node => node.id === "n0")?.title;
@@ -116,7 +123,7 @@ function Harness() {
     return <>
         <button onClick={() => setNodes(current => current.map(node => node.id === "n0" ? { ...node, metadata: { ...node.metadata, model: "beefapi::seedance-2.0-mini" } } : node))}>Switch video model</button>
         <div data-testid="graph">{`${projectLoaded}:${nodes.length}:${connections.length}`}</div>
-        {scenario === "late-recovery" && <Recovery projectId={projectId} projectLoaded={projectLoaded} nodes={nodes} nodesRef={nodesRef} setNodes={setNodes} />}
+        {(scenario === "late-recovery" || scenario === "late-same-node-recovery") && <Recovery projectId={projectId} projectLoaded={projectLoaded} nodes={nodes} nodesRef={nodesRef} setNodes={setNodes} />}
     </>;
 }
 function MountController() {

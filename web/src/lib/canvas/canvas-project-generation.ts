@@ -265,6 +265,7 @@ export function resetGenerationTaskMetadata(metadata: CanvasNodeMetadata | undef
     };
     delete next.taskId;
     delete next.taskOutputIndex;
+    delete next.generationOutputNodeIds;
     delete next.taskClientOperationId;
     delete next.retryOf;
     delete next.attemptGroupId;
@@ -571,6 +572,25 @@ export function consumeGenerationRecoveryRestore(nodes: readonly CanvasNodeData[
         const token = generationRecoveryRestoreToken(node);
         if (token) consumedRestoreTokens.add(token);
     });
+}
+
+/** 三路合并只处理持久化字段；把打开快照的恢复资格交给合并后仍绑定同一任务的节点。 */
+export function carryGenerationRecoveryRestore(nodes: CanvasNodeData[], restored: readonly CanvasNodeData[]) {
+    const sources = new Map(restored.map((node) => [node.id, node]));
+    let changed = false;
+    const next = nodes.map((node) => {
+        const source = sources.get(node.id);
+        if (!source || !isGenerationRecoveryRestored(source) || !canvasNodeNeedsGenerationRecovery(node)) return node;
+        if (source.metadata?.taskId !== node.metadata?.taskId
+            || source.metadata?.taskClientOperationId !== node.metadata?.taskClientOperationId
+            || source.metadata?.agentGenerationContinuation?.id !== node.metadata?.agentGenerationContinuation?.id
+            || source.metadata?.agentGenerationContinuation?.taskId !== node.metadata?.agentGenerationContinuation?.taskId) return node;
+        const token = generationRecoveryRestoreToken(source);
+        if (generationRecoveryRestoreToken(node) === token) return node;
+        changed = true;
+        return { ...node, metadata: { ...node.metadata, [GENERATION_RECOVERY_RESTORE]: token } };
+    });
+    return changed ? next : nodes;
 }
 
 function markGenerationRecoveryRestore(node: CanvasNodeData): CanvasNodeData {

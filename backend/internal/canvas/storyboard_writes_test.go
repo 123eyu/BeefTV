@@ -205,7 +205,8 @@ func TestUpdateUserCanvasStoryboardRowsBindKeepsOneOutputPerKind(t *testing.T) {
 		"id":"canvas-bind","revision":0,"title":"分镜",
 		"nodes":[
 			{"id":"script","type":"script","metadata":{"storyboard":{"rows":[{"id":"r1","shotNumber":1,"imageNodeId":"img-a"},{"id":"r2","shotNumber":2,"imageNodeId":"img-a"}]}}},
-			{"id":"img-a","type":"image"},{"id":"img-b","type":"image"},{"id":"vid","type":"video"},{"id":"txt","type":"text"}
+			{"id":"img-a","type":"image"},{"id":"img-b","type":"image"},{"id":"vid","type":"video"},{"id":"txt","type":"text"},
+			{"id":"board","type":"image","metadata":{"workflowKind":"action_board"}}
 		],"connections":[
 			{"id":"drag","fromNodeId":"script","toNodeId":"img-a","fromHandleId":"row:r1"},
 			{"id":"gen","fromNodeId":"script","toNodeId":"img-b","fromHandleId":"row:r1","relation":"storyboard-output","storyboardRowId":"r1"},
@@ -214,7 +215,8 @@ func TestUpdateUserCanvasStoryboardRowsBindKeepsOneOutputPerKind(t *testing.T) {
 			{"id":"orphan","fromNodeId":"script","toNodeId":"gone","fromHandleId":"row:r1"},
 			{"id":"text-out","fromNodeId":"script","toNodeId":"txt","fromHandleId":"row:r1"},
 			{"id":"other-row","fromNodeId":"script","toNodeId":"img-a","fromHandleId":"row:r2"},
-			{"id":"ref","fromNodeId":"txt","toNodeId":"img-a","relation":"storyboard-asset-reference","storyboardRowId":"r1"}
+			{"id":"ref","fromNodeId":"txt","toNodeId":"img-a","relation":"storyboard-asset-reference","storyboardRowId":"r1"},
+			{"id":"action-board","fromNodeId":"script","toNodeId":"board","fromHandleId":"row:r1"}
 		]}`))
 	if err != nil {
 		t.Fatal(err)
@@ -245,7 +247,7 @@ func TestUpdateUserCanvasStoryboardRowsBindKeepsOneOutputPerKind(t *testing.T) {
 		}
 		return strings.Join(out, ",")
 	}
-	if got := ids(); got != "gen,video-out,orphan,text-out,other-row,ref" {
+	if got := ids(); got != "gen,video-out,orphan,text-out,other-row,ref,action-board" {
 		t.Fatalf("connections = %s", got)
 	}
 	rows := storyboardRowsOf(t, svc, "canvas-bind", "script")
@@ -260,7 +262,7 @@ func TestUpdateUserCanvasStoryboardRowsBindKeepsOneOutputPerKind(t *testing.T) {
 	if strings.Join(update.DeletedEdgeIDs, ",") != "gen" || len(update.CreatedEdgeIDs) != 0 {
 		t.Fatalf("unbind receipt = %#v", update)
 	}
-	if got := ids(); got != "video-out,orphan,text-out,other-row,ref" {
+	if got := ids(); got != "video-out,orphan,text-out,other-row,ref,action-board" {
 		t.Fatalf("connections after unbind = %s", got)
 	}
 	if _, exists := storyboardRowsOf(t, svc, "canvas-bind", "script")[0]["imageNodeId"]; exists {

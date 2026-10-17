@@ -124,6 +124,7 @@ export async function executeImageGeneration({
             size: generationConfig.size,
             isBatchRoot: count > 1,
             batchChildIds: count > 1 ? childIds : undefined,
+            generationOutputNodeIds: count > 1 ? [...targetIds] : undefined,
             batchFailedCount: count > 1 ? 0 : undefined,
             batchUsesReferenceImages: referenceImages.length > 0,
             primaryImageId: undefined,

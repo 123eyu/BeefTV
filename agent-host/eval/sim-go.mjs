@@ -478,7 +478,7 @@ export function createSimGo(options = {}) {
         const toNode = (doc.nodes || []).find((n) => n.id === edge.toNodeId);
         if (targetId !== '' && edge.toNodeId === targetId && !linked) {
           linked = true;
-        } else if (toNode?.type === kind) {
+        } else if (toNode?.type === kind && toNode.metadata?.workflowKind !== 'action_board') {
           deleted.push(edge.id);
           continue;
         }

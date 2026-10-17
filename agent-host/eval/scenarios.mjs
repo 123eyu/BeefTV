@@ -1,4 +1,4 @@
-// 助手评测尺子：6 个固定评测场景（S1–S6）定义、确定性检查项与本地 Fake OpenAI SSE 模型服务。
+// 助手评测尺子：7 个固定评测场景（S1–S7）定义、确定性检查项与本地 Fake OpenAI SSE 模型服务。
 // 覆盖：短剧 2 镜开场、8 镜分镜表且仅物化前 2 镜首帧、单镜局部修改、同轮中途补充改向、
 // 生成后画面复查（标注 wake-on-generation 能力缺口）、长对话多轮后技能规则保持。
 
@@ -418,7 +418,7 @@ export function createFakeModelServer(options = {}) {
         return;
       }
 
-      // S5: 生成后自动复查与重提生成
+      // S5/S7: 生成后自动唤醒或用户主动发起的复查，触发来源由运行器分别记录。
       if (allText.includes('手部畸形') || allText.includes('复查刚生成的画面')) {
         const isFollowupReview = allText.includes('复查刚生成的画面') || allText.includes('任务已完成');
         if (!isFollowupReview) {
@@ -453,7 +453,7 @@ export function createFakeModelServer(options = {}) {
           sendTextReply(
             res,
             body.model,
-            '已创建「镜 1 首帧」节点并提交图片生成提议。请在面板中确认生成，生成完成后我会检查画面是否存在手部畸形。',
+            '已创建「镜 1 首帧」节点并提交图片生成提议。请在面板中确认生成，生成完成后可以让我复查画面。',
           );
           return;
         }
@@ -973,7 +973,7 @@ export function buildS3SeedCanvas(canvasId = 'canvas-s3') {
   };
 }
 
-// 6 个固定场景定义
+// 7 个固定场景定义
 export const SCENARIOS = [
   {
     id: 'shortdrama-2shot',
@@ -1306,7 +1306,7 @@ export const SCENARIOS = [
     name: 'S5 生成后自动唤醒画面复查与重提生成',
     description: '首轮提交生成提议并由模拟器完成带六指缺陷的生成产物，验证宿主是否具备 wake-on-generation 自动唤醒复查能力。',
     capabilities: ['wake-on-generation'],
-    expectedBaselinePass: true,
+    expectedBaselinePass: false,
     setup(simGo, canvasId) {
       const doc = simGo.ensureCanvas(canvasId);
       simGo.flagNextTaskDefect('人物右手有6根手指，手部明显畸形');
@@ -1317,7 +1317,7 @@ export const SCENARIOS = [
         id: 'turn-s5-1',
         message: '创建一个特写人像首帧图节点并提交生成任务，生成完成后帮我检查画面是否有手部畸形，有问题就重写提示词重新生成。',
         confirmProposalsAfterTurn: true,
-        awaitAutoWakeMs: 300,
+        awaitAutoWakeMs: 1000,
       },
     ],
     evaluate({ simGo, canvasId, wakeResult }) {
@@ -1341,19 +1341,22 @@ export const SCENARIOS = [
         {
           name: 'auto_wake_on_generation',
           passed: autoWoken && mediaInspected && reProposed,
-          capabilityGap: !autoWoken ? 'wake-on-generation' : undefined,
+          capabilityGap: !autoWoken && wakeResult?.eventAccepted ? 'wake-on-generation' : undefined,
           detail: autoWoken
             ? `已自动唤醒并执行 media.inspect(${snap.counts.mediaInspections}) 与重提生成(${canvasProposals.length})`
-            : '当前 baseline 尚未实现生成任务完成后自动唤醒助手复查链路 (capability gap: wake-on-generation)',
+            : wakeResult?.eventAccepted
+              ? '完成事件已接受；观察窗口内没有自动复查 (capability gap: wake-on-generation)'
+              : '生成完成事件未被宿主接受，不能据此判断自动唤醒能力',
         },
       ];
 
       const allPassed = checks.every((c) => c.passed);
       const hasCapabilityGap = checks.some((c) => !c.passed && c.capabilityGap);
+      const onlyCapabilityGap = hasCapabilityGap && checks.every((c) => c.passed || c.capabilityGap);
 
       return {
         passed: allPassed,
-        status: allPassed ? 'passed' : hasCapabilityGap ? 'baseline_gap' : 'failed',
+        status: allPassed ? 'passed' : onlyCapabilityGap ? 'baseline_gap' : 'failed',
         capabilityGap: hasCapabilityGap ? 'wake-on-generation' : null,
         checks,
       };
@@ -1361,24 +1364,16 @@ export const SCENARIOS = [
   },
 
   {
-    id: 'skill-after-compaction',
+    id: 'skill-across-turns',
     code: 'S6',
-    aliases: ['S6', 's6', 'skill-after-compaction'],
-    name: 'S6 多轮长对话后技能规则保持（short-drama-storyboard）',
-    description: '激活「短剧分镜到首帧」技能后连续进行 4 轮对话，验证第 4 轮物化首帧时仍严格遵守技能步骤（9:16、绑定 imageNodeId、发起生成提议）。',
+    aliases: ['S6', 's6'],
+    name: 'S6 首轮激活技能后的多轮规则保持（short-drama-storyboard）',
+    description: '仅首轮选择「短剧分镜到首帧」技能，后续自然补充和确认，验证活动技能仍进入每次模型请求且首帧遵守规则；不触发或宣称压缩。',
     capabilities: [],
     expectedBaselinePass: true,
     setup(simGo, canvasId) {
       const doc = simGo.ensureCanvas(canvasId);
       const pin = simGo.getSkillPin('short-drama-storyboard');
-      if (pin) {
-        simGo.changeSkillContext(canvasId, {
-          action: 'activate',
-          pins: [pin],
-          expectedRevision: 0,
-          requestId: 'init-s6-skill',
-        });
-      }
       return { beforeCanvas: clone(doc), skillPin: pin };
     },
     turns: [
@@ -1390,27 +1385,20 @@ export const SCENARIOS = [
       },
       {
         id: 'turn-s6-2',
-        useActiveSkillPins: true,
         message:
-          '[S6_TURN_2] 补充一段长背景上下文用于多轮压力测试：' +
-          '林晚调查这桩失踪案已经整整三年，怀表里藏着微缩胶卷；沈默表面是拍卖行顾问，实则是幕后组织联络人。'.repeat(12) +
-          ' 请确认当前画布上的角色设定和分镜脚本是否已就绪（若「分镜脚本」节点或 2 个镜头分镜行尚未创建，请现在完成第 2 步创建并追加 2 个镜头分镜行，暂不创建图片节点）。',
+          '[S6_TURN_2] 角色设定我确认了。补充一下：林晚调查失踪案已经三年，怀表里藏着微缩胶卷，沈默其实是幕后组织联络人。请完善分镜，先让我看看。',
       },
       {
         id: 'turn-s6-3',
-        useActiveSkillPins: true,
         message:
-          '[S6_TURN_3] 再补充一段光影与美术要求用于多轮上下文保持测试：' +
-          '天台需要有湿滑积水反射远处的红色霓虹灯牌，冷蓝主光配合闪电瞬间的高反差侧逆光。'.repeat(12) +
-          ' 请确认画幅和风格记录无误，等待下一步指令再建首帧图节点。',
+          '[S6_TURN_3] 天台要有积水反射远处的红色霓虹，冷蓝主光配合闪电侧逆光。先核对现有分镜是否适合这个氛围，暂时不要做图。',
       },
       {
         id: 'turn-s6-4',
-        useActiveSkillPins: true,
-        message: '[S6_TURN_4] 分镜我确认没问题了，现在请按当前技能进入第 3 步：为这 2 个镜头创建首帧图节点（标题「镜 1 首帧」「镜 2 首帧」）、写回分镜行 imageNodeId 并提出生成提议。',
+        message: '[S6_TURN_4] 分镜确认了，开始准备这两个镜头的首帧吧。',
       },
     ],
-    evaluate({ simGo, canvasId, turnRecords }) {
+    evaluate({ simGo, canvasId, turnRecords, requestEvidence = [] }) {
       const snap = simGo.snapshot();
       const doc = snap.canvases[canvasId] || { nodes: [], connections: [] };
       const nodes = doc.nodes || [];
@@ -1423,7 +1411,7 @@ export const SCENARIOS = [
         imgNodes.some((n) => /镜\s*1\s*首帧/.test(String(n.title || ''))) &&
         imgNodes.some((n) => /镜\s*2\s*首帧/.test(String(n.title || '')));
       const isPortrait916 = (sizeVal) => {
-        const s = String(sizeVal || '9:16').trim().toLowerCase();
+        const s = String(sizeVal || '').trim().toLowerCase();
         return s.includes('9:16') || ['720x1280', '1080x1920', '1024x1792', '576x1024', 'portrait'].includes(s);
       };
       const configured916 =
@@ -1431,11 +1419,16 @@ export const SCENARIOS = [
         imgNodes.every((n) => isPortrait916(n.metadata?.size) && Number(n.metadata?.count ?? 1) === 1);
       const rowsBound =
         rows.length === 2 &&
-        Boolean(rows[0]?.imageNodeId) &&
-        Boolean(rows[1]?.imageNodeId);
+        rows.every((row) => imgNodes.some((node) => node.id === row.imageNodeId)) &&
+        new Set(rows.map((row) => row.imageNodeId)).size === 2;
       const proposalCreated = snap.proposals.some((p) => p.canvasId === canvasId && p.kind === 'image' && p.nodeIds.length >= 2);
 
       const checks = [
+        {
+          name: 'active_skill_present_in_every_turn_request',
+          passed: new Set(requestEvidence.map((entry) => entry.turnId)).size === 4 && requestEvidence.every((entry) => entry.activeSkillPresent),
+          detail: `活动技能进入系统上下文=${requestEvidence.filter((entry) => entry.activeSkillPresent).length}/${requestEvidence.length} 次模型请求`,
+        },
         {
           name: 'four_turns_completed_in_same_session',
           passed: (turnRecords || []).length === 4 && turnRecords.every((t) => !t.error),
@@ -1463,6 +1456,58 @@ export const SCENARIOS = [
         status: checks.every((c) => c.passed) ? 'passed' : 'failed',
         checks,
       };
+    },
+  },
+  {
+    id: 'user-requested-generation-review',
+    code: 'S7',
+    aliases: ['S7', 's7'],
+    name: 'S7 用户主动复查生成结果并修正重提',
+    description: '用户确认首轮生成后，再主动要求检查产物；验证读取产物、改提示词与重提生成，重提仍等待用户确认。',
+    capabilities: [],
+    expectedBaselinePass: true,
+    setup(simGo, canvasId) {
+      simGo.ensureCanvas(canvasId);
+      simGo.flagNextTaskDefect('人物右手有6根手指，手部明显畸形');
+    },
+    turns: [
+      {
+        id: 'turn-s7-1',
+        message: '创建一个特写人像首帧图节点并提交生成提议，注意手部畸形问题。',
+        confirmProposalsAfterTurn: true,
+      },
+      {
+        id: 'turn-s7-2',
+        message: '图已经生成好了，请复查刚生成的画面，有问题就改提示词，再给我一个生成提议。',
+      },
+    ],
+    evaluate({ simGo, canvasId, turnRecords }) {
+      const snap = simGo.snapshot();
+      const proposals = snap.proposals.filter((proposal) => proposal.canvasId === canvasId);
+      const tasks = snap.tasks.filter((task) => task.canvasId === canvasId);
+      const nodes = snap.canvases[canvasId]?.nodes || [];
+      const reviewOps = snap.opLog.filter((operation) => operation.turnId === turnRecords[1]?.turnId && operation.status === 'ok');
+      const inspectedAt = reviewOps.findIndex((operation) => operation.op === 'media.inspect');
+      const correctedAt = reviewOps.findIndex((operation) => operation.op === 'canvas.node.update');
+      const proposedAt = reviewOps.findIndex((operation) => operation.op === 'canvas.generation.propose');
+      const checks = [
+        {
+          name: 'explicit_user_review_after_delivery',
+          passed: turnRecords.length === 2 && turnRecords.every((turn) => !turn.error) && tasks.length === 1 && tasks[0].status === 'succeeded',
+          detail: `用户轮次=${turnRecords.length}，首次生成任务已交付=${tasks[0]?.status === 'succeeded'}`,
+        },
+        {
+          name: 'result_inspected_and_prompt_corrected',
+          passed: inspectedAt >= 0 && correctedAt > inspectedAt && proposedAt > correctedAt && nodes.length === 1,
+          detail: `按顺序检查、修改、重提=${inspectedAt >= 0 && correctedAt > inspectedAt && proposedAt > correctedAt}，在原节点修改而非重复创建=${nodes.length === 1}`,
+        },
+        {
+          name: 'replacement_proposal_waits_for_user_confirmation',
+          passed: proposals.length === 2 && proposals[0].confirmed && !proposals[1].confirmed && tasks.length === 1,
+          detail: `提议数=${proposals.length}，重提尚未确认=${proposals[1]?.confirmed === false}，实际任务数=${tasks.length}`,
+        },
+      ];
+      return { passed: checks.every((check) => check.passed), status: checks.every((check) => check.passed) ? 'passed' : 'failed', checks };
     },
   },
 ];

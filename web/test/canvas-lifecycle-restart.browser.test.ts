@@ -8,6 +8,7 @@ let server: ReturnType<typeof Bun.serve>;
 let release: () => void;
 let gate: Promise<void>;
 let commits: any[] = [];
+let taskReads = 0;
 const remote = { id: "c1", revision: 111, title: "Restart", createdAt: "2026-10-02", updatedAt: "2026-10-02", nodes: Array.from({ length: 10 }, (_, i) => ({ id: `n${i}`, type: "image", title: `Node ${i}`, width: 320, height: 200, position: { x: i * 400, y: 0 }, metadata: {} })), connections: Array.from({ length: 6 }, (_, i) => ({ id: `e${i}`, fromNodeId: `n${i}`, toNodeId: `n${i + 1}` })), chatSessions: [], activeChatId: null, appearance: canvasAppearanceForTheme("dark"), backgroundMode: "grid", showImageInfo: false, viewport: { x: 0, y: 0, k: 1 }, directorScenes: [] };
 let backend = structuredClone(remote);
 
@@ -30,7 +31,10 @@ beforeAll(async () => {
             backend = { ...body.params.document, revision: backend.revision + 1 };
             return json({ revision: backend.revision, result: { canvasId: "c1", revision: backend.revision, title: backend.title, updatedAt: backend.updatedAt } });
         }
-        if (path === "/api/tasks/late-failed") return json({ id: "late-failed", type: "canvas_video", status: "failed", error: "测试任务失败", attempts: 1, createdAt: "2026-10-15", updatedAt: "2026-10-15" });
+        if (path === "/api/tasks/late-failed") {
+            taskReads++;
+            return json({ id: "late-failed", type: "canvas_video", status: "failed", error: "测试任务失败", attempts: 1, createdAt: "2026-10-15", updatedAt: "2026-10-15" });
+        }
         if (path.startsWith("/api/")) return json([]);
         return new Response('<div id="root"></div>' + (['reopen-stamp', 'startup-stamp', 'missing-chat-sessions'].includes(new URL(request.url).searchParams.get('scenario') || '') ? '<script>window.__reopenProject=' + JSON.stringify(backend).replaceAll('<', '\\u003c') + '</script>' : '') + '<script type="module" src="/harness.js"></script>', { headers: { "Content-Type": "text/html" } });
     } });
@@ -42,6 +46,7 @@ beforeEach(() => {
     gate = new Promise<void>(resolve => { release = resolve; });
     backend = structuredClone(remote);
     commits = [];
+    taskReads = 0;
 });
 
 for (const restartLoad of [false, true]) test(`confirmed edges survive cached load and media update (hydration restarts load: ${restartLoad})`, async () => {
@@ -226,6 +231,28 @@ test("late recovery runs through the real lifecycle merge while preserving an un
             && (window as any).__lifecycle.nodeState("n-failed")?.metadata.taskStatus === "failed", { timeout: 8_000 });
         expect(await page.evaluate(() => (window as any).__lifecycle.title())).toBe("Local unsaved text");
         expect(await page.evaluate(() => (window as any).__lifecycle.nodeState("n-orphan").metadata.errorDetails)).toBe("页面刷新后本地生成已中断，请重新生成。");
+        expect(await page.evaluate(() => (window as any).__lifecycle.held())).toEqual({ paused: false, candidateTitle: null });
+        expect(errors).toEqual([]);
+    } finally { await page.close(); }
+}, 20_000);
+
+test("late recovery reconciles a task on the same node whose prompt was edited while the backend graph lands", async () => {
+    backend.nodes[0].metadata = { prompt: "Original prompt", status: "loading", taskId: "late-failed", taskStatus: "running" };
+    const page = await browser.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", error => errors.push(error.message));
+    try {
+        await page.goto(`${server.url}?scenario=late-same-node-recovery`);
+        await page.waitForFunction(() => document.querySelector('[data-testid="graph"]')?.textContent === "true:10:0");
+        await page.evaluate(() => { (window as any).__lifecycle.pauseHistory(true); (window as any).__lifecycle.editPromptWhenBackendProjects(); });
+        release();
+        await page.waitForFunction(() => (window as any).__lifecycle.nodeState("n0")?.metadata.taskStatus === "failed", undefined, { timeout: 8_000 });
+        const metadata = await page.evaluate(() => (window as any).__lifecycle.nodeState("n0").metadata);
+        expect(metadata.prompt).toBe("Unsaved local prompt");
+        expect(metadata.taskId).toBe("late-failed");
+        expect(metadata.status).toBe("error");
+        expect(metadata.errorDetails).toContain("测试任务失败");
+        expect(taskReads).toBe(1);
         expect(await page.evaluate(() => (window as any).__lifecycle.held())).toEqual({ paused: false, candidateTitle: null });
         expect(errors).toEqual([]);
     } finally { await page.close(); }

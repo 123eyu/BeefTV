@@ -30,6 +30,7 @@ import {
     type AgentHostStatus,
     type AssistantSessionSummary,
     type AssistantTurn,
+    type AssistantPlan,
     type AssistantUndoFailure,
 } from "@/services/api/agent-assistant";
 import { assistantChangedNodeIds, assistantLifecycleText } from "./canvas-assistant-copy";
@@ -81,6 +82,7 @@ type CanvasRun = {
     requestId: string | null;
     sessions: AssistantSessionSummary[];
     turns: AssistantTurn[];
+    plan: AssistantPlan | null;
     historyLoaded: boolean;
     historyError: string | null;
     historyHostUnavailable: boolean;
@@ -126,6 +128,7 @@ const createRun = (): CanvasRun => ({
     requestId: null,
     sessions: [],
     turns: [],
+    plan: null,
     historyLoaded: false,
     historyError: null,
     historyHostUnavailable: false,
@@ -304,6 +307,8 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             run.sessions = sessionList.sessions;
             run.sessionId = nextSession;
             run.turns = [...history.turns, ...recent];
+            // A history read started before turn_end may omit that newer turn and its plan.
+            run.plan = recent.length ? recent.at(-1)!.plan ?? null : history.plan ?? null;
             for (const turn of history.turns) {
                 if (turn.undone) run.turnStatus[turn.turnId] = { undone: true };
             }
@@ -444,6 +449,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                         change: end.change ?? null,
                         proposals: end.proposals || [],
                         outputs: end.outputs || [],
+                        plan: end.plan ?? null,
                         error: end.error ? agentAssistantFailureText(end.errorReason ?? undefined, "这一轮没有全部完成，请核对已经落地的改动。") : null,
                         errorReason: end.errorReason,
                         cancelled: Boolean(end.cancelled),
@@ -454,6 +460,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                         createdAt: new Date().toISOString(),
                     };
                     current.turns = [...current.turns, turn];
+                    current.plan = end.plan ?? null;
                     current.recovery = null;
                     // 旧 JSONL 会话首次发消息会交接给新的 Durable 会话：后续回合都走它。
                     if (end.sessionId && end.sessionId !== current.sessionId) current.sessionId = end.sessionId;
@@ -589,6 +596,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             run.sessionId = sessionId;
             run.recovery = null;
             run.turns = [];
+            run.plan = null;
             run.error = null;
             run.pendingUserText = null;
             run.lastSent = null;
@@ -617,6 +625,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             if (!activated || !userScopeMatches(expectedScope)) return;
             // 激活成功但读取失败时阻止把旧显示当作新对话继续发送。
             run.historyLoaded = false;
+            run.plan = null;
             if (await loadHistory(targetCanvas, activated)) {
                 run.recovery = null;
                 run.turnStatus = {};
@@ -693,6 +702,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         sessions: run.sessions,
         sessionId: run.sessionId,
         turns: run.turns,
+        plan: run.plan,
         historyLoaded: run.historyLoaded,
         historyError: status?.reason === "model_not_configured" && run.historyHostUnavailable && !run.turns.length && !run.pendingUserText && !run.pendingAttachments.length && !run.streamed ? null : run.historyError,
         sessionBusy: run.sessionBusy,

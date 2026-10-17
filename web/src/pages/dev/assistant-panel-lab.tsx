@@ -42,6 +42,7 @@ function stubController(open: boolean, setOpen: (next: boolean) => void, width: 
     const noop = () => {};
     const asyncNoop = async () => {};
     return {
+        plan: null,
         canvasId: "lab",
         open,
         setOpen,

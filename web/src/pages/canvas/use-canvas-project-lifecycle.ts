@@ -12,7 +12,7 @@ import { normalizeCanvasNodeTimestamps } from "@/lib/canvas/canvas-node-timestam
 import { normalizeCanvasMediaNodeSemanticsList } from "@/lib/canvas/canvas-node-semantics";
 import { migrateDirectorCanvas } from "@/lib/canvas/director/director-node-migration";
 import { canvasWorkspaceProjectId, listCanvasWorkspaceProjectCanvases } from "@/lib/canvas/canvas-workspace-project";
-import { hydrateAssistantImages, resetInterruptedGeneration } from "@/lib/canvas/canvas-project-generation";
+import { carryGenerationRecoveryRestore, hydrateAssistantImages, resetInterruptedGeneration } from "@/lib/canvas/canvas-project-generation";
 import { listAddedSkills, type Skill } from "@/services/api/skills";
 import { forceOverwriteRemoteCanvasSync, hasRemoteUserDataSyncSession, loadCanvasProjectForEditing, saveRemoteUserDataNow, subscribeCanvasRefresh } from "@/services/local-workspace-sync";
 import { createWorkspaceCanvasProject, deleteWorkspaceCanvasProjects } from "@/services/workspace-project-repository";
@@ -134,7 +134,7 @@ function mergeIncomingEditorDocument(
         live.connections,
     );
     return {
-        nodes: graph.nodes,
+        nodes: carryGenerationRecoveryRestore(graph.nodes, adopted),
         connections: graph.connections,
         chatSessions: mergeIncomingChatSessions(project, base.chatSessions, incoming.chatSessions, live.chatSessions),
         activeChatId: live.activeChatId === base.activeChatId ? incoming.activeChatId : live.activeChatId,

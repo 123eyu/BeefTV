@@ -3367,6 +3367,7 @@ function InfiniteCanvasPage() {
                         proposalFeedback={assistantProposalFeedback}
                         runningProposalIds={runningProposalIds}
                         assistant={assistant}
+                        nodes={nodes}
                         canvasTitle={workspaceProject?.title === "未命名项目" || !workspaceProject?.title ? "未命名工作区" : workspaceProject.title}
                         dockable={assistantDockable}
                         readOnly={readOnly}

@@ -180,7 +180,13 @@ func bindStoryboardRowOutput(doc map[string]any, scriptID string, row map[string
 			to, _ := edge["toNodeId"].(string)
 			if targetID != "" && to == targetID && !linked {
 				linked = true
-			} else if canvasNodeType(findCanvasNode(doc, to)) == kind {
+			} else if target := findCanvasNode(doc, to); canvasNodeType(target) == kind {
+				// 动作演示板也从分镜行连出，但不是首帧产出。绑定或解绑首帧不能断开它。
+				metadata, _ := target["metadata"].(map[string]any)
+				if metadata["workflowKind"] == "action_board" {
+					kept = append(kept, raw)
+					continue
+				}
 				id, _ := edge["id"].(string)
 				deleted = append(deleted, id)
 				continue

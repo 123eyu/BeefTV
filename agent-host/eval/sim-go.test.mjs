@@ -182,6 +182,30 @@ describe('sim-go 内存版 Go 业务权威模拟器测试', () => {
     expect(remainingRows[0].shotNumber).toBe(1);
   });
 
+  test('绑定和解绑首帧保留同一分镜行的动作演示板连线', () => {
+    const sim = createSimGo();
+    const canvasId = 'canvas-action-board';
+    sim.ensureCanvas(canvasId, {
+      id: canvasId, revision: 1,
+      nodes: [
+        { id: 'script', type: 'script', metadata: { storyboard: { rows: [{ id: 'row-1' }] } } },
+        { id: 'board', type: 'image', metadata: { workflowKind: 'action_board' } },
+        { id: 'frame', type: 'image', metadata: {} },
+      ],
+      connections: [{ id: 'board-edge', fromNodeId: 'script', toNodeId: 'board', fromHandleId: 'row:row-1' }],
+    });
+    for (const [index, imageNodeId] of ['frame', ''].entries()) {
+      const result = sim.executeOp('canvas.script.row.update', {
+        canvasId, nodeId: 'script', expectedRevision: index + 1,
+        patches: [{ rowId: 'row-1', imageNodeId }],
+      }, `bind-frame-${index}`).result;
+      expect(result.deletedEdgeIds).not.toContain('board-edge');
+      const doc = sim.ensureCanvas(canvasId);
+      expect(doc.connections.some((edge) => edge.id === 'board-edge')).toBe(true);
+      expect(doc.connections.filter((edge) => edge.toNodeId === 'frame').length).toBe(imageNodeId ? 1 : 0);
+    }
+  });
+
   test('生成提议确认、失败模拟、缺陷画面 media.inspect 及回合撤销 undo', async () => {
     const sim = createSimGo({ taskDelayMs: 5 });
     await sim.listen(0);
@@ -338,7 +362,7 @@ describe('预算门禁、密钥脱敏与评测配置校验测试', () => {
   });
 
   test('场景选择器与端到端单场景 fake 评测运行通过', async () => {
-    expect(resolveScenarioList('all').length).toBe(6);
+    expect(resolveScenarioList('all').length).toBe(7);
     expect(resolveScenarioList('S1,S3').map((s) => s.code)).toEqual(['S1', 'S3']);
     expect(buildS3SeedCanvas('c-s3').nodes.length).toBe(9);
 
@@ -362,4 +386,42 @@ describe('预算门禁、密钥脱敏与评测配置校验测试', () => {
       fs.rmSync(outDir, { recursive: true, force: true });
     }
   });
+
+  test('已知自动唤醒缺口不能掩盖首轮失败或完成事件投递失败', () => {
+    const scenario = SCENARIOS.find((item) => item.code === 'S5');
+    const simGo = createSimGo();
+    scenario.setup(simGo, 'canvas-s5');
+    const result = scenario.evaluate({ simGo, canvasId: 'canvas-s5', wakeResult: { eventAccepted: true, autoWoken: false } });
+    expect(result.status).toBe('failed');
+    const rejectedEvent = scenario.evaluate({ simGo, canvasId: 'canvas-s5', wakeResult: { eventAccepted: false, autoWoken: false } });
+    expect(rejectedEvent.status).toBe('failed');
+    expect(rejectedEvent.capabilityGap).toBeNull();
+  });
+
+  test('事件自动唤醒与用户复查分别计分，技能仅首轮激活后仍进入后续请求', async () => {
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'beeftv-eval-truth-'));
+    try {
+      const { report, markdown } = await runEval({
+        scenario: 'S5,S6,S7', model: 'fake', runs: 1, maxRequests: 20, budgetCny: 10, outDir,
+      });
+      expect(report.status).toBe('baseline_gap');
+      const [auto, skill, userReview] = report.scenarios;
+      expect(auto.expectedBaselinePass).toBe(false);
+      expect(auto.wakeResult).toEqual({ autoWoken: false, eventAccepted: true });
+      expect(auto.metrics.status).toBe('baseline_gap');
+      expect(auto.metrics.turnCount).toBe(1);
+      expect(auto.metrics.mediaInspections).toBe(0);
+      expect(skill.scenarioId).toBe('skill-across-turns');
+      expect(skill.metrics.passed).toBe(true);
+      expect(skill.requestEvidence.every((entry) => entry.activeSkillPresent)).toBe(true);
+      expect(SCENARIOS.find((scenario) => scenario.code === 'S6').turns.filter((turn) => turn.useActiveSkillPins).length).toBe(1);
+      expect(userReview.metrics.passed).toBe(true);
+      expect(userReview.metrics.turnCount).toBe(2);
+      expect(userReview.metrics.mediaInspections).toBe(1);
+      expect(userReview.metrics.unconfirmedGenerationCount).toBe(0);
+      expect(markdown).not.toContain('多轮压缩后技能规则保持率');
+    } finally {
+      fs.rmSync(outDir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

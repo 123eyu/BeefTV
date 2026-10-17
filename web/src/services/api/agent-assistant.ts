@@ -68,6 +68,14 @@ export type AssistantGenerationProposal = {
     source?: { canvasId: string; canvasRevision: number; modelConfigRevision: number };
 };
 
+export type AssistantPlan = {
+    goal: string;
+    items: { id: string; title: string; status: "todo" | "doing" | "done" | "needs_user" | "blocked"; note?: string }[];
+    done: number;
+    total: number;
+    updatedAt: string;
+};
+
 export type AgentTurnEnd = {
     type: "turn_end";
     turnId?: string;
@@ -79,6 +87,7 @@ export type AgentTurnEnd = {
     change?: AssistantTurnChange | null;
     proposals?: AssistantGenerationProposal[];
     outputs?: AssistantTurnOutput[];
+    plan?: AssistantPlan | null;
     error: string | null;
     errorReason?: string | null;
     cancelled: boolean;
@@ -100,6 +109,7 @@ export type AssistantTurn = {
     change: AssistantTurnChange | null;
     proposals: AssistantGenerationProposal[];
     outputs?: AssistantTurnOutput[];
+    plan?: AssistantPlan | null;
     error: string | null;
     errorReason?: string | null;
     cancelled: boolean;
@@ -127,11 +137,12 @@ export type AssistantSessionList = {
 
 export type AssistantHistory = {
     sessionId: string;
+    plan?: AssistantPlan | null;
     turns: (AssistantTurn & { undone?: boolean })[];
     active?: { turnId: string; requestId?: string; userText: string; selectedNodeIds: string[]; attachments?: AssistantAttachment[]; skills?: AssistantSkillSelection[];
         references?: AgentChatReference[]; supplements?: string[]; supplementInputs?: AssistantSupplementInput[]; permissionMode?: AssistantPermissionMode; createdAt: string; status: "running";
         /** 正在进行的回合此刻的进度（例如模型重试），只用于展示，结束后不再返回。 */
-        lifecycle?: AgentLifecycleEvent | null } | null;
+        lifecycle?: AgentLifecycleEvent | null; plan?: AssistantPlan | null } | null;
 };
 
 // UI 会话凭据只保存在内存里：刷新页面即重新签发，不写入 localStorage。
@@ -225,7 +236,7 @@ export async function getAssistantHistory(canvasId: string, sessionId?: string):
     if (sessionId) query.set("sessionId", sessionId);
     const data = await http.get<AssistantHistory>(`/assistant/history?${query.toString()}`, await uiSessionConfig());
     if (!data || !Array.isArray(data.turns)) throw new Error("没能读取对话，请重试");
-    return { sessionId: data.sessionId || sessionId || "", active: data.active, turns: data.turns.map((turn) => ({
+    return { sessionId: data.sessionId || sessionId || "", active: data.active, plan: data.plan ?? null, turns: data.turns.map((turn) => ({
         ...turn,
         error: turn.error ? agentAssistantFailureText(turn.errorReason ?? undefined, "这一轮没有全部完成，请核对已经落地的改动。") : null,
     })) };
