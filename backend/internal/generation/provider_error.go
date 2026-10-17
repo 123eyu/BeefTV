@@ -443,12 +443,12 @@ func ClassifyError(err error) Failure {
 	if err == nil {
 		return normalizeFailure(Failure{Category: CategoryUnknown})
 	}
-	if errors.Is(err, context.Canceled) {
-		return normalizeFailure(Failure{Category: CategoryCancelled})
-	}
 	var unknown SubmissionUnknownError
 	if errors.As(err, &unknown) {
 		return normalizeFailure(Failure{Category: CategorySubmissionUncertain, Uncertain: true, Retryable: false})
+	}
+	if errors.Is(err, context.Canceled) {
+		return normalizeFailure(Failure{Category: CategoryCancelled})
 	}
 	var notSent RequestNotSentError
 	if errors.As(err, &notSent) {

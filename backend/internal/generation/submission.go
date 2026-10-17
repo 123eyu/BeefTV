@@ -46,6 +46,10 @@ func SafeRouteRejection(err error) bool {
 	if err == nil {
 		return false
 	}
+	var unknown SubmissionUnknownError
+	if errors.As(err, &unknown) {
+		return false
+	}
 	var preparation RequestPreparationError
 	if errors.As(err, &preparation) {
 		return true

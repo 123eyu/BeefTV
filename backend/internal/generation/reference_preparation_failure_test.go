@@ -46,10 +46,14 @@ func TestUpstreamCannotAttestPreparationByEchoingSavedCopy(t *testing.T) {
 }
 
 func TestEarlierUnknownDominatesLaterPreparation(t *testing.T) {
-	for _, cause := range []error{RequestPreparationError{Cause: HTTPError{StatusCode: 503, Body: `{"error":{"code":"image_reference_upload_failed"}}`}}, RequestNotSentError{Cause: context.DeadlineExceeded}} {
-		failure := ClassifyError(SubmissionUnknownError{Cause: cause})
+	for _, cause := range []error{RequestPreparationError{Cause: HTTPError{StatusCode: 503, Body: `{"error":{"code":"image_reference_upload_failed"}}`}}, RequestNotSentError{Cause: context.DeadlineExceeded}, context.Canceled, HTTPError{StatusCode: 403}} {
+		err := SubmissionUnknownError{Cause: cause}
+		failure := ClassifyError(err)
 		if !failure.Uncertain || !failure.BlocksManualRetry() || !failure.BlocksAutomaticRetry() {
 			t.Fatalf("unknown was cleared by a nested unsent error: %+v", failure)
+		}
+		if SafeRouteRejection(err) {
+			t.Fatalf("unknown was allowed to start another route: %v", err)
 		}
 	}
 }
