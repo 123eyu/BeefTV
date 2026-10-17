@@ -41,7 +41,11 @@ func ValidateMediaTransport(ctx context.Context, input Input) error {
 		}{"遮罩", "image", []Media{*input.Mask}})
 	}
 	for _, group := range groups {
-		groupPolicy := mediaPolicyForKind(ctx, input, group.kind, policy)
+		kind := group.kind
+		if group.label == "遮罩" {
+			kind = "mask"
+		}
+		groupPolicy := mediaPolicyForKind(ctx, input, kind, policy)
 		if !groupPolicy.RequireURL || groupPolicy.KeepLocal {
 			continue
 		}

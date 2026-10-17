@@ -48,6 +48,12 @@ func mediaPolicyForKind(ctx context.Context, input Input, kind string, policy Me
 	if policy.KeepLocal {
 		return policy // Provider-owned upload flows must retain their local bytes.
 	}
+	if kind == "mask" {
+		if input.Mode == "image" && strings.TrimSpace(input.Config.InterfaceType) == string(model.ChannelInterfaceOpenAIImage) {
+			return MediaHydrationPolicy{} // OpenAI Images sends the mask as multipart bytes.
+		}
+		kind = "image"
+	}
 	transport := ""
 	if adapter, ok := ProtocolAdapterForContext(ctx, input.Config.InterfaceType); ok {
 		transport = adapter.Metadata().MediaTransport[kind]

@@ -25,7 +25,7 @@ func HydrateMedia(ctx context.Context, userID string, input *Input, policy Media
 		}
 	}
 	if input.Mask != nil {
-		return HydrateOne(ctx, userID, input.Mask, mediaPolicyForKind(ctx, *input, "image", policy))
+		return HydrateOne(ctx, userID, input.Mask, mediaPolicyForKind(ctx, *input, "mask", policy))
 	}
 	return nil
 }
