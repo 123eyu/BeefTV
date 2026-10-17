@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { Alert, Button, Input, type App } from "antd";
 import { navigateToSettings } from "@/lib/settings-navigation";
-import { getDesktopAppBinding } from "@/services/desktop-runtime";
-import { isReferenceHTTPSLink, type ReferenceLinkRequest, type ResolveReferenceLinks } from "@/services/api/reference-link-replacement";
+import { isUserScopeAbandonedError } from "@/lib/user-scope-guard";
+import { isReferenceHTTPSLink, uploadReferenceLinks, type ReferenceLinkRequest, type ResolveReferenceLinks } from "@/services/api/reference-link-replacement";
 
 type ModalAPI = ReturnType<typeof App.useApp>["modal"];
 
@@ -47,23 +47,12 @@ export function createReferenceLinkResolver(modal: ModalAPI): ResolveReferenceLi
         const existing = requests.get(key);
         if (existing) return existing;
         const pending = (async () => {
-            const uploaded: Record<string, string> = {};
-            const binding = getDesktopAppBinding();
+            let uploaded: Record<string, string> = {};
             let uploadError = "";
             try {
-                if (binding?.ReferenceStorageSettings && binding.UploadReferenceMedia && references.some((item) => item.resourceID)) {
-                    const config = await binding.ReferenceStorageSettings();
-                    if (signal?.aborted) return null;
-                    if (config.enabled) {
-                        const ids = [...new Set(references.flatMap((item) => (item.resourceID ? [item.resourceID] : [])))];
-                        const urls = await binding.UploadReferenceMedia(ids);
-                        if (signal?.aborted) return null;
-                        references.forEach((item) => {
-                            if (item.resourceID && isReferenceHTTPSLink(urls[item.resourceID] || "")) uploaded[item.key] = urls[item.resourceID];
-                        });
-                    }
-                }
+                uploaded = await uploadReferenceLinks(references, signal);
             } catch (error) {
+                if (isUserScopeAbandonedError(error)) throw error;
                 if (signal?.aborted) return null;
                 uploadError = error instanceof Error ? error.message : String(error);
             }
@@ -102,6 +91,9 @@ export function createReferenceLinkResolver(modal: ModalAPI): ResolveReferenceLi
                             >
                                 切换渠道
                             </Button>
+                            <Button onClick={() => { finish(null); dialog.destroy(); navigateToSettings({ section: "storage", continueCreation: true }); }}>
+                                配置对象存储
+                            </Button>
                         </>
                     ),
                     onOk: () => finish({ ...uploaded, ...links }),
@@ -116,9 +108,7 @@ export function createReferenceLinkResolver(modal: ModalAPI): ResolveReferenceLi
             });
         })();
         requests.set(key, pending);
-        void pending.catch(() => {
-            requests.delete(key);
-        });
+        void pending.then(() => requests.delete(key), () => requests.delete(key));
         return pending;
     };
 }

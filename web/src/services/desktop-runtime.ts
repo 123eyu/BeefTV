@@ -33,6 +33,7 @@ export type DesktopRuntimeBinding = {
 	ReferenceStorageSettings?: () => Promise<ReferenceStorageConfig>;
 	SaveReferenceStorage?: (config: ReferenceStorageConfig & { secretAccessKey: string }) => Promise<ReferenceStorageConfig>;
 	UploadReferenceMedia?: (ids: string[]) => Promise<Record<string,string>>;
+	TestReferenceStorage?: () => Promise<void>;
 	StorageSettings?: () => Promise<DesktopStorageUsage>;
 	ChooseStorageDirectory?: () => Promise<string>;
 	MigrateStorage?: (target: string) => Promise<DesktopStorageUsage>;

@@ -86,11 +86,11 @@ export default function SettingsPage() {
                 <PageHeader title="存储设置" />
                 <div className="storage-settings-sections">
                     <StorageSettingsPane />
-                    <section className="settings-section space-y-4" aria-label="深度捕捉组件">
+                    <ReferenceStoragePane />
+                    <section className="settings-section storage-settings-block space-y-4" aria-label="深度捕捉组件">
                         <div className="settings-pane-header"><h2>深度捕捉组件</h2></div>
                         <DepthComponentsPanel />
                     </section>
-                    <ReferenceStoragePane />
                 </div>
             </SettingsPane>
         ),

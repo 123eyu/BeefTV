@@ -6,6 +6,7 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useNavigate, useSearchParams } from "react-router";
 
 import type { AssetLibraryPickerItem } from "@/components/assets/asset-library-picker-modal";
+import { createReferenceLinkResolver } from "@/components/generation-reference-links";
 import { generationErrorCode, generationErrorMessage } from "@/lib/generation-error";
 import { creationResultAssetIds } from "@/lib/canvas/canvas-asset-handoff";
 import { captureUserScopeEpoch, userScopeEpochMatches } from "@/lib/user-scope";
@@ -68,6 +69,7 @@ export default function CreatePage() {
     const demoConversation = searchParams.get("demo") === "conversation";
     const marketplaceSkill = (searchParams.get("skill") || (typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("skill") : ""))?.trim() || "";
     const { message: toast, modal } = App.useApp();
+    const resolveReferenceLinks = useMemo(() => createReferenceLinkResolver(modal), [modal]);
     const toastRef = useRef(toast);
     toastRef.current = toast;
     const userId = useUserStore((state) => state.user?.id);
@@ -729,6 +731,7 @@ export default function CreatePage() {
         try {
             if (mode === "text") {
                 const result = await runtime.runGenerationOperationOnce(retryContext?.clientOperationId, () => runtime.runBackendGenerationTask({
+                    resolveReferenceLinks,
                     mode: "text",
                     prompt: expandedPrompt,
                     config: requestConfig,
@@ -771,6 +774,7 @@ export default function CreatePage() {
             } else if (mode === "image") {
                 const taskCount = imageProfile.fixedOutputs ? 1 : Math.max(1, Math.min(imageProfile.maxOutputs, Math.floor(Number(count) || 1)));
                 const settled = await runtime.runGenerationOperationOnce(retryContext?.clientOperationId, () => runtime.runBackendGenerationTaskBatch({
+                    resolveReferenceLinks,
                     mode: "image",
                     prompt: expandedPrompt,
                     config: { ...requestConfig, count: String(imageProfile.fixedOutputs || 1) },
@@ -817,6 +821,7 @@ export default function CreatePage() {
                 updateOriginAssistant((item) => ({ ...item, content: failedCount ? `${resultUrls.length} 张图片已生成，${failedCount} 张失败` : "图片已生成" }));
             } else {
                 const result = await runtime.runGenerationOperationOnce(retryContext?.clientOperationId, () => runtime.runBackendGenerationTask({
+                    resolveReferenceLinks,
                     mode: "video",
                     prompt: expandedPrompt,
                     config: requestConfig,
