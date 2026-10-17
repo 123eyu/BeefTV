@@ -334,7 +334,7 @@ describe("LibTV generation history picker", () => {
         expect(helper).toContain("readLiveNodes");
         expect(helper).toContain("canvasNodesMissingResourceAssetBinding");
         expect(helper).toContain("await input.persist(nextNodes)");
-        expect(helper.indexOf("await input.persist(nextNodes)")).toBeLessThan(helper.indexOf("return { node: inserted, nextNodes }"));
+        expect(helper.indexOf("await input.persist(nextNodes)")).toBeLessThan(helper.indexOf("return { node: insertedNodes[0], nextNodes }"));
 
         const hookStart = orchestrationHook.indexOf("const insertGenerationHistoryTask = useCallback");
         const hookEnd = orchestrationHook.indexOf("const reconcileImageBatchRootNode", hookStart);
