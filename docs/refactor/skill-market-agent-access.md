@@ -84,6 +84,8 @@ REST 使用 `{success:true,data}` / `{success:false,message,reason}`。MCP 使�
 
 内置助手可调用 `skill.draft`、`skill.publish.prepare`、`skill.publish.status`，以及 `skill.market.search/get/file`。上传、送审、审批不在模型工具目录；前端根据 prepare 的 plan 渲染确认操作。准备成功只能说“已准备”，不能说“已上传”。当前画布身份与 read-only/canvas/full-access 权限仍由 Go 强制检查。
 
+通用本机业务工具目录也只收录市场的只读查询，不收录投稿授权、私有投稿计划或确认动作；实际外部请求使用同一目录校验，不能只从列表中隐藏。外部 Agent 投稿使用独立 CLI 的浏览器授权链路，不复用桌面 UI 的确认权限。
+
 ### 活动技能上下文
 
 用户选择仍携带 `{skillId,versionId,contentHash}`，原回合已选版本不会被更新覆盖。Go 保存当前会话的活动 pin、revision 与变更回执；agent-host 在每次模型请求前重新构造活动正文，恢复、重启与压缩后也不能仅依赖历史 loaded 标记。文件丢失、卸载或摘要不一致时阻断请求并说明需要重新选择。

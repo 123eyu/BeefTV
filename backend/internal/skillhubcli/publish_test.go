@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"infinite-canvas/backend/internal/privatefile"
 	"infinite-canvas/backend/internal/skillhub"
 )
 
@@ -109,7 +110,7 @@ func TestPublishingConfirmationRetryAndPrivateCredentials(t *testing.T) {
 	if !strings.Contains(out.String(), `"userId":1`) {
 		t.Fatal("authorized account missing from receipt")
 	}
-	if info, err := os.Stat(stateFile); err != nil || info.Mode().Perm() != 0600 {
+	if info, err := os.Stat(stateFile); err != nil || privatefile.Check(stateFile, info) != nil {
 		t.Fatalf("state permissions: %v", err)
 	}
 	if err := run("upload", directory, "--metadata", metadata); err == nil || createCount != 0 {
