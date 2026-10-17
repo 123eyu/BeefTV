@@ -21,7 +21,7 @@ export function WorkspaceOperationProgress() {
     const remove = useOperationProgress(state => state.remove);
     const [collapsed, setCollapsed] = useState(false);
     const [now, setNow] = useState(Date.now());
-    const operations = Object.values(entries);
+    const operations = Object.values(entries).filter(item => !item.target);
     const active = operations.filter(item => item.phase !== "done" && item.phase !== "error").length;
     useEffect(() => {
         if (!active) return;

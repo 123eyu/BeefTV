@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { nanoid } from "nanoid";
 import { subscribeUserScope } from "@/lib/user-scope";
 import { captureUserScope, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
-import { createTransferSampler, type OperationProgress } from "@/lib/operation-progress";
+import { createTransferSampler, type CanvasOperationTarget, type OperationProgress } from "@/lib/operation-progress";
 
 type Entry = OperationProgress & { owner: CapturedUserScope };
 type ProgressStore = { entries: Record<string, Entry>; remove: (id: string) => void };
@@ -18,7 +18,7 @@ export const useOperationProgress = create<ProgressStore>((set) => ({
 // These are transient observations, never cross-account history or saved media metadata.
 subscribeUserScope(() => useOperationProgress.setState({ entries: {} }));
 
-export function startOperation(title: string, options: { detail?: string; totalBytes?: number; totalFiles?: number; owner?: CapturedUserScope } = {}) {
+export function startOperation(title: string, options: { detail?: string; totalBytes?: number; totalFiles?: number; owner?: CapturedUserScope; target?: CanvasOperationTarget } = {}) {
     const id = nanoid();
     const owner = options.owner ?? captureUserScope();
     const startedAt = Date.now();
@@ -34,7 +34,7 @@ export function startOperation(title: string, options: { detail?: string; totalB
         });
     };
     if (userScopeMatches(owner)) useOperationProgress.setState(state => ({ entries: { ...state.entries, [id]: {
-        id, owner, title, detail: options.detail || "正在准备文件", phase: "preparing", totalBytes: options.totalBytes, totalFiles: options.totalFiles, startedAt, updatedAt: startedAt,
+        id, owner, title, target: options.target, detail: options.detail || "正在准备文件", phase: "preparing", totalBytes: options.totalBytes, totalFiles: options.totalFiles, startedAt, updatedAt: startedAt,
     } } }));
     const settle = (phase: "done" | "error", detail: string) => {
         update({ phase, detail, bytesPerSecond: 0 });

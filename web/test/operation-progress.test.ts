@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { createTransferSampler, operationProgressView, type OperationProgress } from "@/lib/operation-progress";
+import { canvasNodeOperation, createTransferSampler, operationProgressView, type OperationProgress } from "@/lib/operation-progress";
 import { captureUserScope } from "@/lib/user-scope-guard";
 import { setActiveUserScope } from "@/lib/user-scope";
 import { startOperation, useOperationProgress } from "@/stores/use-operation-progress";
@@ -74,4 +74,28 @@ test("切换账号清除旧进度，旧回调不能把它重新显示", () => {
     expect(Object.keys(useOperationProgress.getState().entries)).toHaveLength(0);
     operation.dismiss();
     setActiveUserScope(null);
+});
+
+test("节点进度必须同时匹配画布、节点和当前任务，旧任务不能覆盖新任务", () => {
+    const upload = { ...base, target: { projectId: "canvas-a", nodeId: "video", taskId: "old-task" } };
+    const entries = { upload };
+    expect(canvasNodeOperation(entries, "canvas-a", "video", "old-task")).toBe(upload);
+    expect(canvasNodeOperation(entries, "canvas-b", "video", "old-task")).toBeUndefined();
+    expect(canvasNodeOperation(entries, undefined, "video", "old-task")).toBeUndefined();
+    expect(canvasNodeOperation(entries, "canvas-a", "video", "new-task")).toBeUndefined();
+    expect(canvasNodeOperation(entries, "canvas-a", "other-video", "old-task")).toBeUndefined();
+    expect(canvasNodeOperation({ upload: { ...upload, phase: "done" } }, "canvas-a", "video", "old-task")).toBeUndefined();
+    const preparation = { ...base, target: { projectId: "canvas-a", nodeId: "video" } };
+    expect(canvasNodeOperation({ preparation }, "canvas-a", "video", "old-task")).toBe(preparation);
+});
+
+test("后台参考上传从完整任务元数据定位结果节点，上传结束后交回生成进度", () => {
+    const owner = captureUserScope();
+    const task = { id: "canvas-reference-task", projectId: "canvas-a", status: "running", inputJson: JSON.stringify({ metadata: { nodeId: "output-video", sourceNodeId: "source-video" } }), referenceProgress: { label: "参考视频 1", phase: "transferring", loadedBytes: 512, totalBytes: 1024, bytesPerSecond: 256, startedAt: 1000, updatedAt: 3000 } } as GenerationTask;
+    publishTaskReferenceProgress(task, owner);
+    const progress = canvasNodeOperation(useOperationProgress.getState().entries, "canvas-a", "output-video", task.id);
+    expect(progress?.target).toEqual({ projectId: "canvas-a", nodeId: "output-video", taskId: task.id });
+    expect(canvasNodeOperation(useOperationProgress.getState().entries, "canvas-a", "source-video", task.id)).toBeUndefined();
+    publishTaskReferenceProgress({ ...task, status: "succeeded", referenceProgress: undefined }, owner);
+    expect(Object.values(useOperationProgress.getState().entries)).toHaveLength(0);
 });

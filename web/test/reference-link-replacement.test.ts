@@ -28,14 +28,17 @@ test("concurrent native uploads poll only their own active status", async () => 
         ReferenceUploadStatus: async () => { polls.push(calls.at(-1)!); return { phase: "preparing", label: "参考素材 1", startedAt: Date.now(), updatedAt: Date.now() }; },
     } } } } as unknown as Window & typeof globalThis;
     try {
-        const first = uploadReferenceLinks([{ key: "a", label: "参考图片 1", resourceID: "first" }]);
+        const target = { projectId: "canvas-a", nodeId: "output-video" };
+        const first = uploadReferenceLinks([{ key: "a", label: "参考图片 1", resourceID: "first" }], undefined, target);
         await firstStarted;
+        expect(Object.values(useOperationProgress.getState().entries).find(entry => entry.target)?.target).toEqual(target);
         const second = uploadReferenceLinks([{ key: "b", label: "参考图片 2", resourceID: "second" }]);
         await new Promise(resolve => setTimeout(resolve, 0));
         expect(calls).toEqual(["first"]);
         expect(polls).toEqual(["first"]);
         finishFirst({ first: "https://cdn.example/first" });
         expect(await first).toEqual({ a: "https://cdn.example/first" });
+        expect(Object.values(useOperationProgress.getState().entries).filter(entry => entry.target)).toHaveLength(0);
         expect(await second).toEqual({ b: "https://cdn.example/second" });
         expect(polls).toEqual(["first", "second"]);
     } finally {
@@ -110,6 +113,18 @@ test("second admission rejection propagates without a third submission", async (
         createTask: async () => { calls++; throw rejected; }, waitTask: async () => { throw new Error("must not poll"); }, createId: () => "unused",
     })).rejects.toBe(rejected);
     expect(calls).toBe(2);
+});
+
+test("pre-task reference upload targets the allocated output node", async () => {
+    let attempt = 0;
+    await submitBackendGenerationTask({ ...options, projectId: "canvas-a", metadata: { nodeId: "output-video", sourceNodeId: "source-video" }, resolveReferenceLinks: async (_refs, _signal, target) => {
+        expect(target).toEqual({ projectId: "canvas-a", nodeId: "output-video" });
+        return { "referenceImages:0": "https://cdn.example/one" };
+    } }, {
+        createTask: async () => { if (attempt++ === 0) throw rejected; return { id: "accepted" } as GenerationTask; },
+        waitTask: async () => { throw new Error("must not poll"); }, createId: () => "unused",
+    });
+    expect(attempt).toBe(2);
 });
 
 test("mixed media recovery uploads only the references identified by admission", async () => {

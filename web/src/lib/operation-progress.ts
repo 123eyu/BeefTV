@@ -1,6 +1,7 @@
 import { formatBytes } from "@/lib/image-utils";
 
 export type OperationPhase = "preparing" | "transferring" | "processing" | "done" | "error";
+export type CanvasOperationTarget = { projectId: string; nodeId: string; taskId?: string };
 export type OperationProgress = {
     id: string;
     title: string;
@@ -13,7 +14,16 @@ export type OperationProgress = {
     totalFiles?: number;
     startedAt: number;
     updatedAt: number;
+    target?: CanvasOperationTarget;
 };
+
+export function canvasNodeOperation(entries: Record<string, OperationProgress>, projectId: string | undefined, nodeId: string, taskId?: string) {
+    return Object.values(entries).reverse().find(item => {
+        if (!item.target || item.phase === "done" || item.phase === "error") return false;
+        if (item.target.projectId !== projectId) return false;
+        return item.target.taskId ? item.target.taskId === taskId && item.target.nodeId === nodeId : item.target.projectId === projectId && item.target.nodeId === nodeId;
+    });
+}
 
 const finite = (value: number | undefined) => value !== undefined && Number.isFinite(value) && value >= 0;
 export const progressBytes = (value: number) => formatBytes(Math.max(0, value)) || "0 B";
