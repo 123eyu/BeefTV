@@ -27,6 +27,15 @@ func (e RequestPreparationError) Error() string {
 }
 func (e RequestPreparationError) Unwrap() error { return e.Cause }
 
+// ReferenceStoragePreparationError is local object-storage work that failed
+// before model dispatch, even if that work acquired its own HTTP connection.
+type ReferenceStoragePreparationError struct{ Cause error }
+
+func (e ReferenceStoragePreparationError) Error() string {
+	return fmt.Sprintf("参考素材对象存储准备失败：%v", e.Cause)
+}
+func (e ReferenceStoragePreparationError) Unwrap() error { return e.Cause }
+
 func (e SubmissionUnknownError) Error() string {
 	return fmt.Sprintf("提交结果尚未确认：%v", e.Cause)
 }

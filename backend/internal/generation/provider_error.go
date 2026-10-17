@@ -445,6 +445,12 @@ func ClassifyError(err error) Failure {
 	}
 	var preparation RequestPreparationError
 	if errors.As(err, &preparation) {
+		var storage ReferenceStoragePreparationError
+		if errors.As(preparation.Cause, &storage) {
+			failure := normalizeFailure(Failure{Category: CategoryProviderUnavailable, ProviderCode: "reference_media_upload_failed", Reason: "参考素材上传失败，本次尚未开始生成", Action: "请检查对象存储配置和公开读取权限后重试"})
+			failure.Retryable = false
+			return failure
+		}
 		failure := classifyHTTPErrorCause(preparation.Cause)
 		if failure.ProviderCode == "image_reference_upload_failed" {
 			failure.Category = CategoryProviderUnavailable
