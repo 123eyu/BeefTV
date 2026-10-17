@@ -1,6 +1,7 @@
 import errno
 import importlib.util
 from pathlib import Path
+import sys
 import urllib.error
 import unittest
 from unittest.mock import MagicMock, patch
@@ -69,6 +70,39 @@ class WindowsInstallerContractTests(unittest.TestCase):
             self.assertIn('(UTF8)', result.stdout)
             self.assertNotIn('warning', result.stdout.lower())
             self.assertEqual(len(list(out_dir.glob('BeefTV-*-windows-amd64-setup.exe'))), 1)
+
+
+@unittest.skipUnless(sys.platform == 'darwin', 'native macOS disk image verification')
+class MacDiskImageTests(unittest.TestCase):
+    def test_real_packager_creates_verified_hfs_image(self):
+        import plistlib
+        import shutil
+        import subprocess
+        import tempfile
+        packager_spec = importlib.util.spec_from_file_location(
+            'installer_packager', Path(__file__).with_name('package-desktop-installer.py'))
+        packager = importlib.util.module_from_spec(packager_spec)
+        packager_spec.loader.exec_module(packager)
+        with tempfile.TemporaryDirectory(prefix='beeftv-native-dmg-') as directory:
+            root = Path(directory)
+            payload = root / 'fixture with spaces' / 'BeefTV.app'
+            binary = payload / 'Contents/MacOS/BeefTV'
+            binary.parent.mkdir(parents=True)
+            shutil.copyfile('/usr/bin/true', binary)
+            binary.chmod(0o755)
+            with (payload / 'Contents/Info.plist').open('wb') as info:
+                plistlib.dump({'CFBundleExecutable': 'BeefTV', 'CFBundleIdentifier': 'test.beeftv.dmg',
+                               'CFBundlePackageType': 'APPL', 'CFBundleVersion': '1'}, info)
+            subprocess.run(['codesign', '--force', '--sign', '-', str(payload)], check=True,
+                           capture_output=True, text=True)
+            output = root / 'fixture.dmg'
+            packager.package('v1.0.0', 'darwin-amd64', payload, output)
+            image_info = subprocess.run(['hdiutil', 'imageinfo', str(output)], check=True,
+                                        capture_output=True, text=True).stdout
+            self.assertIn('Apple_HFS', image_info)
+            self.assertNotIn('Apple_APFS', image_info)
+            subprocess.run(['hdiutil', 'verify', str(output)], check=True,
+                           capture_output=True, text=True)
 
 
 if __name__ == '__main__':

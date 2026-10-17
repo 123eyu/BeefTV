@@ -2,7 +2,8 @@ import { getMediaBlob } from "@/services/file-storage";
 import { resolveReferenceMediaDuration } from "@/lib/reference-media-metadata";
 import { getImageBlob } from "@/services/image-storage";
 import { resourceIdFromStorageKey, resourceStorageKey, uploadResourceFile } from "@/services/api/resources";
-import { createGenerationTask, waitForGenerationTask, type GenerationTask, type CreateTaskInput } from "@/services/api/task-center";
+import { createGenerationTask, findGenerationTaskByOperation, waitForGenerationTask, type GenerationTask, type CreateTaskInput } from "@/services/api/task-center";
+import { submitGenerationCommand } from "./generation-submission";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 import { grokImagePromptLimitError } from "@/lib/grok-image-prompt-limit";
 import { resolveGenerationWorkflowExecution, type GenerationWorkflowExecution } from "@/lib/generation-workflow-execution";
@@ -60,12 +61,14 @@ export type GenerationTaskDependencies = {
     createTask: typeof createGenerationTask;
     waitTask: typeof waitForGenerationTask;
     createId: () => string;
+    findTask?: typeof findGenerationTaskByOperation;
 };
 
 const defaultDependencies: GenerationTaskDependencies = {
     createTask: createGenerationTask,
     waitTask: waitForGenerationTask,
     createId: () => crypto.randomUUID(),
+    findTask: findGenerationTaskByOperation,
 };
 
 type PreparedGenerationReferences = {
@@ -283,10 +286,15 @@ async function createAndWaitGenerationTask(options: BackendGenerationTaskOptions
 
 async function createBackendGenerationTask(options: BackendGenerationTaskOptions, prepared: PreparedGenerationReferences, dependencies: GenerationTaskDependencies) {
     const expectedScope = options.expectedScope ?? captureUserScope();
+    const operationId = options.clientOperationId || dependencies.createId();
+    options = { ...options, clientOperationId: operationId };
     const submit = () => {
         throwIfAborted(options.signal);
         assertUserScope(expectedScope);
-        return dependencies.createTask(backendGenerationTaskInput(options, prepared), { expectedScope });
+        return submitGenerationCommand(backendGenerationTaskInput(options, prepared), operationId,
+            (input) => { assertUserScope(expectedScope); return dependencies.createTask(input, { expectedScope }); },
+            dependencies.findTask && options.projectId ? () => { assertUserScope(expectedScope); return dependencies.findTask!(operationId, options.projectId!); } : undefined,
+            () => !options.signal?.aborted);
     };
     let task: GenerationTask;
     try {
