@@ -1,8 +1,8 @@
 {
   "version": "v1.7.26",
-  "sourceDigest": "ce733dc1cdda385514419ad4a8f0b4e198da09c4a3da5fe29f88ee75dabe72cb",
+  "sourceDigest": "03d9d5ce9c35a28b1cf2fa1c4fc2b344f6803b78746e47dd8ecbf0431065f165",
   "ownerException": {
-    "sourceDigest": "ce733dc1cdda385514419ad4a8f0b4e198da09c4a3da5fe29f88ee75dabe72cb",
+    "sourceDigest": "03d9d5ce9c35a28b1cf2fa1c4fc2b344f6803b78746e47dd8ecbf0431065f165",
     "evidence": [
       "docs/release-evidence/v1.7.26-review.md"
     ],
@@ -11,7 +11,7 @@
     "instruction": "本版豁免付费矩阵，专项回归、独立 review、CI 和四平台安装升级门禁通过后发布；历史未知账务继续保留（推荐）"
   },
   "releaseAuthorization": {
-    "sourceDigest": "ce733dc1cdda385514419ad4a8f0b4e198da09c4a3da5fe29f88ee75dabe72cb",
+    "sourceDigest": "03d9d5ce9c35a28b1cf2fa1c4fc2b344f6803b78746e47dd8ecbf0431065f165",
     "evidence": [
       "docs/release-evidence/v1.7.26-review.md"
     ],
@@ -51,18 +51,18 @@
     ]
   },
   "review": {
-    "sourceDigest": "ce733dc1cdda385514419ad4a8f0b4e198da09c4a3da5fe29f88ee75dabe72cb",
+    "sourceDigest": "03d9d5ce9c35a28b1cf2fa1c4fc2b344f6803b78746e47dd8ecbf0431065f165",
     "evidence": [
       "docs/release-evidence/v1.7.26-review.md"
     ],
     "result": "approved",
     "independent": true,
-    "reviewer": "Grok 20261017-185316-continue-2bb97c62 and 20261017-185317-continue-9ffb8a59",
-    "reviewedHead": "128a88c226522fae58c4f4b6b4dbefd1a6f38058",
+    "reviewer": "Grok 20261017-192313-continue-356da0f4 and 20261017-192314-continue-9a0154a9",
+    "reviewedHead": "bba8b7b15f19e48ac93b5e80e02310fb1f50c2ed",
     "productAndBuildSourceUnchanged": true
   },
   "upgrade": {
-    "sourceDigest": "ce733dc1cdda385514419ad4a8f0b4e198da09c4a3da5fe29f88ee75dabe72cb",
+    "sourceDigest": "03d9d5ce9c35a28b1cf2fa1c4fc2b344f6803b78746e47dd8ecbf0431065f165",
     "evidence": [
       "docs/release-evidence/v1.7.26-review.md"
     ],
@@ -70,7 +70,7 @@
   },
   "verification": {
     "userScenario": {
-      "sourceDigest": "ce733dc1cdda385514419ad4a8f0b4e198da09c4a3da5fe29f88ee75dabe72cb",
+      "sourceDigest": "03d9d5ce9c35a28b1cf2fa1c4fc2b344f6803b78746e47dd8ecbf0431065f165",
       "evidence": [
         "docs/release-evidence/v1.7.26-review.md"
       ],
@@ -78,16 +78,16 @@
       "status": "passed"
     },
     "generationAndRecovery": {
-      "sourceDigest": "ce733dc1cdda385514419ad4a8f0b4e198da09c4a3da5fe29f88ee75dabe72cb",
+      "sourceDigest": "03d9d5ce9c35a28b1cf2fa1c4fc2b344f6803b78746e47dd8ecbf0431065f165",
       "evidence": [
         "docs/release-evidence/v1.7.26-review.md"
       ],
       "method": "test",
       "status": "passed",
-      "testedHead": "128a88c226522fae58c4f4b6b4dbefd1a6f38058"
+      "testedHead": "bba8b7b15f19e48ac93b5e80e02310fb1f50c2ed"
     },
     "errorContract": {
-      "sourceDigest": "ce733dc1cdda385514419ad4a8f0b4e198da09c4a3da5fe29f88ee75dabe72cb",
+      "sourceDigest": "03d9d5ce9c35a28b1cf2fa1c4fc2b344f6803b78746e47dd8ecbf0431065f165",
       "evidence": [
         "docs/release-evidence/v1.7.26-review.md"
       ],
@@ -95,7 +95,7 @@
       "status": "passed"
     },
     "noNewPaidGeneration": {
-      "sourceDigest": "ce733dc1cdda385514419ad4a8f0b4e198da09c4a3da5fe29f88ee75dabe72cb",
+      "sourceDigest": "03d9d5ce9c35a28b1cf2fa1c4fc2b344f6803b78746e47dd8ecbf0431065f165",
       "evidence": [
         "docs/release-evidence/v1.7.26-review.md"
       ],
@@ -103,20 +103,20 @@
       "status": "passed"
     },
     "ci": {
-      "sourceDigest": "ce733dc1cdda385514419ad4a8f0b4e198da09c4a3da5fe29f88ee75dabe72cb",
+      "sourceDigest": "03d9d5ce9c35a28b1cf2fa1c4fc2b344f6803b78746e47dd8ecbf0431065f165",
       "evidence": [
         "docs/release-evidence/v1.7.26-review.md",
-        "https://github.com/glanderness/BeefTV/actions/runs/39026629176",
-        "https://github.com/glanderness/BeefTV/actions/runs/39026629163",
-        "https://github.com/glanderness/BeefTV/actions/runs/39026629169"
+        "https://github.com/glanderness/BeefTV/actions/runs/39028483516",
+        "https://github.com/glanderness/BeefTV/actions/runs/39028483546",
+        "https://github.com/glanderness/BeefTV/actions/runs/39028483522"
       ],
       "method": "github-actions",
       "status": "passed",
-      "testedHead": "128a88c226522fae58c4f4b6b4dbefd1a6f38058",
-      "checkoutCommit": "9c2f9e1b48cd0252c8c0da1616b4ef38bb56c1ee"
+      "testedHead": "bba8b7b15f19e48ac93b5e80e02310fb1f50c2ed",
+      "checkoutCommit": "5f7b84e3211f9082fa01a9dfacc39a15fbb8f5a7"
     },
     "localReleaseGate": {
-      "sourceDigest": "ce733dc1cdda385514419ad4a8f0b4e198da09c4a3da5fe29f88ee75dabe72cb",
+      "sourceDigest": "03d9d5ce9c35a28b1cf2fa1c4fc2b344f6803b78746e47dd8ecbf0431065f165",
       "evidence": [
         ".github/workflows/release-desktop.yml",
         "docs/release-evidence/v1.7.26-review.md"
@@ -126,7 +126,7 @@
       "beforeDraft": true
     },
     "depthMirrors": {
-      "sourceDigest": "ce733dc1cdda385514419ad4a8f0b4e198da09c4a3da5fe29f88ee75dabe72cb",
+      "sourceDigest": "03d9d5ce9c35a28b1cf2fa1c4fc2b344f6803b78746e47dd8ecbf0431065f165",
       "evidence": [
         "docs/release-evidence/v1.7.26-review.md",
         "docs/release-evidence/v1.7.26-depth-mirrors.json"
@@ -135,7 +135,7 @@
       "status": "passed"
     },
     "windowsDepthProcesses": {
-      "sourceDigest": "ce733dc1cdda385514419ad4a8f0b4e198da09c4a3da5fe29f88ee75dabe72cb",
+      "sourceDigest": "03d9d5ce9c35a28b1cf2fa1c4fc2b344f6803b78746e47dd8ecbf0431065f165",
       "evidence": [
         "docs/release-evidence/v1.7.26-review.md",
         "docs/release-evidence/v1.7.26-windows-depth.json"
@@ -144,26 +144,26 @@
       "status": "passed"
     },
     "referenceTransport": {
-      "sourceDigest": "ce733dc1cdda385514419ad4a8f0b4e198da09c4a3da5fe29f88ee75dabe72cb",
+      "sourceDigest": "03d9d5ce9c35a28b1cf2fa1c4fc2b344f6803b78746e47dd8ecbf0431065f165",
       "evidence": [
         "docs/release-evidence/v1.7.26-review.md",
-        "https://github.com/glanderness/BeefTV/actions/runs/39026629176"
+        "https://github.com/glanderness/BeefTV/actions/runs/39028483516"
       ],
       "method": "test",
       "status": "passed"
     },
     "midjourneyFourOutputs": {
-      "sourceDigest": "ce733dc1cdda385514419ad4a8f0b4e198da09c4a3da5fe29f88ee75dabe72cb",
+      "sourceDigest": "03d9d5ce9c35a28b1cf2fa1c4fc2b344f6803b78746e47dd8ecbf0431065f165",
       "evidence": [
         "docs/release-evidence/v1.7.26-review.md",
         "https://github.com/glanderness/BeefTV/pull/185",
-        "https://github.com/glanderness/BeefTV/actions/runs/39026629176"
+        "https://github.com/glanderness/BeefTV/actions/runs/39028483516"
       ],
       "method": "test",
       "status": "passed"
     },
     "uiCrossReview": {
-      "sourceDigest": "ce733dc1cdda385514419ad4a8f0b4e198da09c4a3da5fe29f88ee75dabe72cb",
+      "sourceDigest": "03d9d5ce9c35a28b1cf2fa1c4fc2b344f6803b78746e47dd8ecbf0431065f165",
       "evidence": [
         "docs/release-evidence/v1.7.26-review.md",
         "https://github.com/glanderness/BeefTV/pull/183",
