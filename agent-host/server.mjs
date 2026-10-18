@@ -243,12 +243,29 @@ function followDurable(entry, submission) {
     entry.lifecycle = null;
     entry.textProjection = createDurableTextProjection();
     entry.livePlan = entry.turn.plan ?? null;
-    entry.running = durable.wait(entry, submission, {onEvent:event=>emitDurable(entry,event)})
-      .finally(()=>{entry.running=null;entry.lifecycle=null;});
+    const ready = Promise.withResolvers();
+    entry.textProjectionReady = ready.promise;
+    entry.running = durable.wait(entry, submission, {onEvent:event=>{
+      emitDurable(entry,event);
+      if (event.type === 'snapshot') ready.resolve();
+    }})
+      .finally(()=>{ready.resolve();entry.running=null;entry.lifecycle=null;});
     // Observers may disconnect; the official task and its completion persist.
     entry.running.catch(error=>console.error(`agent-host: durable wait ${error.reason || error.message}`));
   }
   return entry.running;
+}
+
+async function waitForDurableProjection(entry) {
+  if (entry.textProjection?.initialized || !entry.textProjectionReady) return;
+  // Only wait for the initial official snapshot, never the model's completion.
+  // On storage delay/failure omit streamed instead of publishing a false empty value.
+  let timer;
+  try {
+    await Promise.race([entry.textProjectionReady, new Promise(resolve => {
+      timer = setTimeout(resolve, 1000);
+    })]);
+  } finally { clearTimeout(timer); }
 }
 
 async function attachmentContent(body, turnId) {
@@ -437,9 +454,10 @@ const server = http.createServer(async (req, res) => {
         const entry = live?.sessionId === sessionId ? live : await durable.ensureSession(canvasId,sessionId);
         const submission = await durable.recover(entry);
         if (submission) followDurable(entry,submission);
+        await waitForDurableProjection(entry);
         const value = await durable.history(canvasId,sessionId);
         if (value.active && entry.lifecycle) value.active.lifecycle = entry.lifecycle;
-        if (value.active && entry.textProjection) value.active.streamed = entry.textProjection.text;
+        if (value.active && entry.textProjection?.initialized) value.active.streamed = entry.textProjection.text;
         respond(res,200,value); return;
       }
       const file = SessionManager.findById(cwd, sessionId, sessionDir);
@@ -565,7 +583,7 @@ const server = http.createServer(async (req, res) => {
       const listener = payload=>{ if (!res.destroyed) sendLine(res,payload); };
       entry.listeners.add(listener);
       // A repeated request re-attaches to a running turn: show its current progress first.
-      listener({ type: 'text_snapshot', text: entry.textProjection.text });
+      if (entry.textProjection.initialized) listener({ type: 'text_snapshot', text: entry.textProjection.text });
       listener({ type: 'plan', plan: entry.livePlan });
       if (entry.lifecycle) listener(entry.lifecycle);
       try {

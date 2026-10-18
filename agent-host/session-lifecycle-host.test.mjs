@@ -88,8 +88,12 @@ async function withHost(run, envExtra = {}, options = {}) {
       if (res.writableEnded) return;
     }
     res.writeHead(200, { 'content-type': 'text/event-stream' });
-    res.write('data: ' + JSON.stringify({ id: 's', object: 'chat.completion.chunk', created: 1, model: 'synthetic', choices: [{ index: 0, delta: { role: 'assistant', content: 'ok' }, finish_reason: null }] }) + '\n\n');
-    res.write('data: ' + JSON.stringify({ id: 's', object: 'chat.completion.chunk', created: 1, model: 'synthetic', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }) + '\n\n');
+    const reply = options.modelReply?.(modelCalls);
+    const delta = { role: 'assistant', content: reply?.text ?? 'ok', ...(reply?.tool ? {
+      tool_calls: [{ index: 0, id: `call-${modelCalls}`, type: 'function', function: { name: reply.tool.name, arguments: JSON.stringify(reply.tool.args) } }],
+    } : {}) };
+    res.write('data: ' + JSON.stringify({ id: 's', object: 'chat.completion.chunk', created: 1, model: 'synthetic', choices: [{ index: 0, delta, finish_reason: null }] }) + '\n\n');
+    res.write('data: ' + JSON.stringify({ id: 's', object: 'chat.completion.chunk', created: 1, model: 'synthetic', choices: [{ index: 0, delta: {}, finish_reason: reply?.tool ? 'tool_calls' : 'stop' }] }) + '\n\n');
     res.end('data: [DONE]\n\n');
   });
   const waitFor = async (check, ms) => {
@@ -386,6 +390,41 @@ test('真实宿主：运行中反复读取历史不重放恢复写入，也不�
     expect(end.cancelled).toBe(true);
     expect((await api(`/history?canvasId=${canvasId}`)).payload.active).toBeNull();
   }, {}, { canvasId: 'poll-canvas' });
+}, 35000);
+
+test('真实宿主：冷启动首个历史响应恢复已提交文字，不等待回合结束且可停止', async () => {
+  const text = '已整理镜头说明，正在检查制作计划。';
+  let releaseReply;
+  const heldReply = new Promise(resolve => { releaseReply = resolve; });
+  try {
+    await withHost(async ({ api, restart, base, hostToken, waitFor, getModelCalls }) => {
+      const canvasId = 'cold-history-canvas';
+      const { payload: { sessionId } } = await api('/sessions', { canvasId });
+      const controller = new AbortController();
+      const response = await fetch(base + '/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Beeftv-Agent-Token': hostToken },
+        body: JSON.stringify({ canvasId, sessionId, turnId: 'cold-history-turn', requestId: 'cold-history-request', message: '检查制作计划' }), signal: controller.signal });
+      // The second provider call can start only after the first assistant entry
+      // and its plan_update tool result have committed through official Durable.
+      await waitFor(() => getModelCalls() >= 2, 8000);
+      controller.abort();
+      await response.body.cancel().catch(() => {});
+      await restart();
+      const started = Date.now();
+      const first = await api(`/history?canvasId=${canvasId}`);
+      expect(first.status).toBe(200);
+      expect(first.payload.active).toMatchObject({ turnId: 'cold-history-turn', status: 'running', streamed: text });
+      expect(first.payload.turns).toHaveLength(0);
+      expect(Date.now() - started).toBeLessThan(3000);
+      // The next generation remains held: readiness must not depend on its
+      // settlement, and Stop must still be able to close the recovered observer.
+      const stopped = await api('/cancel', { canvasId, sessionId, requestId: 'cold-history-request' });
+      expect(stopped.status).toBe(202);
+      await waitFor(async () => (await api(`/history?canvasId=${canvasId}`)).payload.active === null, 8000);
+    }, {}, { canvasId: 'cold-history-canvas', slowFirstModel: false,
+      beforeModelReply: call => call > 1 ? heldReply : undefined,
+      modelReply: call => call === 1 ? { text, tool: { name: 'plan_update', args: { goal: '检查制作计划', items: [{ id: 'review', title: '确认镜头', status: 'needs_user' }] } } } : undefined,
+    });
+  } finally { releaseReply(); }
 }, 35000);
 
 test('真实宿主：官方自动重试在流和历史里显示为分类后的进度，不带上游原文', async () => {

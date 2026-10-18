@@ -43,6 +43,13 @@ describe('official Durable events projected to the panel stream', () => {
 describe('Durable visible text projection', () => {
   const assistant = (text) => ({ role: 'assistant', content: [{ type: 'thinking', thinking: SECRET }, { type: 'text', text }] });
   const entry = (id, text) => ({ id, model: [assistant(text)] });
+  test('an unobserved projection is distinct from an official empty snapshot', () => {
+    const projection = createDurableTextProjection();
+    expect(projection.initialized).toBe(false);
+    expect(projection.accept({ type: 'snapshot', afterEntry: 10, entries: [entry(8, 'previous turn')], tools: [] }))
+      .toEqual({ type: 'text_snapshot', text: '' });
+    expect(projection.initialized).toBe(true);
+  });
   test('initial partial, text starts, deltas, whole replacements and final-only suffix are all retained once', () => {
     const projection = createDurableTextProjection();
     projection.accept({ type: 'snapshot', afterEntry: 10, entries: [entry(8, 'previous turn')], tools: [] });

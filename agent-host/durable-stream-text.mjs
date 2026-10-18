@@ -11,6 +11,7 @@ export function createDurableTextProjection() {
   let initialized = false;
   return {
     get text() { return text; },
+    get initialized() { return initialized; },
     accept(event) {
       switch (event?.type) {
         case 'snapshot':
