@@ -1427,12 +1427,23 @@
   },
   {
     "id": "model.catalog",
-    "summary": "查询公开模型目录、类型和参考能力；实际可用性仍由节点配置校验；不含密钥",
+    "summary": "按所需类型查询模型、参考能力和已保存的视频报价（videoPricing）；未返回报价表示价格未知，不能承诺预算；不含密钥",
     "readOnly": true,
     "scope": "workspace_read",
     "params": {
       "type": "object",
-      "properties": {},
+      "properties": {
+        "capability": {
+          "type": "string",
+          "enum": [
+            "text",
+            "image",
+            "video",
+            "audio"
+          ],
+          "description": "只读取本次需要的模型类型，减少无关目录"
+        }
+      },
       "additionalProperties": false
     },
     "assistantModes": [
