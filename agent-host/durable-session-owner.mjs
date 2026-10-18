@@ -16,6 +16,7 @@ import { SKILL_LOAD_PARAMETERS, createSkillCatalogSection, expandSkillContent, l
   normalizeSkillCatalog, sameSkillPin, skillsToLoad, activeSkillProjection, createActiveSkillSection, guardSkillModelRequests } from './skill-resource.mjs';
 import { PLAN_UPDATE_PARAMETERS, applyPlanUpdate, emptyPlan, planContinuation, publicPlan, renderPlanSection } from './plan.mjs';
 import { buildStudioDigest, describeChangesSince } from './studio-digest.mjs';
+import { normalizeModelTransportError } from './model-transport-error.mjs';
 
 // On-disk format tag written into manifests and host state since 1.0.4; not the
 // package version. Changing it rejects every existing session as mismatched.
@@ -455,6 +456,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       ...(typeof readCanvas === 'function' ? [section('beeftv_studio', async () => (await state(entry))?.studioDigestText || undefined)] : []),
     ];
     const operationExtension=defineExtension({ name: 'beeftv.operations.v1', tools, sections: operationSections, hooks: [hook(GenerationTask, {
+      afterResponse: normalizeModelTransportError,
       beforeRequest: async (request) => {
         for (;;) {
           if (entry.generation.pendingInputError) throw fail(entry.generation.pendingInputError.reason);
