@@ -79,6 +79,8 @@ export type AssistantPlan = {
 export type AgentTurnEnd = {
     type: "turn_end";
     turnId?: string;
+    /** Go-confirmed generation continuation identity, never inferred from text. */
+    continuationId?: string;
     /** 宿主本回合实际使用的会话；旧 JSONL 会话首次发消息会交接给新的 Durable 会话，界面据此更新。 */
     sessionId?: string;
     permissionMode?: AssistantPermissionMode;
@@ -101,6 +103,7 @@ export type AgentTurnEnd = {
 
 export type AssistantTurn = {
     turnId: string;
+    continuationId?: string;
     permissionMode?: AssistantPermissionMode;
     userText: string;
     selectedNodeIds: string[];
@@ -139,7 +142,7 @@ export type AssistantHistory = {
     sessionId: string;
     plan?: AssistantPlan | null;
     turns: (AssistantTurn & { undone?: boolean })[];
-    active?: { turnId: string; requestId?: string; userText: string; selectedNodeIds: string[]; attachments?: AssistantAttachment[]; skills?: AssistantSkillSelection[];
+    active?: { turnId: string; requestId?: string; continuationId?: string; userText: string; selectedNodeIds: string[]; attachments?: AssistantAttachment[]; skills?: AssistantSkillSelection[];
         references?: AgentChatReference[]; supplements?: string[]; supplementInputs?: AssistantSupplementInput[]; permissionMode?: AssistantPermissionMode; createdAt: string; status: "running";
         /** 正在进行的回合此刻的进度（例如模型重试），只用于展示，结束后不再返回。 */
         lifecycle?: AgentLifecycleEvent | null; plan?: AssistantPlan | null; streamed?: string } | null;

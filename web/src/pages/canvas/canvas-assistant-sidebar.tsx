@@ -260,7 +260,7 @@ export function CanvasAssistantSidebar(props: Props) {
 
                 {assistant.pendingUserText || assistant.pendingAttachments.length ? (
                     <div className="canvas-assistant-turn">
-                        <CanvasAssistantUserMessage text={assistant.pendingUserText || ""} selectedCount={assistant.pendingSelectedNodeIds.length} />
+                        <CanvasAssistantUserMessage text={assistant.pendingUserText || ""} selectedCount={assistant.pendingSelectedNodeIds.length} continuationId={assistant.pendingContinuationId} />
                         <CanvasAssistantAttachments attachments={assistant.pendingAttachments} />
                         {assistant.awaitingReceipt ? <p className="canvas-assistant-meta" role="status">正在读取这次处理的最终结果，已有内容仍然保留。</p> : null}
                         {assistant.pendingSkills.map(skill => <span className="canvas-assistant-chip" key={skill.skillId}>{assistantSkillLabel(skill)}</span>)}

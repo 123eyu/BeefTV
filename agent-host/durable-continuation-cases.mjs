@@ -19,11 +19,14 @@ test('automatic continuation keeps one official request across duplicate observe
     const first=await fixture.store.submit(entry,input);
     const waiting=fixture.store.wait(entry,first);
     await entered.promise;
+    assert.equal((await fixture.store.history('canvas',entry.sessionId)).active.continuationId,input.continuationId);
     const duplicate=await fixture.store.submit(entry,input);
     assert.equal(duplicate.id,first.id);
     release.resolve();
     const result=await waiting;
     assert.equal(result.requestId,input.requestId); assert.equal(result.turnId,input.turnId);
+    assert.equal(result.continuationId,input.continuationId);
+    assert.equal(result.userText,input.userText);
     assert.equal(fixture.requests.length,1);
     const session=entry.sessionId;
     await fixture.close();
@@ -32,8 +35,25 @@ test('automatic continuation keeps one official request across duplicate observe
     const replay=await fixture.store.submit(restored,input);
     assert.equal(replay.id,first.id);
     assert.equal((await fixture.store.history('canvas',session)).turns.length,1);
+    assert.equal((await fixture.store.history('canvas',session)).turns[0].continuationId,input.continuationId);
     assert.equal(fixture.requests.length,0);
   } finally { release.resolve(); await fixture?.close(); fs.rmSync(directory,{recursive:true,force:true}); }
+});
+
+test('manual text with an automatic-looking prefix stays manual after recovery', {timeout:30000}, async () => {
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'beeftv-auto-display-'));let fixture;
+  try {
+    fixture=await modelFixture(directory,'fixture',['fixture'],()=>{});
+    const entry=await fixture.store.createSession('canvas');
+    const manual={turnId:'manual',requestId:'manual',content:input.content,userText:input.userText};
+    const submission=await fixture.store.submit(entry,manual);
+    const result=await fixture.store.wait(entry,submission);
+    assert.equal(result.continuationId,undefined);assert.equal(result.userText,input.userText);
+    const session=entry.sessionId;
+    await fixture.close();fixture=await modelFixture(directory,'fixture',['fixture'],()=>{});
+    const restored=(await fixture.store.history('canvas',session)).turns[0];
+    assert.equal(restored.continuationId,undefined);assert.equal(restored.userText,input.userText);
+  } finally {await fixture?.close();fs.rmSync(directory,{recursive:true,force:true});}
 });
 
 test('automatic restore and submit never activate an old session, including after restart', {timeout:30000}, async()=>{

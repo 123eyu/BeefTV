@@ -62,6 +62,7 @@ function stubController(open: boolean, setOpen: (next: boolean) => void, width: 
         sessionBusy: false,
         reloadHistory: async () => true,
         pendingUserText: null,
+        pendingContinuationId: null,
         pendingSelectedNodeIds: [],
         pendingAttachments: [],
         pendingSkills: [],

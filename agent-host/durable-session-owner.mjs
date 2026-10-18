@@ -49,7 +49,8 @@ export function durableToolReplay(tool) {
 }
 export function publicDurableTurn(active, running = false) {
   if (!active) return null;
-  const keys = ['permissionMode','turnId', 'requestId', 'submissionId', 'userText', 'selectedNodeIds', 'attachments', 'skills',
+  // Go canonicalizes continuationId from a claimed receipt before forwarding.
+  const keys = ['permissionMode','turnId', 'requestId', 'submissionId', 'continuationId', 'userText', 'selectedNodeIds', 'attachments', 'skills',
     'references', 'supplements', 'supplementInputs', 'createdAt', 'reply', 'toolCalls', 'change', 'proposals', 'plan',
     'cancelled', 'error', 'errorReason', 'sessionId', 'status'];
   const result = Object.fromEntries(keys.filter((key) => active[key] !== undefined).map((key) => [key, active[key]]));

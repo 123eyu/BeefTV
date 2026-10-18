@@ -40,12 +40,14 @@ export function CanvasAssistantReply({ text }: { text: string }) {
     );
 }
 
-export function CanvasAssistantUserMessage({ text, selectedCount }: { text: string; selectedCount: number }) {
+export function CanvasAssistantUserMessage({ text, selectedCount, continuationId }: { text: string; selectedCount: number; continuationId?: string | null }) {
     if (!text && !selectedCount) return null;
+    const automatic = Boolean(continuationId);
     return (
         <div className="canvas-assistant-user">
-            <span style={{ whiteSpace: "pre-wrap" }}>{text}</span>
-            {selectedCount > 0 ? <span className="canvas-assistant-meta">带上了已选的 {selectedCount} 个节点</span> : null}
+            {automatic ? <span className="canvas-assistant-chip">自动继续</span> : null}
+            <span style={{ whiteSpace: "pre-wrap" }}>{automatic ? "生成已结束，继续检查结果和制作。" : text}</span>
+            {selectedCount > 0 ? <span className="canvas-assistant-meta">{automatic ? `关联了本次生成的 ${selectedCount} 个节点` : `带上了已选的 ${selectedCount} 个节点`}</span> : null}
         </div>
     );
 }
@@ -63,7 +65,7 @@ export function CanvasAssistantTurnView({ turn, status, handledProposals, propos
 
     return (
         <div className="canvas-assistant-turn">
-            <CanvasAssistantUserMessage text={turn.userText} selectedCount={turn.selectedNodeIds?.length ?? 0} />
+            <CanvasAssistantUserMessage text={turn.userText} selectedCount={turn.selectedNodeIds?.length ?? 0} continuationId={turn.continuationId} />
             <CanvasAssistantAttachments attachments={turn.attachments || []} />
             {(turn.skills || []).map(skill => <span className="canvas-assistant-chip" key={skill.skillId}>{assistantSkillLabel(skill)}</span>)}
             {turn.supplementInputs?.length ? turn.supplementInputs.map((input, index) => <div key={`supplement:${index}`}>

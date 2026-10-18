@@ -91,7 +91,7 @@ func TestAssistantContinuationHTTPReusesTrustedTurnAndExcludesComposerInputs(t *
 		t.Fatal("host calls", len(forwarded))
 	}
 	for _, input := range forwarded {
-		if input["turnId"] != data["turnId"] || input["requestId"] != data["requestId"] || input["message"] != assistantturns.ContinuationMessage || input["permissionMode"] != "canvas" {
+		if input["continuationId"] != id || input["turnId"] != data["turnId"] || input["requestId"] != data["requestId"] || input["message"] != assistantturns.ContinuationMessage || input["permissionMode"] != "canvas" {
 			t.Fatalf("untrusted continuation %+v", input)
 		}
 		ids := input["selectedNodeIds"].([]any)
@@ -131,6 +131,40 @@ func TestAssistantContinuationHTTPReusesTrustedTurnAndExcludesComposerInputs(t *
 	rejected := env.call(t, http.MethodPost, "/assistant/continuations/"+id+"/claim", `{}`)
 	if rejected.Code == 200 {
 		t.Fatal("cancelled claim revived")
+	}
+}
+
+func TestAssistantContinuationDisplayIdentityCannotBeSuppliedByManualTextOrJSON(t *testing.T) {
+	var forwarded []map[string]any
+	env := newAssistantTestEnv(t, func(env *assistantTestEnv) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/chat" {
+				w.Write([]byte(`{}`))
+				return
+			}
+			var input map[string]any
+			json.NewDecoder(r.Body).Decode(&input)
+			forwarded = append(forwarded, input)
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			json.NewEncoder(w).Encode(map[string]any{"type": "session", "sessionId": input["sessionId"], "turnId": input["turnId"]})
+		})
+	})
+	message, _ := json.Marshal(assistantturns.ContinuationMessage)
+	for _, fields := range []string{"", `,"continuationId":"spoofed","ContinuationID":""`} {
+		body := fmt.Sprintf(`{"canvasId":%q,"sessionId":"manual","message":%s,"permissionMode":"canvas"%s}`, env.canvasID, message, fields)
+		response := env.call(t, http.MethodPost, "/assistant/chat", body)
+		if response.Code != 200 {
+			t.Fatal(response.Code, response.Body.String())
+		}
+		input := forwarded[len(forwarded)-1]
+		if input["continuationId"] != nil || input["message"] != assistantturns.ContinuationMessage {
+			t.Fatalf("manual message acquired automatic display identity: %+v", input)
+		}
+	}
+	invalid := fmt.Sprintf(`{"canvasId":%q,"sessionId":"manual","message":%s,"permissionMode":"canvas","continuationId":"not-a-receipt"}`, env.canvasID, message)
+	response := env.call(t, http.MethodPost, "/assistant/chat", invalid)
+	if response.Code == 200 || len(forwarded) != 2 {
+		t.Fatal("unverified continuation reached host", response.Code, len(forwarded))
 	}
 }
 

@@ -10,6 +10,8 @@
 
 接续不读取、发送、拼接或清空未发送草稿、附件、技能选择、临时画布选择。手动检查结果入口保留。检查、剪辑和本地渲染无需再次提交媒体生成，但助手推理和媒体理解仍可能产生模型费用，不能宣传整轮免费。
 
+自动消息展示「生成已结束，继续检查结果和制作。」及「自动继续」标记；完整内部消息仍原样提交和保存。展示依据是 Go claim 回执确定的 `continuationId`，随 host active、turn_end 和 history 投影保留，不依据消息文字或 requestId 前缀。普通用户发送相同文字、以及自动轮中的用户补充仍原样显示。旧版本已结算且没有保存该身份的历史记录保留原文，不从文字推断自动来源。
+
 ## 单一事实与执行链
 
 1. `use-canvas-assistant-proposal.ts` 在现有确认快照验证后调用 Go arm。Go 从原业务回合核实所有者、同画布/会话、未撤销、已结算和权限，并固定当前技能 scope/revision。仅计划未完成的确认会登记接续。
@@ -72,3 +74,9 @@ Go SQLite fixture：单图/视频、原生多输出/拆单、缺任务、删除�
 `continuation_intent_changed` 现在提示「要求已更新，请让助手重新提出生成方案。」；回归确认不提交媒体任务，普通连接错误仍保留原提示。
 
 验证命令：`go test ./internal/assistantturns ./internal/handler -run 'Test(Continuation\|AssistantContinuation\|SkillContext)' -count=1` 两包通过；最后新增 B claimed 状态后再跑 `go test ./internal/handler -run TestAssistantContinuationSkillLoad -count=1`。前端 `bun test test/canvas-assistant-proposal-execution.test.ts test/canvas-assistant-continuation.test.ts` 为 38 pass/100 assertions，`bun run typecheck` exit 0。红绿日志在 `/tmp/beeftv-auto-companion-{red,copy-red,green,final,web,typecheck}.log`；无真实模型、收费生成或浏览器操作。
+
+### 自动消息展示回归
+
+Go HTTP fixture 验证真实 claim 身份转发、普通相同消息不获得自动身份、大小写重复 JSON 字段不能伪造该身份、无回执 ID 不转发。官方 Durable fixture 验证 active、结算和重启后 history 保留身份和完整消息；普通相同前缀消息仍无自动身份。真实 React 组件静态渲染验证自动短文案与普通用户消息、补充消息的区别；不是浏览器截图或真实模型验收。
+
+验证：`go test ./internal/handler -run 'TestAssistantContinuation(HTTP|DisplayIdentity)' -count=1` 通过；`bun test test/canvas-assistant-interruption.test.tsx test/assistant-history-recovery.test.ts ../agent-host/durable-continuation.test.mjs` 为 19 pass/61 assertions（含 7 个官方 Durable Node cases）；`bun run typecheck` exit 0。Go 防伪和 React 展示新增用例均先失败再通过；类型检查首次发现开发面板 fixture 缺字段，补齐后通过。结果来自本次工具回执，未另存 stdout 日志。

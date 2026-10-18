@@ -92,6 +92,7 @@ type CanvasRun = {
     backgroundActive: boolean;
     recovery: PendingAssistantRecovery | null;
     pendingUserText: string | null;
+    pendingContinuationId: string | null;
     pendingSelectedNodeIds: string[];
     pendingAttachments: AssistantAttachment[];
     pendingSkills: AssistantSkillSelection[];
@@ -113,6 +114,7 @@ const ASSISTANT_STOPPED_UNPROCESSED_TEXT = "已停下，这条消息没有被处
 /** 消息还没发出、或助手还没开始处理就停下：不会执行，不留待发送内容；「重试」仍可原样再发。 */
 function markStoppedBeforeSend(run: CanvasRun, text = ASSISTANT_STOPPED_BEFORE_SEND_TEXT) {
     run.pendingUserText = null;
+    run.pendingContinuationId = null;
     run.pendingSelectedNodeIds = [];
     run.pendingAttachments = [];
     run.pendingSkills = [];
@@ -138,6 +140,7 @@ const createRun = (): CanvasRun => ({
     backgroundActive: false,
     recovery: null,
     pendingUserText: null,
+    pendingContinuationId: null,
     pendingSelectedNodeIds: [],
     pendingAttachments: [],
     pendingSkills: [],
@@ -277,6 +280,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             const recent = nextSession === run.sessionId ? run.turns.filter((turn) => !known.has(turn.turnId)) : [];
             if (findRecoveredAssistantTurn(run.recovery, history)) {
                 run.pendingUserText = null;
+                run.pendingContinuationId = null;
                 run.pendingSelectedNodeIds = [];
                 run.pendingAttachments = [];
                 run.pendingSkills = [];
@@ -295,6 +299,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                 run.streaming = true;
                 run.dispatched = true;
                 run.pendingUserText = active.userText;
+                run.pendingContinuationId = active.continuationId ?? null;
                 run.pendingSelectedNodeIds = active.selectedNodeIds || [];
                 run.pendingAttachments = active.attachments || [];
                 run.pendingSkills = active.skills || [];
@@ -384,6 +389,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         const permissionMode = assistantPermissionMode(input.permissionMode ?? preferredPermissionMode);
         const controller = new AbortController();
         run.pendingUserText = message;
+        run.pendingContinuationId = input.continuation?.id ?? null;
         run.pendingSelectedNodeIds = selectedSnapshot;
         run.pendingAttachments = attachments;
         run.pendingSkills = skills;
@@ -454,6 +460,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                     const current = runFor(targetCanvas);
                     const turn: AssistantTurn = {
                         turnId: end.turnId || `${targetCanvas}:${Date.now()}`,
+                        continuationId: end.continuationId,
                         permissionMode: assistantPermissionMode(end.permissionMode),
                         userText: message,
                         selectedNodeIds: selectedSnapshot,
@@ -480,6 +487,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                     current.backgroundActive = false;
                     current.historyError = null;
                     current.pendingUserText = null;
+                    current.pendingContinuationId = null;
                     current.pendingSelectedNodeIds = [];
                     current.pendingAttachments = [];
                     current.pendingSkills = [];
@@ -591,6 +599,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         const run = runFor(activeCanvasRef.current);
         run.error = null;
         run.pendingUserText = null;
+        run.pendingContinuationId = null;
         run.pendingSelectedNodeIds = [];
         rerenderIfActive(activeCanvasRef.current);
     }, [rerenderIfActive, runFor, expectedScope]);
@@ -612,6 +621,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             run.plan = null;
             run.error = null;
             run.pendingUserText = null;
+            run.pendingContinuationId = null;
             run.lastSent = null;
             run.turnStatus = {};
             run.historyLoaded = true;
@@ -645,6 +655,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                 run.error = null;
                 run.lastSent = null;
                 run.pendingUserText = null;
+                run.pendingContinuationId = null;
             }
         } catch {
             run.error = "没能切换对话，当前对话仍然保留。请重试。";
@@ -721,6 +732,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         sessionBusy: run.sessionBusy,
         reloadHistory: () => loadHistory(canvasId),
         pendingUserText: run.pendingUserText,
+        pendingContinuationId: run.pendingContinuationId,
         pendingSelectedNodeIds: run.pendingSelectedNodeIds,
         pendingAttachments: run.pendingAttachments,
         pendingSkills: run.pendingSkills,

@@ -574,6 +574,12 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			var trusted map[string]any
 			_ = json.Unmarshal(forwarded, &trusted)
 			trusted["permissionMode"] = input.PermissionMode
+			// Display identity comes only from the claimed Go receipt. In
+			// particular, never forward a client key ignored by struct decoding.
+			delete(trusted, "continuationId")
+			if continuation != nil {
+				trusted["continuationId"] = continuation.ID
+			}
 			forwarded, err = json.Marshal(trusted)
 		}
 		if err != nil {
