@@ -17,7 +17,7 @@ import { budgetError, spendModelRequest } from './request-budget.mjs';
 import { createDurableRequestBudget } from './durable-request-budget.mjs';
 import { createOperationBridge } from './operation-bridge.mjs';
 import { createLegacyHistory } from './session-owner.mjs';
-import { adaptMediaRequest, trustedMediaSources } from './media-content.mjs';
+import { adaptMediaRequest, trustedMediaSources, mediaCapabilityContext } from './media-content.mjs';
 import {nativeSourceKey} from './native-history.mjs';
 import { createNativePartStore } from './native-part-store.mjs';
 import { fetchModelWithProgressIdle } from './model-stream-idle.mjs';
@@ -547,7 +547,7 @@ const server = http.createServer(async (req, res) => {
         : chosen ? await durable.handoffSession(canvasId, legacy.readHandoffNote(canvasId,chosen), chosen)
           : await durable.ensureSession(canvasId);
       const content = await attachmentContent(body,turnId);
-      content[0].text = `${turnContextPrefix(body)}\n${content[0].text}`;
+      content[0].text = `${turnContextPrefix(body)}\n${mediaCapabilityContext({ api: MODEL_API, modelId: MODEL_ID })}\n${content[0].text}`;
       const submission = await durable.submit(entry,{...body,content,userText,revisionBefore,requestId});
       res.durableTurn = true;
       res.writeHead(200,{'Content-Type':'application/x-ndjson'});

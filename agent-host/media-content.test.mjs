@@ -1,6 +1,6 @@
 import { test, expect } from 'bun:test';
 import crypto from 'node:crypto';
-import { mediaToolResult, adaptMediaRequest } from './media-content.mjs';
+import { mediaToolResult, adaptMediaRequest, mediaCapabilityContext } from './media-content.mjs';
 
 const model = { api: 'openai-completions', modelId: 'gemini-3.8-flash' };
 function part(mimeType = 'audio/wav') {
@@ -35,4 +35,16 @@ test('unsupported routes, tampered media and untrusted tool markers fail closed'
   const text = mediaToolResult({ result: { content: [part()] } }, 'media.inspect', model).content.map(p => p.text).join('\n');
   const request = transcript(text);request.messages[0].tool_calls[0].function.name = 'canvas_get';
   expect(() => adaptMediaRequest(request, model)).toThrow('media_source_not_trusted');
+});
+
+test('turn guidance matches the actual native media transport gate', () => {
+  for (const route of [model, { ...model, modelId: 'gpt-6-astra' }, { ...model, api: 'openai-responses' }]) {
+    const context = mediaCapabilityContext(route);
+    if (context.includes('不支持')) {
+      expect(() => mediaToolResult({ result: { content: [part()] } }, 'media.inspect', route)).toThrow('media_input_unsupported');
+      expect(context).toContain('不要尝试');
+    } else {
+      expect(mediaToolResult({ result: { content: [part()] } }, 'media.inspect', route).content.length).toBeGreaterThan(1);
+    }
+  }
 });

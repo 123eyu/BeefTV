@@ -6,6 +6,16 @@ const MAX_PART_BYTES = 8 * 1024 * 1024;
 const MAX_REQUEST_BYTES = 32 * 1024 * 1024;
 const MIME = new Set(['image/jpeg', 'image/png', 'video/mp4', 'audio/wav']);
 
+function supportsNativeMedia({ api, modelId }) {
+  return api === 'openai-completions' && /^gemini-/i.test(modelId);
+}
+
+export function mediaCapabilityContext(model) {
+  return supportsNativeMedia(model)
+    ? '[本轮媒体能力：可请求 frames 静态画面、video 连续视频和 audio 音频；结论以实际成功读取的内容为准。]'
+    : '[本轮媒体能力：可查看 frames 静态画面及客观检测；当前连接不支持 video 或 audio 原生输入，不要尝试这两种模式。连续动作或声音内容尚未检查时如实说明；仍可完成无需这些判断的剪辑与渲染。需要完整影音检查时提示用户选择多模态 Gemini 连接。]';
+}
+
 function validatePart(part) {
   if (!MIME.has(part?.mimeType) || typeof part.data !== 'string' ||
       !/^[A-Za-z0-9+/]+={0,2}$/.test(part.data) || part.data.length > MAX_PART_BYTES * 4 / 3 + 4) {
@@ -22,7 +32,7 @@ export function mediaToolResult(data, operation, { api, modelId, nativePartStore
   if (!operation.startsWith('media.')) return { content: [{ type: 'text', text: JSON.stringify(data) }] };
   const parts = data?.result?.content || [];
   const native = parts.some((p) => p.type === 'media');
-  if (native && (api !== 'openai-completions' || !/^gemini-/i.test(modelId))) {
+  if (native && !supportsNativeMedia({ api, modelId })) {
     throw new Error('media_input_unsupported: 当前模型连接不能读取原生音视频，请使用画面检查或多模态 Gemini 连接');
   }
   const { content: ignored, ...result } = data.result;
