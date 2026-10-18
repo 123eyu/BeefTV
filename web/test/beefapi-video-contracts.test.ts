@@ -5,6 +5,27 @@ import { defaultModelCapabilityConfig, modelCapabilityConfigFor } from "../src/l
 import { createVideoGenerationsTask } from "../src/services/api/video-provider-newapi";
 import { createVideoTransport } from "../src/services/api/video-transport";
 import { videoResponseTools } from "../src/services/api/video-response";
+import { buildGenerationConfig } from "../src/lib/canvas/canvas-generation-config";
+import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
+import { backendProviderConfig } from "../src/services/api/generation-task";
+
+test("Kling capability repair preserves profile defaults and explicit canvas audio choices through task config", () => {
+    const model = "kling-video-v3";
+    for (const audioDefault of [false, true]) {
+        const capabilityConfig = defaultModelCapabilityConfig("newapi", model);
+        capabilityConfig.video!.generateAudio = { supported: false, default: audioDefault };
+        const channel = createModelChannel({ id: "beefapi", baseUrl: "https://beeftv.app", models: [model], modelProfiles: [{ model, capability: "video", protocol: "newapi", capabilityConfig }] });
+        const snapshot = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [channel], videoModel: `beefapi::${model}`, videoGenerateAudio: String(!audioDefault) } }).config;
+        expect(modelCapabilityConfigFor(snapshot, `beefapi::${model}`).video!.generateAudio).toEqual({ supported: true, default: audioDefault });
+        for (const selected of [undefined, "false", "true"] as const) {
+            const node: CanvasNodeData = { id: "video", type: CanvasNodeType.Video, title: "fixture", position: { x: 0, y: 0 }, width: 320, height: 180, metadata: { model: `beefapi::${model}`, generateAudio: selected } };
+            const config = resolveModelRequestConfig(buildGenerationConfig(snapshot, node, "video"), `beefapi::${model}`);
+            const expected = selected === undefined ? audioDefault : selected === "true";
+            expect(config.videoGenerateAudio).toBe(String(expected));
+            expect(backendProviderConfig(config, "video")).toMatchObject({ videoGenerateAudio: String(expected), videoSeconds: "5", model });
+        }
+    }
+});
 
 test("Seedance repaired catalog exposes audio control and sends explicit false", async () => {
     const model = "seedance-2.0-fast";

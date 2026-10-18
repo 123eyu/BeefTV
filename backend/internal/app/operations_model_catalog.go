@@ -7,6 +7,7 @@ import (
 	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
+	"infinite-canvas/backend/internal/providerpreset"
 )
 
 // Desktop execution uses its provider snapshot, not hosted database channels.
@@ -41,14 +42,29 @@ func (s *operationSession) AgentModelCatalog() (*modelcatalog.CatalogResponse, e
 			continue
 		}
 		cm := model.ChannelModel{ID: item.Model, ModelKey: item.Model, DisplayName: item.DisplayName, Capability: item.Capability, Protocol: model.ChannelInterfaceType(item.Protocol), Enabled: true}
+		if item.Capability == "video" {
+			if _, protocol, ok := providerpreset.HostedBeefAPIVideoProfile(item.BaseURL, item.Model); ok {
+				cm.Protocol = model.ChannelInterfaceType(protocol)
+			}
+		}
 		capabilityConfig := item.CapabilityConfig
 		if capabilityConfig == nil {
-			capabilityConfig = modelcatalog.DefaultModelCapabilityConfigForModel(item.Protocol, item.Model)
+			capabilityConfig = modelcatalog.DefaultModelCapabilityConfigForModel(string(cm.Protocol), item.Model)
 		}
 		if capabilityConfig != nil {
 			config, err := json.Marshal(capabilityConfig)
 			if err != nil {
 				return nil, err
+			}
+			if item.Capability == "video" {
+				parsed, err := modelcatalog.DecodeModelCapabilityConfig(string(config))
+				if err != nil {
+					continue
+				}
+				config, err = json.Marshal(modelcatalog.ApplyLocalVideoContract(item, parsed))
+				if err != nil {
+					return nil, err
+				}
 			}
 			cm.CapabilityConfigJSON = string(config)
 		}
