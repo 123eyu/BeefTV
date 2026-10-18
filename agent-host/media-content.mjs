@@ -51,6 +51,38 @@ export function mediaToolResult(data, operation, { api, modelId, nativePartStore
   return { content };
 }
 
+// Public facts are a bounded projection of a successful Go result. Call only
+// after mediaToolResult validates/converts the content; arguments are not proof.
+export function mediaFacts(result, operation) {
+  if (!['media.overview', 'media.inspect', 'media.check'].includes(operation)) return undefined;
+  const source = result?.source;
+  const time = value => Number.isSafeInteger(value) && value >= 0;
+  if (!source || typeof source.resourceId !== 'string' || typeof source.version !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(source.resourceId) || !/^[a-f0-9]{64}$/.test(source.version) ||
+      !time(result.durationMs) || result.durationMs === 0 || !time(source.startMs) || !time(source.endMs) || source.endMs <= source.startMs || source.endMs > result.durationMs || typeof result.hasAudio !== 'boolean') return undefined;
+  const parts = result.content;
+  if (!Array.isArray(parts)) return undefined;
+  let mode;
+  if (operation === 'media.check' && parts.length === 0) mode = 'check';
+  else if (parts.length && parts.every(part => part.type === 'image' && part.mimeType?.startsWith('image/'))) mode = 'frames';
+  else if (operation === 'media.inspect' && parts.length === 1 && parts[0].type === 'media') {
+    mode = { 'audio/wav': 'audio', 'video/mp4': 'video' }[parts[0].mimeType];
+  }
+  if (!mode || parts.some(part => part.source?.resourceId !== source.resourceId || part.source?.version !== source.version ||
+      !time(part.source.startMs) || !time(part.source.endMs) || part.source.startMs < source.startMs || part.source.endMs > source.endMs || part.source.endMs < part.source.startMs ||
+      (mode !== 'frames' && (part.source.startMs !== source.startMs || part.source.endMs !== source.endMs)))) return undefined;
+  const node = typeof source.nodeId === 'string' && /^[A-Za-z0-9_-]{1,160}$/.test(source.nodeId) ? { nodeId: source.nodeId } : {};
+  const facts = { source: { resourceId: source.resourceId, version: source.version, startMs: source.startMs, endMs: source.endMs, ...node },
+    mode, durationMs: result.durationMs, hasAudio: result.hasAudio };
+  if (mode === 'check') {
+    for (const key of ['meanDb', 'peakDb']) if (typeof result[key] === 'number' && Number.isFinite(result[key])) facts[key] = result[key];
+    if (Array.isArray(result.silenceIntervals) && result.silenceIntervals.length <= 5000 && result.silenceIntervals.every(interval =>
+      time(interval?.startMs) && time(interval?.endMs) && interval.startMs >= source.startMs && interval.endMs <= source.endMs && interval.endMs > interval.startMs)) {
+      facts.silenceIntervals = result.silenceIntervals.map(({ startMs, endMs }) => ({ startMs, endMs }));
+    }
+  }
+  return facts;
+}
+
 // Only backend-produced tool results are eligible. History stays in order:
 // attachments follow the entire consecutive tool-result group, never the last
 // assistant message. The transport calls this again so a swallowed extension

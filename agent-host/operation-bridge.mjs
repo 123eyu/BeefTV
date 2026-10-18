@@ -6,7 +6,7 @@
 import { collectTurnEffects, extendWriteChain, rebaseOntoWriteChain } from './canvas-turn.mjs';
 import { toolOperationId } from './session-identity.mjs';
 import { budgetError, spendToolStep } from './request-budget.mjs';
-import { mediaToolResult } from './media-content.mjs';
+import { mediaToolResult, mediaFacts } from './media-content.mjs';
 import { canvasReadView, CANVAS_READ_VIEW_SCHEMA } from './canvas-read-view.mjs';
 import { canvasWriteView, canvasWriteViewDescription } from './canvas-write-view.mjs';
 
@@ -171,7 +171,6 @@ export function createOperationBridge({
           if (chainWrite && generation.persistEffects) await generation.persistEffects();
           assertToolGeneration(generation, descriptor, signal);
           const data = await opsRequest('POST', `/ops/${descriptor.id}`, { opId, params }, signal, turn.turnId);
-          log.push({ toolCallId: toolCallId || null, tool: descriptor.id, args: params, isError: false, ms: Date.now() - started, replayed: !!data?.replayed, ...rebaseNote });
           // A replay can recover the receipt lost between business commit and
           // the durable checkpoint. Only our persisted request may advance
           // its own canvas chain by exactly one; older replays never reset it.
@@ -192,8 +191,12 @@ export function createOperationBridge({
           if (descriptor.id !== 'canvas.task.bind' || !data?.replayed) {
             collectTurnEffects(turn, descriptor.id, data?.result, opId);
           }
-          return mediaToolResult(descriptor.id === 'canvas.get' ? canvasReadView(data, readView) : canvasWriteView(data, descriptor.id, params), descriptor.id, { ...mediaModel, originTurnId:turn.turnId,
+          const converted = mediaToolResult(descriptor.id === 'canvas.get' ? canvasReadView(data, readView) : canvasWriteView(data, descriptor.id, params), descriptor.id, { ...mediaModel, originTurnId:turn.turnId,
             ...(generation.durable ? {nativePartStore} : {}) });
+          const facts = mediaFacts(data?.result, descriptor.id);
+          log.push({ toolCallId: toolCallId || null, tool: descriptor.id, args: params, isError: false, ms: Date.now() - started, replayed: !!data?.replayed, ...rebaseNote,
+            ...(facts ? { mediaFacts: facts } : {}) });
+          return converted;
         } catch (error) {
           log.push({ toolCallId: toolCallId || null, tool: descriptor.id, args: params, isError: true, error: error.message, ms: Date.now() - started, ...rebaseNote });
           throw error;

@@ -124,12 +124,21 @@ try {
   } else assert.equal(history.turns[0].error, null, JSON.stringify(history));
   assert.equal((await backend('/assistant/runtime/turns/' + config.turnId)).value.data.open, false);
   assert.equal(mainCalls,config.failAfterMedia ? 4 : 5); assert.match(history.sessionId,/^durable:/);
+  const successfulReads = history.turns[0].toolCalls.filter(call => call.tool === 'media.inspect');
+  assert.equal(successfulReads.length,2);
+  const recordedFacts = successfulReads.map(call => call.mediaFacts);
+  assert.deepEqual(recordedFacts.map(fact => [fact.mode,fact.source.startMs,fact.source.endMs]),[['audio',0,15000],['video',0,15000]]);
+  assert.equal(recordedFacts[0].source.resourceId,config.audio.resourceId);
+  assert.equal(recordedFacts[1].source.resourceId,config.video.resourceId);
+  assert(!JSON.stringify(recordedFacts).includes('data:'));
   assert.equal(summarizations.length,0,'bounded native media must not become text-token overflow: '+JSON.stringify(summarizations));
   assert(captured.some(part=>part.mime==='audio/wav'));
   if(config.failAfterMedia) {
     // Actual host process restart, same official SQLite and native-parts files.
     // Increasing the model budget must not discard successful prior tool reads.
     await kill('SIGTERM'); env.BEEFTV_AGENT_TOTAL_REQUEST_BUDGET='0'; await start();
+    const restored = await (await api('/history?canvasId='+config.canvasId)).json();
+    assert.deepEqual(restored.turns[0].toolCalls.filter(call=>call.tool==='media.inspect').map(call=>call.mediaFacts),recordedFacts);
   }
   await api('/chat',{canvasId:config.canvasId,sessionId:history.sessionId,turnId:config.nextTurnId,message:'在当前画布权限继续讨论已有素材',revisionBefore:1});
   await until(async()=>{history=await(await api('/history?canvasId='+config.canvasId)).json();return history.turns?.length===2});

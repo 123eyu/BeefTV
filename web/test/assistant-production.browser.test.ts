@@ -7,6 +7,7 @@ let currentSession = "s1", clearPlan = false, clearNextPlan = false;
 let liveStream: ReadableStreamDefaultController<Uint8Array> | null = null;
 let streamActive = false;
 let liveText = "";
+let historyToolCalls: unknown[] = [];
 let chatStarted: Promise<void>, onChatStarted: () => void;
 const chats: Array<{ message: string; selectedNodeIds: string[] }> = [];
 const plan = { goal: "完成雨夜相遇的两个镜头", items: [
@@ -17,7 +18,7 @@ let livePlan = plan;
 const turn = { turnId: "t1", userText: "做两个雨夜相遇镜头", selectedNodeIds: [], reply: "分镜和首帧方案已准备好。", toolCalls: [], change: null,
     proposals: [{ proposalId: "p1", kind: "image", nodeIds: ["source"], model: "图片模型", modelKey: "test::image" }], error: null, cancelled: false, createdAt: "2026-10-18" };
 beforeEach(() => {
-    chats.length = 0; currentSession = "s1"; clearPlan = false; clearNextPlan = false; streamActive = false; liveText = ""; livePlan = plan;
+    chats.length = 0; currentSession = "s1"; clearPlan = false; clearNextPlan = false; streamActive = false; liveText = ""; livePlan = plan; historyToolCalls = [];
     chatStarted = new Promise(resolve => { onChatStarted = resolve; });
 });
 
@@ -43,7 +44,7 @@ beforeAll(async () => {
         if (pathname.endsWith("/assistant/sessions") && req.method === "POST") { currentSession = "new"; return ok({ sessionId: currentSession }); }
         if (pathname.endsWith("/assistant/sessions")) return ok({ currentSessionId: currentSession, sessions: [{ sessionId: "s1", title: "雨夜创作" }, { sessionId: "s2", title: "另一条对话" }] });
         if (pathname.endsWith("/assistant/sessions/activate")) { currentSession = (await req.json()).sessionId; return ok({ sessionId: currentSession }); }
-        if (pathname.endsWith("/assistant/history")) return ok({ sessionId: currentSession, turns: currentSession === "s1" ? [turn] : [],
+        if (pathname.endsWith("/assistant/history")) return ok({ sessionId: currentSession, turns: currentSession === "s1" ? [{ ...turn, toolCalls: historyToolCalls }] : [],
             ...(streamActive ? { active: { turnId: "live-turn", requestId: "live-request", userText: "开始实时制作", selectedNodeIds: [], status: "running", streamed: liveText }, plan: livePlan } : currentSession === "s1" && !clearPlan ? { plan } : {}) });
         if (pathname.endsWith("/assistant/chat")) {
             const body = await req.json(); chats.push(body);
@@ -100,6 +101,37 @@ test("活跃观察流实时显示完整文字与制作计划，刷新从历史�
     }
 }, 30000);
 afterAll(async () => { await browser?.close(); server?.stop(true); });
+
+test("媒体检查事实经真实历史 hook 显示并在刷新后保留，不发送模型请求", async () => {
+    const source = { resourceId: "final-video", version: "a".repeat(64), startMs: 5000, endMs: 12000 };
+    historyToolCalls = [
+        { tool: "media.inspect", isError: false, mediaFacts: { source, mode: "video", durationMs: 18000, hasAudio: true } },
+        { tool: "media.check", isError: false, mediaFacts: { source: { ...source, startMs: 0, endMs: 18000 }, mode: "check", durationMs: 18000, hasAudio: true,
+            silenceIntervals: [{ startMs: 0, endMs: 18000 }], meanDb: -91, peakDb: -91 } },
+    ];
+    const page = await browser.newPage({ viewport: { width: 390, height: 900 } });
+    const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+    try {
+        await page.goto(server.url.toString().replace("localhost", "127.0.0.1"));
+        for (let attempt = 0; attempt < 2; attempt++) {
+            const facts = page.getByLabel("媒体检查记录");
+            await facts.waitFor();
+            expect(await facts.textContent()).toContain("视频片段读取：5–12 秒 · 全长 18 秒");
+            expect(await facts.textContent()).toContain("该检测区间全段静音");
+            expect(await facts.textContent()).not.toContain("合格");
+            expect(await page.getByLabel("当前制作计划").textContent()).toContain("步骤进度 · 1/2");
+            await page.locator(".canvas-assistant-sidebar").evaluate(element => Promise.all(element.getAnimations().map(animation => animation.finished)));
+            expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+            expect(chats).toHaveLength(0);
+            if (!attempt) await page.reload();
+        }
+        if (process.env.BEEFTV_MEDIA_FACTS_SCREENSHOT) {
+            await page.getByLabel("媒体检查记录").scrollIntoViewIfNeeded();
+            await page.screenshot({ path: process.env.BEEFTV_MEDIA_FACTS_SCREENSHOT, fullPage: true });
+        }
+        expect(errors).toEqual([]);
+    } finally { await page.close(); }
+}, 30000);
 
 test("真实侧栏保留草稿与产物引用，由用户发送检查，并更新/清空当前会话计划", async () => {
     const page = await browser.newPage({ viewport: { width: 390, height: 900 } });

@@ -12,6 +12,7 @@ import { portraitPriceLines, seedancePortraitModel } from "@/lib/seedance-portra
 import { portraitGenerationError } from "@/lib/model-selection";
 import { CanvasAssistantAttachments } from "./canvas-assistant-attachments";
 import { CanvasAssistantOutputs } from "./canvas-assistant-outputs";
+import { CanvasAssistantMediaFacts } from "./canvas-assistant-media-facts";
 
 type Props = {
     turn: AssistantTurn;
@@ -74,6 +75,7 @@ export function CanvasAssistantTurnView({ turn, status, handledProposals, propos
                 {(input.skills || []).map(skill => <span className="canvas-assistant-chip" key={skill.skillId}>{assistantSkillLabel(skill)}</span>)}
             </div>) : (turn.supplements || []).map((text, index) => <CanvasAssistantUserMessage key={`supplement:${index}`} text={text} selectedCount={0} />)}
             {turn.reply ? <CanvasAssistantReply text={turn.reply} /> : null}
+            <CanvasAssistantMediaFacts calls={turn.toolCalls || []} nodes={nodes} />
             {turn.outputs?.length ? <CanvasAssistantOutputs outputs={turn.outputs} /> : null}
             {turn.cancelled && stoppedWithChanges ? (
                 <div className="canvas-assistant-incomplete" role="status">

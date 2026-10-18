@@ -42,7 +42,7 @@ const PLAN_STATUS_TEXT: Record<AssistantPlan["items"][number]["status"], string>
 export function CanvasAssistantPlan({ plan }: { plan: AssistantPlan | null | undefined }) {
     if (!plan?.items.length) return null;
     return <details className="canvas-assistant-card canvas-assistant-plan" open aria-label="当前制作计划">
-        <summary>制作计划 · 已完成 {plan.items.filter(item => item.status === "done").length}/{plan.items.length}</summary>
+        <summary>步骤进度 · {plan.items.filter(item => item.status === "done").length}/{plan.items.length}</summary>
         {plan.goal ? <p>{plan.goal}</p> : null}
         <ol>{plan.items.map(item => <li key={item.id}>
             <span>{item.title}</span><span className="canvas-assistant-meta">{PLAN_STATUS_TEXT[item.status]}</span>

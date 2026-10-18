@@ -39,6 +39,18 @@ export type AgentToolCall = {
     isError?: boolean;
     error?: string;
     replayed?: boolean;
+    /** Whitelisted successful media result, not model prose or tool arguments. */
+    mediaFacts?: AssistantMediaFacts;
+};
+
+export type AssistantMediaFacts = {
+    source: { resourceId: string; version: string; startMs: number; endMs: number; nodeId?: string };
+    mode: "frames" | "video" | "audio" | "check";
+    durationMs: number;
+    hasAudio: boolean;
+    silenceIntervals?: { startMs: number; endMs: number }[];
+    meanDb?: number;
+    peakDb?: number;
 };
 
 /** 一个回合真正落到画布上的改动；没写任何东西时后端给 null。 */
