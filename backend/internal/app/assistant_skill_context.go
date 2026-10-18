@@ -20,6 +20,12 @@ func (s *Service) ChangeAssistantSkillContext(userID, canvasID string, change as
 	})
 }
 
+func (s *Service) LoadAssistantTurnSkillContext(userID, canvasID, turnID string, change assistantturns.SkillContextChange) (*assistantturns.SkillContext, error) {
+	return s.assistantTurnsOrInit().LoadTurnSkillContextValidated(userID, canvasID, turnID, change, func(tx *gorm.DB, pins []skills.Pin) ([]skills.Pin, error) {
+		return validateAssistantSkillContextPins(skills.New(s.repo.WithTx(tx), s.dataDir, nil), userID, pins)
+	})
+}
+
 func skillContextResourceError(err error) (*kernel.AppError, bool) {
 	var appErr *kernel.AppError
 	ok := errors.As(err, &appErr) && appErr != nil && appErr.Status >= 400 && appErr.Status < 500 && appErr.Reason != "skill_instruction_too_large"

@@ -73,6 +73,9 @@ func (s *Service) ArmContinuation(userID string, input ContinuationInput) (*Cont
 		if source.UserID != userID || source.CanvasID != input.CanvasID || source.DurableSessionID != input.SessionID || source.Undone || source.effectiveState() != StateSettled || Mode(source.PermissionMode) == PermissionReadOnly {
 			return continuationError("scope_changed")
 		}
+		if source.ContinuationInvalidated {
+			return continuationError("intent_changed")
+		}
 		context, err := s.getContext(tx, userID, input.CanvasID, input.SessionID)
 		if err != nil {
 			return err
@@ -458,7 +461,23 @@ func (s *Service) CancelContinuations(userID, canvasID, sessionID string, pendin
 	})
 }
 
-func (s *Service) cancelContinuations(tx *gorm.DB, userID, canvasID, sessionID, sourceTurnID string, pendingOnly bool) error {
+func (s *Service) cancelContinuations(tx *gorm.DB, userID, canvasID, sessionID, sourceTurnID string, pendingOnly bool, exceptSource ...string) error {
+	// The source turn is the durable intent token. Mark it even when confirmation
+	// preparation has not created a continuation yet; cancelling existing rows
+	// alone lets a delayed arm resurrect the old plan after new user intent.
+	sources := tx.Model(&model.AssistantTurn{}).Where("user_id = ? AND canvas_id = ?", userID, canvasID)
+	if sessionID != "" {
+		sources = sources.Where("durable_session_id = ?", sessionID)
+	}
+	if sourceTurnID != "" {
+		sources = sources.Where("turn_id = ?", sourceTurnID)
+	}
+	if len(exceptSource) > 0 && exceptSource[0] != "" {
+		sources = sources.Where("turn_id <> ?", exceptSource[0])
+	}
+	if err := sources.Update("continuation_invalidated", true).Error; err != nil {
+		return err
+	}
 	states := []string{"waiting", "claimed"}
 	if !pendingOnly {
 		states = append(states, "running")

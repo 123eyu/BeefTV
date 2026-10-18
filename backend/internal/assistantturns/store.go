@@ -146,6 +146,8 @@ func recordFromModel(row *model.AssistantTurn) (Record, error) {
 		seen[pin.SkillID] = true
 	}
 	rec := Record{
+		ContinuationInvalidated: row.ContinuationInvalidated,
+
 		DurableNativeSources: row.DurableNativeSources,
 		DurableSessionID:     row.DurableSessionID,
 		PermissionMode:       Mode(row.PermissionMode),
@@ -191,6 +193,8 @@ func recordToModel(rec Record, now time.Time) *model.AssistantTurn {
 	pinsJSON, _ := json.Marshal(SortedSkillPins(rec.SkillPins))
 	snapshotsJSON, _ := json.Marshal(rec.CanvasSnapshots)
 	row := &model.AssistantTurn{
+		ContinuationInvalidated: rec.ContinuationInvalidated,
+
 		DurableNativeSources: rec.DurableNativeSources,
 		DurableSessionID:     rec.DurableSessionID,
 		PermissionMode:       Mode(rec.PermissionMode),

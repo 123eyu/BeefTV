@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"infinite-canvas/backend/internal/app"
 	"infinite-canvas/backend/internal/assistantturns"
 	"infinite-canvas/backend/internal/model"
@@ -130,5 +131,120 @@ func TestAssistantContinuationHTTPReusesTrustedTurnAndExcludesComposerInputs(t *
 	rejected := env.call(t, http.MethodPost, "/assistant/continuations/"+id+"/claim", `{}`)
 	if rejected.Code == 200 {
 		t.Fatal("cancelled claim revived")
+	}
+}
+
+func TestAssistantContinuationSkillLoadKeepsItsBoundTurnAuthorized(t *testing.T) {
+	env := newAssistantTestEnv(t, nil)
+	owner, err := env.service.LocalWorkspaceOwner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := env.service.UserCanvasProject(owner.ID, env.canvasID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	json.Unmarshal(raw, &doc)
+	node := doc["nodes"].([]any)[0].(map[string]any)
+	node["type"] = "image"
+	node["metadata"] = map[string]any{"taskId": "skill-load-task", "taskStatus": "failed", "status": "error"}
+	raw, _ = json.Marshal(doc)
+	if _, err = env.service.UpsertUserCanvasProject(owner.ID, raw); err != nil {
+		t.Fatal(err)
+	}
+	source := "aabbccddffee"
+	env.beginTurn(t, source, app.AssistantTurnInput{})
+	if err = env.service.BindAssistantDurableSession(owner.ID, source, skillSessionOne, false); err != nil {
+		t.Fatal(err)
+	}
+	if err = env.service.FinalizeAssistantTurn(source); err != nil {
+		t.Fatal(err)
+	}
+	row, err := env.service.ArmAssistantContinuation(owner.ID, assistantturns.ContinuationInput{CanvasID: env.canvasID, SessionID: skillSessionOne, SourceTurnID: source, ProposalID: "gp-load", Kind: "image", NodeIDs: []string{"n1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation := "proposal:gp-load:n1"
+	if err = env.service.RegisterAssistantContinuationManifest(owner.ID, row.ID, assistantturns.ContinuationManifest{SourceNodeID: "n1", Submissions: []assistantturns.ContinuationSubmission{{OperationID: operation, OutputNodeIDs: []string{"n1"}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err = env.service.Database().Create(&model.Task{ID: "skill-load-task", UserID: owner.ID, ProjectID: env.canvasID, ClientOperationID: &operation, Type: "canvas_image", Status: model.TaskStatusFailed, InputJSON: `{"metadata":{"sourceNodeId":"n1","nodeId":"n1"}}`}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err = env.service.ClaimAssistantContinuation(owner.ID, row.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = env.service.VerifyAssistantContinuation(owner.ID, row.ID, row.TurnID, skillSessionOne); err != nil {
+		t.Fatal(err)
+	}
+	pin := installTestSkill(t, env, owner.ID, map[string]string{"SKILL.md": "---\nname: Continue\ndescription: edit\n---\nInspect then edit."})
+	path := "/assistant/runtime/canvases/" + env.canvasID + "/skill-context"
+	headers := map[string]string{"X-Beeftv-Agent-Token": assistantTestHostToken}
+	for _, body := range []string{
+		`{"sessionId":"` + skillSessionOne + `","origin":"skill_load","action":"activate","requestId":"spoof","expectedRevision":0}`,
+		`{"sessionId":"` + skillSessionOne + `","origin":"skill_load","turnId":"` + row.TurnID + `","action":"new_scope","requestId":"spoof","expectedRevision":0}`,
+	} {
+		if response := env.callWithHeaders(t, http.MethodPost, path, body, headers); response.Code != 400 {
+			t.Fatal("invalid load identity accepted", response.Code)
+		}
+	}
+	for index := 0; index < 2; index++ {
+		ctx, err := env.service.AssistantSkillContext(owner.ID, env.canvasID, skillSessionOne)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := json.Marshal(map[string]any{"sessionId": skillSessionOne, "turnId": row.TurnID, "origin": "skill_load", "action": "activate", "requestId": fmt.Sprintf("select:tool:%d", index), "expectedRevision": ctx.Revision, "pins": []any{pin}})
+		if response := env.call(t, http.MethodPost, path, string(body)); response.Code != http.StatusForbidden {
+			t.Fatal("UI spoofed host skill_load", response.Code)
+		}
+		response := env.callWithHeaders(t, http.MethodPost, path, string(body), headers)
+		if response.Code != 200 {
+			t.Fatalf("skill_load %d %s", response.Code, response.Body.String())
+		}
+		// Replay must not advance the scope or revoke the turn, either.
+		replay := env.callWithHeaders(t, http.MethodPost, path, string(body), headers)
+		if replay.Code != 200 {
+			t.Fatal(replay.Code, replay.Body.String())
+		}
+		if _, err = env.service.BoundAssistantSkillContext(owner.ID, row.TurnID, skillSessionOne); err != nil {
+			t.Fatal("skill_load closed its own turn", err)
+		}
+		if _, allowed, scopeErr := env.service.AssistantTurnScopeForHost(owner.ID, row.TurnID); scopeErr != nil || !allowed {
+			t.Fatal("skill_load revoked operation authorization", scopeErr)
+		}
+		var stored model.AssistantContinuation
+		env.service.Database().First(&stored, "id = ?", row.ID)
+		if stored.State != "running" || stored.ScopeRevision != ctx.Revision+1 {
+			t.Fatalf("lost continuation %+v", stored)
+		}
+	}
+	ctx, _ := env.service.AssistantSkillContext(owner.ID, env.canvasID, skillSessionOne)
+	// An explicit user/session selection is not a runtime skill load.
+	body, _ := json.Marshal(map[string]any{"sessionId": skillSessionOne, "action": "activate", "requestId": "user-selection", "expectedRevision": ctx.Revision, "pins": []any{pin}})
+	response := env.callWithHeaders(t, http.MethodPost, path, string(body), headers)
+	if response.Code != 200 {
+		t.Fatal(response.Code, response.Body.String())
+	}
+	if _, err = env.service.BoundAssistantSkillContext(owner.ID, row.TurnID, skillSessionOne); err == nil {
+		t.Fatal("user selection did not revoke automatic turn")
+	}
+	// A new normal user turn's own explicit initial selection is valid new intent.
+	fresh := "aabbccddffaa"
+	env.beginTurn(t, fresh, app.AssistantTurnInput{})
+	if err = env.service.BindAssistantDurableSession(owner.ID, fresh, skillSessionOne, false); err != nil {
+		t.Fatal(err)
+	}
+	ctx, _ = env.service.AssistantSkillContext(owner.ID, env.canvasID, skillSessionOne)
+	body, _ = json.Marshal(map[string]any{"sessionId": skillSessionOne, "turnId": fresh, "action": "activate", "requestId": "select:new-user", "expectedRevision": ctx.Revision, "pins": []any{pin}})
+	response = env.callWithHeaders(t, http.MethodPost, path, string(body), headers)
+	if response.Code != 200 {
+		t.Fatal(response.Code, response.Body.String())
+	}
+	if err = env.service.FinalizeAssistantTurn(fresh); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = env.service.ArmAssistantContinuation(owner.ID, assistantturns.ContinuationInput{CanvasID: env.canvasID, SessionID: skillSessionOne, SourceTurnID: fresh, ProposalID: "gp-fresh", Kind: "image", NodeIDs: []string{"n1"}}); err != nil {
+		t.Fatal("initial user selection invalidated its new proposals", err)
 	}
 }

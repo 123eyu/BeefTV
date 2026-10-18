@@ -274,11 +274,11 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     entry.turn.plan = null;
     return skills.changeContext(entry,{action:'ack_reset',scopeId:context.scopeId,expectedRevision:context.revision},'');
   }
-  async function prepareSkillContext(entry, pins, requestId, turnId, {append=false}={}) {
+  async function prepareSkillContext(entry, pins, requestId, turnId, {append=false,skillLoad=false}={}) {
     let context = await resetPendingScope(entry,await readSkillContext(entry,turnId));
     if (pins?.length) {
       const values=append?[...context.activePins.filter(pin=>!pins.some(next=>next.skillId===pin.skillId)),...pins]:pins;
-      context=await skills.changeContext(entry,{action:'activate',pins:values,expectedRevision:context.revision,requestId:`select:${requestId}`},turnId);
+      context=await skills.changeContext(entry,{action:'activate',pins:values,expectedRevision:context.revision,requestId:`select:${requestId}`,...(skillLoad?{origin:'skill_load'}:{})},turnId);
       const current=await readSkillContext(entry,turnId);
       if (current.scopeId!==context.scopeId || current.revision!==context.revision) throw fail('skill_context_changed');
     }
@@ -389,7 +389,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
           if (!item) throw fail('skill_not_installed: 技能目录里没有这个 id');
           const [resource] = await loadPinnedSkills({ pins: [item.pin], signal,
             readVersion: (pin, readSignal) => skills.readVersion(entry, pin, readSignal, entry.turn.turnId) });
-          await prepareSkillContext(entry,[item.pin],`tool:${_toolCallId}`,entry.turn.turnId,{append:true});
+          await prepareSkillContext(entry,[item.pin],`tool:${_toolCallId}`,entry.turn.turnId,{append:true,skillLoad:true});
           await update(entry, (doc) => {
             const loaded = doc.loadedSkills || [];
             if (!loaded.some((record) => sameSkillPin(record, resource.pin))) doc.loadedSkills = [...loaded, loadedSkillRecord(resource, 'tool', entry.turn.turnId)];

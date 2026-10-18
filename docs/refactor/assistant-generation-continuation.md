@@ -23,6 +23,8 @@
 
 - Stop 先永久取消 Go 授权，再对该回执的固定 session/request 使用现有 targeted Stop；不会取消原收费媒体任务或不相干的新用户回合。已到供应商的在途调用仍遵循现有停止边界。
 - 新用户消息 admission、显式新建/切换会话取消尚未运行的授权；已在执行的用户补充沿既有 steer 行为。新 scope 或技能 revision 改变使同会话接续失效。成功 Undo 在恢复画布的同事务取消源回合授权，Undo 拒绝则保留授权。
+- 取消同时为已有源回合设置持久撤销标记（schema v19），即使旧确认仍在准备、尚无接续回执，也不能稍后绑定到新意图。旧提案不能在新消息后重新授权自动接续；应由当前任务产生新提案。普通回合保存不能清除标记。新用户回合自己的初始技能选择保留该新回合的提案资格。
+- 宿主真实 `skill_load` 用 host-only 的 `origin: skill_load` 标记，要求绑定当前开放轮且操作为 activate；在同一事务验证身份、技能 CAS 和资源后同步自身回执的 scope revision。加载原 pin 或新 pin 都不会取消自己。用户显式技能选择、clear、new_scope 仍撤销旧自动授权，客户端不能借此标记绕过宿主身份。
 - 每次 runtime/操作授权再验证原 scope、未撤销和未取消。Go 明确取消/范围改变时 host 将尚未提交的记录结算为停止，避免残留 active 锁住会话；数据库/网络等未知错误不当作取消成功。
 - Go claim 后响应丢失可回读同一身份；官方提交后丢响应按既有 history 恢复。前端不会把自动消息暴露为「新用户请求重试」。手动重新读取只重新核对原回执。
 - 如果 manifest 已登记但没有可靠任务回执，或只提交了部分原计划，授权保持未知，不自动补齐收费提交。用户可停止并请求新的明确方案。旧批次没有回执时仍走手动检查。
@@ -52,3 +54,13 @@ Go SQLite fixture：单图/视频、原生多输出/拆单、缺任务、删除�
 最后的 HTTP fixture 还覆盖：客户端自报的更高权限、草稿与无关引用被服务端固定回执替换；首次 host 503 保留同一开放回合，重试不创建新回合；取消后的 runtime 回读允许宿主确认停止。原生三输出 fixture 使用真实 canonical task binding：所有 canonical output 的 binding 指向任务主节点，各输出按不可变 `input.metadata.outputNodeIds[index]` 分配。
 
 本地 stdout 保存在 `/tmp/beeftv-auto-continuation-{web,go,final-admission,final-host,final-database,typecheck}.log`，不纳入源码。没有浏览器截图、真实模型质量、真实付费生成或完整作品导出的验证结论；这些由集成后的独立 review 和真实创作验收补齐。依赖复用隔离 worktree 外现有 `node_modules` 符号链接，未安装或修改依赖，符号链接不纳入提交。
+
+### 独立审查后三项修复
+
+基于 `42d688ab`，先补回归再修复：
+
+- 实际 hook 源码加最小 hooks/timer 适配器，先观察到唯一终态事件后 `claimCount=1`、没有发送；加入 dirty 标记后，旧 waiting 响应返回会自动补查，恰好发送一次。适配器隔离在子进程，不能当作浏览器验收。
+- 真实 Go 临时库先取消、再让未登记的旧确认 arm：Stop、新消息、换会话、new_scope/ack、clear、显式选择六种情况原来全部误授权。现在重开数据库仍拒绝，旧回合迟到保存不能抹掉撤销；新用户回合仍可授权新提案。
+- 真实 host-only HTTP 路由加载合法安装技能：原实现第一次 activate 就取消自身，随后 404。现在加载新 pin、重复加载、请求重放后，自动轮仍 running/open，绑定上下文及后续操作授权可用；无宿主身份、无绑定轮或伪造 new_scope 均拒绝，显式用户选择仍撤销。
+
+针对验证：前端原四文件 57 pass/208 assertions；typecheck exit 0。Go `go test ./internal/assistantturns ./internal/database ./internal/handler -run 'Test(Continuation\|AssistantContinuation\|SkillContext\|V14\|V16\|AssistantPermissions\|V13)' -count=1` 三包通过，最后另跑 `go test ./internal/database -count=1` 整包通过。`bun test durable-continuation.test.mjs durable-skills.test.mjs` 两个官方 Node wrapper 通过（接续 6 cases，技能 16 cases）；实际 skill_load 带 origin，用户重新选择不带 origin。日志为 `/tmp/beeftv-auto-review-{go-red,skill-red,hook-red,hook-green,final-go,final-host,final-web,final-typecheck,final-database}.log`，测试数据均为临时 SQLite 或本机假模型，无付费请求。

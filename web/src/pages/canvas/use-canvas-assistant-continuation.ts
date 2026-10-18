@@ -40,6 +40,7 @@ export function useCanvasAssistantContinuation(assistant: CanvasAssistantControl
     const identity = `${assistant.canvasId}:${assistant.sessionId || ""}`;
     const active = useRef(identity); active.current = identity;
     const checking = useRef(new Set<string>());
+    const dirty = useRef(new Set<string>());
     const mounted = useRef(false);
     const activeEnabled = useRef(enabled); activeEnabled.current = enabled;
     const stopped = useRef(false);
@@ -51,7 +52,8 @@ export function useCanvasAssistantContinuation(assistant: CanvasAssistantControl
         const scope = captureUserScope();
         const isCurrent = () => mounted.current && activeEnabled.current && userScopeMatches(scope) && active.current === identity && !stopped.current;
         const timer = setTimeout(() => {
-            if (checking.current.has(identity) || !isCurrent()) return;
+            if (!isCurrent()) return;
+            if (checking.current.has(identity)) { dirty.current.add(identity); return; }
             checking.current.add(identity);
             void (async () => {
                 const results = await listAssistantContinuations(assistant.canvasId, assistant.sessionId!);
@@ -72,7 +74,12 @@ export function useCanvasAssistantContinuation(assistant: CanvasAssistantControl
                         if (isCurrent()) setNotice("暂未自动继续，可手动检查结果或重新读取。");
                     }
                 }
-            })().catch(() => { if (isCurrent()) setNotice("暂时无法读取继续状态，请重新读取。"); }).finally(() => { checking.current.delete(identity); });
+            })().catch(() => { if (isCurrent()) setNotice("暂时无法读取继续状态，请重新读取。"); }).finally(() => {
+                checking.current.delete(identity);
+                // A saved result/task event can be the final event. Preserve it
+                // while an older waiting reply is in flight instead of dropping it.
+                if (dirty.current.delete(identity) && isCurrent()) setRefresh(value => value + 1);
+            });
         }, 250);
         return () => clearTimeout(timer);
     }, [identity, assistant.canvasId, assistant.sessionId, assistant.historyLoaded, assistant.streaming, assistant.sessionBusy, assistant.awaitingReceipt, enabled, nodes, refresh]);

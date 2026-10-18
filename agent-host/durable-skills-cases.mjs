@@ -168,11 +168,13 @@ test('recovering revalidates active resources but reuses the single stored expan
 test('skill_load loads an advertised skill into the transcript and records it', { timeout: 60000 }, async () => {
   const directory = temp('load');
   let fixture;
+  const changes=[];
   try {
-    fixture = await skillFixture(directory, { script: (body) => body.messages.some((m) => m.role === 'tool') ? null : { name: 'skill_load', args: { id: 'catalog-only' } } });
+    fixture = await skillFixture(directory, { contextValidation:change=>changes.push(change), script: (body) => body.messages.some((m) => m.role === 'tool') ? null : { name: 'skill_load', args: { id: 'catalog-only' } } });
     const entry = await fixture.store.createSession('canvas');
     const first = await fixture.store.submit(entry, { turnId: 'turn-1', content: '帮我切采访', userText: '帮我切采访' });
     assert.equal((await fixture.store.wait(entry, first)).error, null);
+    assert.equal(changes[0].origin,'skill_load','only the actual runtime tool marks a skill load');
     assert(fixture.payloads[0].tools.some((tool) => tool.function?.name === 'skill_load'));
     const result = fixture.payloads[1].messages.find((m) => m.role === 'tool');
     assert.match(text(result), /<skill name="采访切片" version="3" skillId="catalog-only"[\s\S]*按原话切出三个镜头。/);
@@ -181,6 +183,7 @@ test('skill_load loads an advertised skill into the transcript and records it', 
     // A fresh explicit selection re-reads the same fixed version.
     const second = await fixture.store.submit(entry, { turnId: 'turn-2', content: '继续', userText: '继续', skills: [catalogOnly] });
     assert.equal((await fixture.store.wait(entry, second)).error, null);
+    assert.equal(changes.at(-1).origin,undefined,'explicit user selection is not a runtime load');
     assert(fixture.reads.length>readCount);
     assert.equal(count(userText(fixture.payloads.at(-1)), '按原话切出三个镜头。'), 1);
   } finally { await fixture?.close(); fs.rmSync(directory, { recursive: true, force: true }); }

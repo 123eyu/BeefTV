@@ -38,3 +38,21 @@ func requireAssistantContinuations(db *gorm.DB) error {
 	}
 	return nil
 }
+
+func migrateAssistantContinuationIntentFence(tx *gorm.DB) error {
+	if err := ensureSQLiteColumn(tx, "assistant_turns", "continuation_invalidated", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	return requireAssistantContinuationIntentFence(tx)
+}
+
+func requireAssistantContinuationIntentFence(db *gorm.DB) error {
+	has, err := sqliteHasColumn(db, "assistant_turns", "continuation_invalidated")
+	if err != nil {
+		return err
+	}
+	if !has {
+		return fmt.Errorf("助手接续意图状态缺失，请启用自动迁移")
+	}
+	return nil
+}

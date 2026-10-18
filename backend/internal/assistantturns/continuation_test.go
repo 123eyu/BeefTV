@@ -138,6 +138,73 @@ func TestContinuationStableClaimUsesRealOutputsAndSurvivesReopen(t *testing.T) {
 	}
 }
 
+func TestContinuationCancellationBeforeArmInvalidatesSourceIntent(t *testing.T) {
+	for _, event := range []string{"stop", "new-message", "switch-session", "new-scope", "clear", "selection"} {
+		t.Run(event, func(t *testing.T) {
+			fx, row := continuationFixture(t, "image")
+			// The source turn exists, but its confirmation is still preparing and
+			// has not persisted an automatic-continuation receipt yet.
+			if err := fx.db.Delete(&model.AssistantContinuation{}, "id = ?", row.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			stale, err := fx.repo.AssistantTurnByID(nil, continuationSource)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if event == "new-scope" || event == "clear" || event == "selection" {
+				ctx, err := fx.turns.SkillContext(fx.userID, fx.canvasID, contextSession)
+				if err != nil {
+					t.Fatal(err)
+				}
+				action := map[string]string{"new-scope": "new_scope", "clear": "clear", "selection": "activate"}[event]
+				ctx, err = fx.turns.ChangeSkillContext(fx.userID, fx.canvasID, assistantturns.SkillContextChange{SessionID: contextSession, Action: action, ExpectedRevision: ctx.Revision, RequestID: event})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if event == "new-scope" {
+					if _, err = fx.turns.AcknowledgeSkillScope(fx.userID, fx.canvasID, contextSession, ctx.ScopeID, ctx.Revision); err != nil {
+						t.Fatal(err)
+					}
+				}
+			} else {
+				session := contextSession
+				if event == "switch-session" {
+					session = ""
+				}
+				if err := fx.turns.CancelContinuations(fx.userID, fx.canvasID, session, event != "stop"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// A delayed save of the original record cannot erase the permanent fence.
+			if err := fx.repo.SaveAssistantTurn(nil, stale); err != nil {
+				t.Fatal(err)
+			}
+			// Reopen proves the authority fence is durable, rather than a UI flag.
+			fx = fx.reopen(t)
+			_, err = fx.turns.ArmContinuation(fx.userID, assistantturns.ContinuationInput{CanvasID: fx.canvasID, SessionID: contextSession, SourceTurnID: continuationSource, ProposalID: "gp-fixture", Kind: "image", NodeIDs: []string{"source"}})
+			contextReason(t, err, "continuation_intent_changed")
+			var count int64
+			fx.db.Model(&model.AssistantContinuation{}).Count(&count)
+			if count != 0 {
+				t.Fatal("late confirmation resurrected", count)
+			}
+			fresh := "aabbccdd00112244"
+			if _, err = fx.turns.Begin(fx.userID, fx.canvasID, fresh, assistantturns.Input{PermissionMode: assistantturns.PermissionCanvas}); err != nil {
+				t.Fatal(err)
+			}
+			if err = fx.turns.BindDurableSession(fx.userID, fresh, contextSession, false); err != nil {
+				t.Fatal(err)
+			}
+			if err = fx.turns.Finalize(fresh); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = fx.turns.ArmContinuation(fx.userID, assistantturns.ContinuationInput{CanvasID: fx.canvasID, SessionID: contextSession, SourceTurnID: fresh, ProposalID: "gp-fresh", Kind: "image", NodeIDs: []string{"source"}}); err != nil {
+				t.Fatal("new intent must remain usable", err)
+			}
+		})
+	}
+}
+
 func TestContinuationNativeAndSplitWaitForCompleteImmutableSet(t *testing.T) {
 	for _, native := range []bool{false, true} {
 		t.Run(fmt.Sprint(native), func(t *testing.T) {

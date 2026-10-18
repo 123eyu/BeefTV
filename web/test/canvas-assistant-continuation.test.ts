@@ -5,6 +5,12 @@ import type {AssistantContinuation} from "@/services/api/assistant-continuation"
 const row:AssistantContinuation={id:"receipt",canvasId:"canvas",sessionId:"session",proposalId:"gp-one",sourceTurnId:"source",requestId:"generation-fixed",turnId:"fixed",message:"【自动继续】检查已生成结果",permissionMode:"canvas",state:"claimed",taskIds:["task"],nodeIds:["actual"]};
 const controller=()=>({canvasId:"canvas",sessionId:"session",historyLoaded:true,streaming:false,sessionBusy:false,awaitingReceipt:false,send:async()=>{}});
 
+test("the actual hook retains the only terminal event received during a waiting claim", async () => {
+ const child = Bun.spawn([process.execPath,"run","test/fixtures/canvas-assistant-continuation-hook.fixture.ts"], {cwd:import.meta.dir+"/..",stdout:"pipe",stderr:"pipe"});
+ const [out,err,code] = await Promise.all([new Response(child.stdout).text(),new Response(child.stderr).text(),child.exited]);
+ expect({code,output:out+err}).toEqual({code:0,output:"PASS: actual continuation hook retains its only terminal wakeup and dispatches once\n"});
+});
+
 test("automatic admission waits for loaded, idle, matching canvas and session",()=>{
  expect(canContinueAssistant(controller(),row)).toBe(true);
  for(const patch of [{historyLoaded:false},{streaming:true},{sessionBusy:true},{awaitingReceipt:true},{sessionId:"other"},{canvasId:"other"}])expect(canContinueAssistant({...controller(),...patch},row)).toBe(false);
