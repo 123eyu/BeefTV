@@ -110,3 +110,44 @@ func TestGenerationDependencyReferenceSelection(t *testing.T) {
 		})
 	}
 }
+
+func TestGenerationDependencyNodeMentionUsesNormalizedBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		prompt  string
+		blocked bool
+	}{
+		{"@[node:ready] next", false},
+		{"@[node:ready]，旁边", false},
+		{"@[node:ready]旁边", true},
+		{"@[node:ready]suffix", true},
+		{"@图片1\u3000next", false},
+		{"@图片1\u00a0next", false},
+		{"@图片1\vnext", false},
+		{"@图片1\ufeffnext", false},
+		{"@图片1\u0085next", true},
+	} {
+		t.Run(tc.prompt, func(t *testing.T) {
+			ready := imageNode("ready", "")
+			ready["metadata"] = map[string]any{"content": "ready-image"}
+			pending := imageNode("pending", "")
+			pending["metadata"] = map[string]any{"content": "old-image", "status": "loading", "taskStatus": "running"}
+			shot := imageNode("shot", "")
+			shot["metadata"] = map[string]any{"composerContent": tc.prompt}
+			probe := dependencyProbe(t, []map[string]any{ready, pending, shot}, [][2]string{{"ready", "shot"}, {"pending", "shot"}})
+			result, err := opCanvasGenerationPropose(&Context{UserID: "owner", Domain: probe}, json.RawMessage(`{"canvasId":"c1","kind":"image","nodeIds":["shot"]}`))
+			if !tc.blocked {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if result != nil || err == nil {
+				t.Fatalf("normalized mention falls back to all inputs; pending media must block: result=%v err=%v", result, err)
+			}
+			opErr := AsError(err)
+			if opErr.Reason != "generation_dependencies_not_ready" || !reflect.DeepEqual(opErr.Details["unreadyNodeIds"], []string{"pending"}) {
+				t.Fatalf("wrong rejection: %#v", opErr)
+			}
+		})
+	}
+}

@@ -58,6 +58,7 @@ type generationDependencyGraph struct {
 }
 
 var generationDependencyMention = regexp.MustCompile(`@\[(node|asset):([^\]]+)\]|@(图片|视频|音频|文本|角色|绘图)(\d+)`)
+var generationDependencyNodeMention = regexp.MustCompile(`@\[node:([^\]]+)\]`)
 
 func (g generationDependencyGraph) references(target, kind string) []string {
 	inputs := g.inputs(target, "")
@@ -76,6 +77,7 @@ func (g generationDependencyGraph) references(target, kind string) []string {
 		mentions = []string{target}
 	}
 	slots, counts := map[string]string{}, map[string]int{}
+	nodeSlots := map[string]string{}
 	for _, id := range mentions {
 		label := g.label(id)
 		// Empty placeholders are not numbered by the frontend. Pending nodes with
@@ -84,8 +86,18 @@ func (g generationDependencyGraph) references(target, kind string) []string {
 			continue
 		}
 		counts[label]++
-		slots["@"+label+strconv.Itoa(counts[label])] = id
+		token := "@" + label + strconv.Itoa(counts[label])
+		slots[token] = id
+		nodeSlots[id] = token
 	}
+	// The frontend normalizes known node IDs before applying numbered-token
+	// boundaries: @[node:ready]suffix becomes @图片1suffix, not an explicit input.
+	prompt = generationDependencyNodeMention.ReplaceAllStringFunc(prompt, func(token string) string {
+		if normalized := nodeSlots[token[len("@[node:"):len(token)-1]]; normalized != "" {
+			return normalized
+		}
+		return token
+	})
 	selected := []string{}
 	explicit := false
 	for _, match := range generationDependencyMention.FindAllStringSubmatchIndex(prompt, -1) {
@@ -128,7 +140,9 @@ func dependencyMentionBoundary(suffix string) bool {
 	if suffix == "" {
 		return true
 	}
-	return strings.ContainsRune(" \t\r\n,.!?;:，。！？；：、)]}】）", []rune(suffix)[0])
+	// ECMAScript \s (including FEFF, excluding NEL/0085), followed by the
+	// punctuation accepted by hasMentionBoundary in canvas-node-generation.ts.
+	return strings.ContainsRune(" \t\r\n\v\f\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff,.!?;:，。！？；：、)]}】）", []rune(suffix)[0])
 }
 
 func (g generationDependencyGraph) inputs(target, exclude string) []string {
