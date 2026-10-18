@@ -31,6 +31,8 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 
 `canvas.generation.propose` 是只读操作，返回的 `source` 包含 `canvasId`、`canvasRevision`、`modelConfigRevision`；模型键与配置版本来自同一次配置读取。提案不创建生成任务。
 
+`model.catalog` 可用 `capability`（`text`、`image`、`video`、`audio`）只查询所需类型。桌面视频模型的 `videoPricing` 只投影已保存、通过格式校验的渠道目录报价，不包含连接地址或凭据；缺失表示价格未知。这不是实时计费保证，也不会自动执行预算上限。
+
 首次确认同时核对这两个持久版本、未保存的编辑和确认期间的变化。旧历史中没有 `source` 的提案需要重新提出。通过核对后，生成沿用已有模型解析规则，并使用确认时复制的提示词、节点、连线和全局参数。此版本合同不包含素材库独立更新、hydrate 时解析的动态角色版本或任意远端 URL 的内容字节变化。
 
 | 路由组 | 用途 |
@@ -111,12 +113,14 @@ Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由�
 | --- | --- |
 | `GET /assistant/status` | 免身份的宿主状态查询（不含任何凭据）；未就绪时返回明确原因而不是空回复 |
 | `POST /assistant/ui-session` | 签发短期限 UI 会话凭据；需本机同源，并且能出示 owner 凭据（或显式本地引导开关） |
-| `POST /assistant/chat` | NDJSON 流式对话：先用 `session` 行返回实际 `sessionId`，再发 `text_delta` 增量与 `turn_end` 结算；断流或 `observer_error` 不表示结算。旧 JSONL 会话交接后重复请求复用其 Durable 接续会话，界面应立即保存 `sessionId` 用于恢复。可带 `references: [{kind,id}]` 追加已校验的素材/画布引用；宿主凭据与模型密钥由后端注入，页面不接触 |
+| `POST /assistant/chat` | NDJSON 流式对话：先用 `session` 行返回实际 `sessionId`，再发 `text_snapshot`（`text` 替换本轮已显示文字）、`plan`（`plan` 为最新制作计划，`null` 表示清空）与 `turn_end` 结算；断流或 `observer_error` 不表示结算。旧 JSONL 会话交接后重复请求复用其 Durable 接续会话，界面应立即保存 `sessionId` 用于恢复。可带 `references: [{kind,id}]` 追加已校验的素材/画布引用；宿主凭据与模型密钥由后端注入，页面不接触 |
 | `POST /assistant/cancel` | 取消指定画布正在进行的回合 |
 | `GET/PUT /assistant/host/config`、`POST /assistant/host/start|stop` | 宿主生命周期：需 owner 凭据 + 本机同源；启动命令只取本机配置，绝不接受请求体传入的可执行命令 |
 
 按轮撤销不依赖浏览器流或宿主的最后一条消息：轮前文档由后端在转发前落盘，变更摘要由该轮自己的写入回执重建，
 因此浏览器断流（没有 `turn_end`）、用户取消或后端在回合中途重启之后，已经落地的助手写入仍然可以撤销。
+
+活跃回合的历史响应可带 `active.streamed`，用于页面刷新后恢复当前文字；计划来自顶层 `plan`。文字仅包含本轮助手可见文本，不带推理内容、工具参数或上游错误原文。重新附着观察流会先发送当前文字和计划快照，不重新执行模型调用。
 宿主对模型请求与工具步骤各自有单轮上限（`BEEFTV_AGENT_MAX_REQUESTS_PER_TURN`、
 `BEEFTV_AGENT_MAX_TOOL_STEPS_PER_TURN`），按轮独立计数、下一轮从零开始；总预算
 `BEEFTV_AGENT_TOTAL_REQUEST_BUDGET` 默认关闭，只有显式配置才启用。

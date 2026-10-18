@@ -85,11 +85,10 @@ function snapshotLifecycle(event) {
   const tool = (event.tools || []).find((slot) => slot.status === 'running');
   return tool ? { type: 'lifecycle', phase: 'tool', toolName: tool.name } : null;
 }
-// Official Durable AgentEvent -> host NDJSON lines (existing text_delta / lifecycle shapes).
+// Official Durable events -> host lifecycle/plan lines. Visible text is projected separately.
 export function durableStreamEvents(event) {
   switch (event?.type) {
-    case 'message_update':
-      return (event.changes || []).filter((change) => change.type === 'text_delta').map((change) => ({ type: 'text_delta', delta: change.delta }));
+    case 'plan': return [{ type: 'plan', plan: event.plan }];
     case 'tool_execution_start': return [{ type: 'lifecycle', phase: 'tool', toolName: event.toolName }];
     case 'tool_execution_end': return [{ type: 'lifecycle', phase: 'tool_end', toolName: event.toolName }];
     case 'auto_retry_start': return [retryLifecycle(event.attempt, event.errorMessage)];
@@ -923,9 +922,23 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
   async function observe(entry, submission, { onEvent = () => {}, signal } = {}) {
     const context = signal ? withAbortSignal(signal, CTX) : CTX;
     const stream = await watchEvents(entry.harness, entry.root.id, context);
-    await onEvent({ type: 'snapshot', ...stream.snapshot, sessionId: entry.sessionId });
-    stream.start(async (events) => { for (const event of events) await onEvent(event); });
+    let planWatch;
     try {
+      const initial = await submission.status(context);
+      const afterEntry = initial.entry ?? stream.snapshot.entries.reduce((last, item) => Math.max(last, item.id), 0);
+      await onEvent({ ...stream.snapshot, afterEntry, sessionId: entry.sessionId });
+      planWatch = await entry.harness.watchDoc(STATE, context);
+      let previousPlan;
+      const emitPlan = async (doc) => {
+        if (doc?.active?.requestId !== initial.requestId) return;
+        const plan = publicPlan(doc.plan);
+        const serialized = JSON.stringify(plan);
+        if (serialized === previousPlan) return;
+        previousPlan = serialized;
+        await onEvent({ type: 'plan', plan });
+      };
+      if (planWatch) { await emitPlan(planWatch.value); planWatch.start(emitPlan); }
+      stream.start(async (events) => { for (const event of events) await onEvent(event); });
       const original = await submission.wait(context);
       for (;;) {
         // Never hold the canvas admission lock while waiting for image prep or
@@ -966,7 +979,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
         });
         if (result.done) return result.record;
       }
-    } finally { await stream.stop(); }
+    } finally { await planWatch?.stop(); await stream.stop(); }
   }
   async function completionRecord(entry, active, settled) {
     // The official settlement points at its exact answer entry. Never take the

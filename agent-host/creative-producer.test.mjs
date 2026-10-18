@@ -6,6 +6,7 @@ import { createServer } from 'node:http';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { createDurableSessionStore } from './durable-session-owner.mjs';
+import { createDurableTextProjection } from './durable-stream-text.mjs';
 
 const msgText = (message) => typeof message.content === 'string'
   ? message.content
@@ -21,7 +22,7 @@ async function createProducerFixture({ canvasState, script = () => null, buildTo
     for await (const chunk of req) raw += chunk;
     const body = JSON.parse(raw);
     payloads.push(body);
-    const step = script(body, payloads.length);
+    const step = await script(body, payloads.length);
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     const frame = (delta, finish_reason = null) =>
       res.write('data: ' + JSON.stringify({ id: 'fixture', object: 'chat.completion.chunk', choices: [{ index: 0, delta, finish_reason }] }) + '\n\n');
@@ -71,6 +72,33 @@ async function createProducerFixture({ canvasState, script = () => null, buildTo
 }
 
 describe('creative producer durable host', () => {
+  test('official watch events restore a one-chunk reply and publish a committed plan before the next model finishes', async () => {
+    let releaseReply;
+    const planSeen = new Promise(resolve => { releaseReply = resolve; });
+    const fixture = await createProducerFixture({ script: async (_body, callIndex) => {
+      if (callIndex === 1) return { tool: { name: 'plan_update', args: { goal: '实时制作计划', items: [{ id: 's1', title: '检查镜头', status: 'needs_user' }] } } };
+      await planSeen;
+      return { reply: '开头和结尾必须完整。' };
+    } });
+    const projection = createDurableTextProjection();
+    const events = [];
+    try {
+      const entry = await fixture.store.ensureSession('canvas-1');
+      const sub = await fixture.store.submit(entry, { turnId: 'live-plan', requestId: 'live-plan', content: '制作镜头', userText: '制作镜头', revisionBefore: 1 });
+      const record = await fixture.store.wait(entry, sub, { onEvent: async event => {
+        events.push(event);
+        projection.accept(event);
+        if (event.type === 'plan' && event.plan?.goal === '实时制作计划') {
+          expect((await fixture.store.history('canvas-1', entry.sessionId)).active).not.toBeNull();
+          releaseReply();
+        }
+      } });
+      expect(record.reply).toBe('开头和结尾必须完整。');
+      expect(projection.text).toBe(record.reply);
+      expect(events.some(event => event.type === 'message_start' && event.message.role === 'assistant')).toBe(true);
+      expect(events.some(event => event.type === 'plan' && event.plan?.goal === '实时制作计划')).toBe(true);
+    } finally { releaseReply(); await fixture.close(); }
+  });
   test('injects <beeftv_studio> digest and prepends <canvas_changes> when user edits between turns', async () => {
     const canvasState = {
       current: {

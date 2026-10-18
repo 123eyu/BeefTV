@@ -265,6 +265,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         if (!userScopeMatches(expectedScope)) return false;
         const run = runFor(targetCanvas);
         const request = ++run.historyRequest;
+        const planAtRequest = run.plan;
         try {
             const [sessionList, history] = await Promise.all([
                 listAssistantSessions(targetCanvas),
@@ -298,6 +299,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                 run.pendingAttachments = active.attachments || [];
                 run.pendingSkills = active.skills || [];
                 run.pendingPermissionMode = assistantPermissionMode(active.permissionMode);
+                if (!run.controller && typeof active.streamed === "string") run.streamed = active.streamed;
                 run.supplements = active.supplementInputs?.length ? active.supplementInputs.map(input => ({ text: input.message, attachments: input.attachments, skills: input.skills, status: "accepted" })) : (active.supplements || []).map(text => ({ text, status: "accepted" }));
                 run.recovery = { sessionId: nextSession, turnId: active.turnId, knownTurnIds: history.turns.map(turn => turn.turnId), text: active.userText, selectedNodeIds: active.selectedNodeIds || [] };
                 run.requestId = active.requestId ?? null;
@@ -308,7 +310,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             run.sessionId = nextSession;
             run.turns = [...history.turns, ...recent];
             // A history read started before turn_end may omit that newer turn and its plan.
-            run.plan = recent.length ? recent.at(-1)!.plan ?? null : history.plan ?? null;
+            if (run.plan === planAtRequest) run.plan = recent.length ? recent.at(-1)!.plan ?? null : history.plan ?? null;
             for (const turn of history.turns) {
                 if (turn.undone) run.turnStatus[turn.turnId] = { undone: true };
             }
@@ -428,6 +430,16 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                     if (!userScopeMatches(expectedScope)) return;
                     const current = runFor(targetCanvas);
                     current.streamed += delta;
+                    rerenderIfActive(targetCanvas);
+                },
+                onText: (text) => {
+                    if (!userScopeMatches(expectedScope)) return;
+                    runFor(targetCanvas).streamed = text;
+                    rerenderIfActive(targetCanvas);
+                },
+                onPlan: (plan) => {
+                    if (!userScopeMatches(expectedScope)) return;
+                    runFor(targetCanvas).plan = plan;
                     rerenderIfActive(targetCanvas);
                 },
                 onLifecycle: (event) => {

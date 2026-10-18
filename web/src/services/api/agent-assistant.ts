@@ -142,7 +142,7 @@ export type AssistantHistory = {
     active?: { turnId: string; requestId?: string; userText: string; selectedNodeIds: string[]; attachments?: AssistantAttachment[]; skills?: AssistantSkillSelection[];
         references?: AgentChatReference[]; supplements?: string[]; supplementInputs?: AssistantSupplementInput[]; permissionMode?: AssistantPermissionMode; createdAt: string; status: "running";
         /** 正在进行的回合此刻的进度（例如模型重试），只用于展示，结束后不再返回。 */
-        lifecycle?: AgentLifecycleEvent | null; plan?: AssistantPlan | null } | null;
+        lifecycle?: AgentLifecycleEvent | null; plan?: AssistantPlan | null; streamed?: string } | null;
 };
 
 // UI 会话凭据只保存在内存里：刷新页面即重新签发，不写入 localStorage。
@@ -348,6 +348,8 @@ export type AgentLifecycleEvent = {
 export type StreamHandlers = {
     onSession?: (sessionId: string) => void;
     onDelta?: (delta: string) => void;
+    onText?: (text: string) => void;
+    onPlan?: (plan: AssistantPlan | null) => void;
     onTurnEnd?: (end: AgentTurnEnd) => void;
     onLifecycle?: (event: AgentLifecycleEvent) => void;
 };
@@ -515,6 +517,14 @@ async function readAgentTurnStream(
         }
         if (payload.type === "text_delta" && typeof payload.delta === "string") {
             handlers.onDelta?.(payload.delta);
+            return;
+        }
+        if (payload.type === "text_snapshot" && typeof payload.text === "string") {
+            handlers.onText?.(payload.text);
+            return;
+        }
+        if (payload.type === "plan") {
+            handlers.onPlan?.(payload.plan as AssistantPlan | null);
             return;
         }
         if (payload.type === "lifecycle") {

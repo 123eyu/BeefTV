@@ -1,16 +1,25 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { chromium, type Browser } from "playwright";
 
 let browser: Browser, server: ReturnType<typeof Bun.serve>;
 let currentSession = "s1", clearPlan = false, clearNextPlan = false;
+let liveStream: ReadableStreamDefaultController<Uint8Array> | null = null;
+let streamActive = false;
+let liveText = "";
+let chatStarted: Promise<void>, onChatStarted: () => void;
 const chats: Array<{ message: string; selectedNodeIds: string[] }> = [];
 const plan = { goal: "完成雨夜相遇的两个镜头", items: [
     { id: "s1", title: "分镜与首帧", status: "done" },
     { id: "s2", title: "检查首帧后制作视频", status: "needs_user", note: "等首帧生成后检查" },
 ], done: 1, total: 2, updatedAt: "2026-10-18" };
+let livePlan = plan;
 const turn = { turnId: "t1", userText: "做两个雨夜相遇镜头", selectedNodeIds: [], reply: "分镜和首帧方案已准备好。", toolCalls: [], change: null,
     proposals: [{ proposalId: "p1", kind: "image", nodeIds: ["source"], model: "图片模型", modelKey: "test::image" }], error: null, cancelled: false, createdAt: "2026-10-18" };
+beforeEach(() => {
+    chats.length = 0; currentSession = "s1"; clearPlan = false; clearNextPlan = false; streamActive = false; liveText = ""; livePlan = plan;
+    chatStarted = new Promise(resolve => { onChatStarted = resolve; });
+});
 
 beforeAll(async () => {
     const build = await Bun.build({ entrypoints: [import.meta.dir + "/fixtures/assistant-production-harness.tsx"], target: "browser", define: {
@@ -34,9 +43,14 @@ beforeAll(async () => {
         if (pathname.endsWith("/assistant/sessions") && req.method === "POST") { currentSession = "new"; return ok({ sessionId: currentSession }); }
         if (pathname.endsWith("/assistant/sessions")) return ok({ currentSessionId: currentSession, sessions: [{ sessionId: "s1", title: "雨夜创作" }, { sessionId: "s2", title: "另一条对话" }] });
         if (pathname.endsWith("/assistant/sessions/activate")) { currentSession = (await req.json()).sessionId; return ok({ sessionId: currentSession }); }
-        if (pathname.endsWith("/assistant/history")) return ok({ sessionId: currentSession, turns: currentSession === "s1" ? [turn] : [], ...(currentSession === "s1" && !clearPlan ? { plan } : {}) });
+        if (pathname.endsWith("/assistant/history")) return ok({ sessionId: currentSession, turns: currentSession === "s1" ? [turn] : [],
+            ...(streamActive ? { active: { turnId: "live-turn", requestId: "live-request", userText: "开始实时制作", selectedNodeIds: [], status: "running", streamed: liveText }, plan: livePlan } : currentSession === "s1" && !clearPlan ? { plan } : {}) });
         if (pathname.endsWith("/assistant/chat")) {
             const body = await req.json(); chats.push(body);
+            if (body.message === "开始实时制作") {
+                streamActive = true;
+                return new Response(new ReadableStream<Uint8Array>({ start(controller) { liveStream = controller; onChatStarted(); } }), { headers: { "content-type": "application/x-ndjson" } });
+            }
             return new Response(JSON.stringify({ type: "turn_end", ...turn, turnId: `t${chats.length + 1}`, reply: "首帧检查完成", proposals: [], plan: clearNextPlan ? null : { ...plan, goal: "首帧已检查", items: plan.items.map(item => ({ ...item, status: "done" })) } }) + "\n", { headers: { "content-type": "application/x-ndjson" } });
         }
         if (pathname.startsWith("/api/")) return ok({});
@@ -45,6 +59,38 @@ beforeAll(async () => {
     const executablePath = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"].find((item): item is string => Boolean(item && existsSync(item)));
     browser = await chromium.launch({ executablePath, headless: true });
 }, 60000);
+
+test("活跃观察流实时显示完整文字与制作计划，刷新从历史恢复而不再发消息", async () => {
+    currentSession = "s1"; clearPlan = false; clearNextPlan = false;
+    const page = await browser.newPage({ viewport: { width: 700, height: 900 } });
+    try {
+        await page.goto(server.url.toString().replace("localhost", "127.0.0.1"));
+        await page.getByText("完成雨夜相遇的两个镜头", { exact: true }).waitFor();
+        await page.locator('.canvas-assistant-composer [contenteditable="true"]').fill("开始实时制作");
+        await page.getByRole("button", { name: "发送", exact: true }).click();
+        await page.getByRole("button", { name: "停止", exact: true }).waitFor();
+        await chatStarted;
+        const before = chats.length;
+        liveText = "开头、中段和尾部都完整。";
+        livePlan = { ...plan, goal: "现在正在执行的计划" };
+        const line = (payload: unknown) => new TextEncoder().encode(JSON.stringify(payload) + "\n");
+        liveStream!.enqueue(line({ type: "text_snapshot", text: "开头、中段" }));
+        liveStream!.enqueue(line({ type: "plan", plan: livePlan }));
+        liveStream!.enqueue(line({ type: "text_snapshot", text: liveText }));
+        await page.getByText("现在正在执行的计划", { exact: true }).waitFor();
+        await page.getByText(liveText, { exact: true }).waitFor();
+        expect(chats.length).toBe(before);
+        await page.reload();
+        await page.getByText("现在正在执行的计划", { exact: true }).waitFor();
+        await page.getByText(liveText, { exact: true }).waitFor();
+        expect(chats.length).toBe(before);
+    } finally {
+        streamActive = false;
+        try { liveStream?.close(); } catch { /* Browser detached on reload. */ }
+        liveStream = null;
+        await page.close();
+    }
+}, 30000);
 afterAll(async () => { await browser?.close(); server?.stop(true); });
 
 test("真实侧栏保留草稿与产物引用，由用户发送检查，并更新/清空当前会话计划", async () => {

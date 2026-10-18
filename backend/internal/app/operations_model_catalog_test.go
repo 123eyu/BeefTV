@@ -122,3 +122,50 @@ func TestAgentModelCatalogPreservesDesktopGenerationProfiles(t *testing.T) {
 		t.Fatalf("lost desktop image contract: %#v", gotImage.Image)
 	}
 }
+
+func TestAgentCatalogFiltersCapabilityAndExposesOnlyValidatedQuote(t *testing.T) {
+	svc, _ := newModelCatalogTestService(t)
+	svc.mode = serviceModeLocal
+	body := []byte(`{"channels":[{"id":"beefapi","enabled":true,"models":["text-model","video-model","unknown-price"],"modelProfiles":[{"model":"text-model","capability":"text","protocol":"chat-completion"},{"model":"video-model","capability":"video","protocol":"openai-videos","videoPricing":{"currency":"CNY","mode":"seconds","rates":{"720p":{"output":0.25,"reference_video":0,"apiKey":"private-rate"}},"token":"private-quote"}},{"model":"unknown-price","capability":"video","protocol":"openai-videos","videoPricing":{"currency":"USD","mode":"seconds","rates":{"720p":{"output":1,"reference_video":0}}}}]}]}`)
+	if err := svc.SaveLocalModelConfig(body); err != nil {
+		t.Fatal(err)
+	}
+	registry := operations.NewRegistry(svc, operations.NewStore(svc.repo.DB()))
+	operations.RegisterDefaultOps(registry)
+	read := func(params string) modelcatalog.CatalogResponse {
+		t.Helper()
+		result, err := registry.Execute(operations.Request{Op: "model.catalog", UserID: "desktop-owner", Caller: operations.ManualCaller(true), Params: json.RawMessage(params)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		wire, err := json.Marshal(result.Result)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(wire), "private-") {
+			t.Fatalf("quote leaked unknown fields: %s", wire)
+		}
+		var catalog modelcatalog.CatalogResponse
+		if err := json.Unmarshal(wire, &catalog); err != nil {
+			t.Fatal(err)
+		}
+		return catalog
+	}
+	video := read(`{"capability":"video"}`)
+	if len(video.Channels) != 1 || len(video.Channels[0].Models) != 2 {
+		t.Fatalf("video catalog: %#v", video)
+	}
+	models := video.Channels[0].Models
+	if models[0].VideoPricing["currency"] != "CNY" || models[1].VideoPricing != nil {
+		t.Fatalf("quotes: %#v", models)
+	}
+	if got := read(`{"capability":"image"}`); len(got.Channels) != 0 || got.Channels == nil || got.Models == nil {
+		t.Fatalf("empty catalog: %#v", got)
+	}
+	if got := read(`{}`); len(got.Channels[0].Models) != 3 {
+		t.Fatalf("filter mutated source: %#v", got)
+	}
+	if _, err := registry.Execute(operations.Request{Op: "model.catalog", UserID: "desktop-owner", Caller: operations.ManualCaller(true), Params: json.RawMessage(`{"capability":"other"}`)}); err == nil {
+		t.Fatal("unknown capability accepted")
+	}
+}

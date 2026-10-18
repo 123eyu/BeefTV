@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
 )
@@ -54,6 +55,10 @@ func (s *operationSession) AgentModelCatalog() (*modelcatalog.CatalogResponse, e
 		public, err := modelcatalog.SanitizeChannelModel(&cm)
 		if err != nil {
 			continue
+		}
+		if item.Capability == "video" {
+			// Only the saved, validated quote is public; never forward arbitrary profile fields.
+			public.VideoPricing, _ = beefapi.NormalizeCatalogVideoPricing(item.VideoPricing)
 		}
 		index, exists := indexes[item.ChannelID]
 		if !exists {

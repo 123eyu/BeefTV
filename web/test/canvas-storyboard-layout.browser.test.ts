@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chromium, type Browser } from "playwright";
+import { existsSync } from "node:fs";
 
 let browser: Browser;
 let server: ReturnType<typeof Bun.serve>;
@@ -14,9 +15,23 @@ beforeAll(async () => {
         if (new URL(request.url).pathname === "/harness.js") return new Response(script, { headers: { "Content-Type": "text/javascript" } });
         return new Response('<style>.w-full{width:100%}</style><div id="root"></div><script type="module" src="/harness.js"></script>', { headers: { "Content-Type": "text/html" } });
     } });
-    browser = await chromium.launch({ headless: true });
+    const executablePath = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"].find((item): item is string => Boolean(item && existsSync(item)));
+    browser = await chromium.launch({ headless: true, executablePath });
 }, 30_000);
 afterAll(async () => { await browser?.close(); server?.stop(true); });
+
+test("mounting an assistant storyboard does not write its default height; editing still resizes", async () => {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 992 } });
+    try {
+        await page.goto(server.url + "?node");
+        const input = page.getByRole("textbox", { name: "分镜剧情与项目设定" });
+        await input.waitFor();
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        expect(await page.getByTestId("height-writes").textContent()).toBe("0");
+        await input.fill(Array.from({ length: 12 }, (_, i) => `第${i + 1}段：夜雨里的一家咖啡馆。`).join("\n"));
+        await page.waitForFunction(() => Number(document.querySelector('[data-testid="height-writes"]')?.textContent) > 0);
+    } finally { await page.close(); }
+}, 15000);
 
 for (const mode of ["light", "dark"]) {
     test(`storyboard fixed cells hide scrolling content in ${mode} mode`, async () => {

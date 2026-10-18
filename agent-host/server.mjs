@@ -9,6 +9,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { ModelRuntime, SessionManager } from '@earendil-works/pi-coding-agent';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { createDurableSessionStore, durableLifecycleState, durableStreamEvents, isDurableSessionId } from './durable-session-owner.mjs';
+import { createDurableTextProjection } from './durable-stream-text.mjs';
 import { createDurableTurnBudget } from './durable-turn-budget.mjs';
 import { providerRegistration, providerUnavailableReason,
   turnContextPrefix, unflushedSessionHistory } from './canvas-turn.mjs';
@@ -231,12 +232,16 @@ function ownsSession(canvasId, sessionId) {
 function emitDurable(entry, event) {
   // History reads restore this progress. It lives in memory only; the official task persists itself.
   entry.lifecycle = durableLifecycleState(entry.lifecycle, event);
-  for (const payload of durableStreamEvents(event)) for (const listener of entry.listeners || []) listener(payload);
+  if (event.type === 'plan') entry.livePlan = event.plan;
+  const text = entry.textProjection.accept(event);
+  for (const payload of [...(text ? [text] : []), ...durableStreamEvents(event)]) for (const listener of entry.listeners || []) listener(payload);
 }
 function followDurable(entry, submission) {
   if (!entry.running) {
     entry.listeners = new Set();
     entry.lifecycle = null;
+    entry.textProjection = createDurableTextProjection();
+    entry.livePlan = entry.turn.plan ?? null;
     entry.running = durable.wait(entry, submission, {onEvent:event=>emitDurable(entry,event)})
       .finally(()=>{entry.running=null;entry.lifecycle=null;});
     // Observers may disconnect; the official task and its completion persist.
@@ -433,6 +438,7 @@ const server = http.createServer(async (req, res) => {
         if (submission) followDurable(entry,submission);
         const value = await durable.history(canvasId,sessionId);
         if (value.active && entry.lifecycle) value.active.lifecycle = entry.lifecycle;
+        if (value.active && entry.textProjection) value.active.streamed = entry.textProjection.text;
         respond(res,200,value); return;
       }
       const file = SessionManager.findById(cwd, sessionId, sessionDir);
@@ -555,6 +561,8 @@ const server = http.createServer(async (req, res) => {
       const listener = payload=>{ if (!res.destroyed) sendLine(res,payload); };
       entry.listeners.add(listener);
       // A repeated request re-attaches to a running turn: show its current progress first.
+      listener({ type: 'text_snapshot', text: entry.textProjection.text });
+      listener({ type: 'plan', plan: entry.livePlan });
       if (entry.lifecycle) listener(entry.lifecycle);
       try {
         const record = await result;

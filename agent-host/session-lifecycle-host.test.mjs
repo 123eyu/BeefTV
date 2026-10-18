@@ -408,6 +408,7 @@ test('真实宿主：官方自动重试在流和历史里显示为分类后的�
     expect(lines).toContainEqual(progress);
     expect(lines.filter((line) => line.type === 'lifecycle' && line.phase === 'retry_end')).toEqual([{ type: 'lifecycle', phase: 'retry_end', attempt: progress.attempt }]);
     expect(lines.find((line) => line.type === 'turn_end')).toMatchObject({ reply: 'ok', error: null, cancelled: false });
+    expect(lines.filter((line) => line.type === 'text_snapshot').at(-1)).toEqual({ type: 'text_snapshot', text: 'ok' });
     expect(result.text).not.toContain(UPSTREAM_SECRET);
     expect(getModelCalls()).toBe(2);
     const after = await api(`/history?canvasId=${canvasId}`);

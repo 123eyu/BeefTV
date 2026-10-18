@@ -1,12 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import { durableLifecycleState, durableRetryReason, durableStreamEvents } from './durable-session-owner.mjs';
+import { createDurableTextProjection } from './durable-stream-text.mjs';
 
 const SECRET = 'sk-synthetic-upstream-secret';
 
 describe('official Durable events projected to the panel stream', () => {
-  test('text and tool events keep their existing lines', () => {
-    expect(durableStreamEvents({ type: 'message_update', changes: [{ type: 'text_delta', contentIndex: 0, delta: '好' }, { type: 'thinking_delta', contentIndex: 1, delta: 'x' }] }))
-      .toEqual([{ type: 'text_delta', delta: '好' }]);
+  test('tool events keep their existing lines and plans carry the committed value', () => {
+    expect(durableStreamEvents({ type: 'plan', plan: null })).toEqual([{ type: 'plan', plan: null }]);
     expect(durableStreamEvents({ type: 'tool_execution_start', toolCallId: 'c1', toolName: 'media_inspect', args: {} }))
       .toEqual([{ type: 'lifecycle', phase: 'tool', toolName: 'media_inspect' }]);
     expect(durableStreamEvents({ type: 'tool_execution_end', toolCallId: 'c1', toolName: 'media_inspect' }))
@@ -37,6 +37,38 @@ describe('official Durable events projected to the panel stream', () => {
       ['fetch failed', 'network'], ['socket hang up', 'network'], ['terminated', 'network'], ['Connection error.', 'network'],
       ['unexpected provider wording', 'model_error'], [undefined, 'model_error'],
     ]) expect(durableRetryReason(message)).toBe(reason);
+  });
+});
+
+describe('Durable visible text projection', () => {
+  const assistant = (text) => ({ role: 'assistant', content: [{ type: 'thinking', thinking: SECRET }, { type: 'text', text }] });
+  const entry = (id, text) => ({ id, model: [assistant(text)] });
+  test('initial partial, text starts, deltas, whole replacements and final-only suffix are all retained once', () => {
+    const projection = createDurableTextProjection();
+    projection.accept({ type: 'snapshot', afterEntry: 10, entries: [entry(8, 'previous turn')], tools: [] });
+    expect(projection.accept({ type: 'message_start', message: assistant('开头') })).toEqual({ type: 'text_snapshot', text: '开头' });
+    projection.accept({ type: 'message_update', changes: [{ type: 'text_delta', contentIndex: 1, delta: '中段' }] });
+    expect(projection.text).toBe('开头中段');
+    projection.accept({ type: 'message_update', changes: [{ type: 'text_start', contentIndex: 2, block: { type: 'text', text: '新段' } }] });
+    expect(projection.text).toBe('开头中段新段');
+    projection.accept({ type: 'message_update', changes: [{ type: 'block', contentIndex: 2, block: { type: 'text', text: '修订段' } }] });
+    expect(projection.text).toBe('开头中段修订段');
+    projection.accept({ type: 'message_update', changes: [{ type: 'message', message: assistant('完整替换') }] });
+    expect(projection.accept({ type: 'message_end', entry: entry(12, '完整替换和尾部') })).toEqual({ type: 'text_snapshot', text: '完整替换和尾部' });
+    expect(projection.accept({ type: 'message_end', entry: entry(12, '完整替换和尾部') })).toBeNull();
+    expect(projection.text).not.toContain(SECRET);
+  });
+  test('late attachment and overflow snapshots restore only this turn without duplication', () => {
+    const projection = createDurableTextProjection();
+    const snapshot = { type: 'snapshot', afterEntry: 10, entries: [entry(8, 'previous turn'), entry(12, '工具前说明')], generation: { message: assistant('当前开头') } };
+    expect(projection.accept(snapshot)?.text).toBe('工具前说明\n\n当前开头');
+    projection.accept({ type: 'message_update', changes: [{ type: 'text_delta', contentIndex: 1, delta: '中段' }] });
+    expect(snapshot.generation.message.content[1].text).toBe('当前开头');
+    projection.accept({ type: 'snapshot', entries: [entry(8, 'previous turn'), entry(12, '工具前说明'), entry(15, '当前开头中段尾部')], generation: { message: assistant('继续处理') } });
+    expect(projection.text).toBe('工具前说明\n\n当前开头中段尾部\n\n继续处理');
+    projection.accept({ type: 'message_end', entry: entry(16, '继续处理完成') });
+    expect(projection.text).toBe('工具前说明\n\n当前开头中段尾部\n\n继续处理完成');
+    expect(projection.text).not.toContain('previous turn');
   });
 });
 

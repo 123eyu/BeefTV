@@ -135,8 +135,9 @@ export function CanvasScriptNodeContent({
     const [prompt, setPrompt] = useState(node.metadata?.composerContent || "");
     const [scrollTop, setScrollTop] = useState(0);
     const composerHeightChangeRef = useRef(onComposerHeightChange);
-    const reportedComposerHeightRef = useRef<number | null>(null);
     const composerHeight = node.metadata?.storyboardComposerHeight || STORYBOARD_COMPOSER_MIN_HEIGHT;
+    // Mounting an unchanged default layout must not save a new canvas revision.
+    const reportedComposerHeightRef = useRef(composerHeight);
     const tableHeight = storyboardTableHeight(node.height, composerHeight);
     const totalDuration = rows.reduce((sum, row) => sum + (Number(row.durationSeconds) || 0), 0);
     const shotDuration = node.metadata?.storyboardShotDuration || "auto";

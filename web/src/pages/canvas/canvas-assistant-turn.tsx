@@ -8,7 +8,7 @@ import { ASSISTANT_UNDONE_INCOMPLETE_TEXT, assistantChangeSummary, assistantSkil
 import type { CanvasNodeData } from "@/types/canvas";
 import { dismissedProposalKey, type AssistantTurnStatus } from "./use-canvas-assistant";
 import { modelOptionName, resolveModelChannel, useEffectiveConfig } from "@/stores/use-config-store";
-import { portraitPriceLines, seedancePortraitModel, seedancePortraitLabel } from "@/lib/seedance-portrait";
+import { portraitPriceLines, seedancePortraitModel } from "@/lib/seedance-portrait";
 import { portraitGenerationError } from "@/lib/model-selection";
 import { CanvasAssistantAttachments } from "./canvas-assistant-attachments";
 import { CanvasAssistantOutputs } from "./canvas-assistant-outputs";
@@ -132,7 +132,7 @@ export function CanvasAssistantTurnView({ turn, status, handledProposals, propos
                 const skipped = handledProposals.has(dismissedProposalKey(proposal.proposalId));
                 const selectedModel = proposal.modelKey || proposal.model;
                 const portrait = seedancePortraitModel(selectedModel);
-                const profile = seedancePortraitLabel(selectedModel) ? resolveModelChannel(config, selectedModel).modelProfiles?.find((item) => item.model === modelOptionName(selectedModel)) : undefined;
+                const profile = proposal.kind === "video" ? resolveModelChannel(config, selectedModel).modelProfiles?.find((item) => item.model === modelOptionName(selectedModel)) : undefined;
                 const priceError = portrait ? portraitGenerationError(config, selectedModel) : "";
                 const running = Boolean(runningProposalIds?.has(proposal.proposalId));
                 const progress = started && nodes ? assistantProposalProgress(proposal, nodes) : null;

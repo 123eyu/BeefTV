@@ -279,6 +279,25 @@ describe("创作助手回合流边界", () => {
         expect(reply).toBe("完成");
     });
 
+    test("文字快照替换旧片段，计划在 turn_end 前立即交付且可清空", async () => {
+        const plan = { goal: "生成并检查首帧", items: [{ id: "s1", title: "首帧", status: "doing" }], done: 0, total: 1, updatedAt: "now" };
+        chatResponse = () => chatResponseOf([
+            JSON.stringify({ type: "text_snapshot", text: "开头中段" }) + "\n",
+            JSON.stringify({ type: "plan", plan }) + "\n",
+            JSON.stringify({ type: "text_snapshot", text: "开头中段尾部" }) + "\n",
+            JSON.stringify({ type: "plan", plan: null }) + "\n", TURN_END,
+        ]);
+        const observed: unknown[] = [];
+        let text = "";
+        await streamAgentChat("c1", "hi", {
+            onText: value => { text = value; },
+            onPlan: value => observed.push(value),
+            onTurnEnd: () => observed.push("end"),
+        });
+        expect(text).toBe("开头中段尾部");
+        expect(observed).toEqual([plan, null, "end"]);
+    });
+
     test("流结束但没有最终回合事件 → 显式未完成错误，不当成功", async () => {
         chatResponse = () => chatResponseOf([`${JSON.stringify({ type: "text_delta", delta: "半截" })}\n`]);
 
