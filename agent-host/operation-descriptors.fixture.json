@@ -1080,7 +1080,7 @@
   },
   {
     "id": "canvas.task.bind",
-    "summary": "把已交付的任务产物绑定到原画布节点（校验归属与就绪资源，带 revision CAS，幂等回执）",
+    "summary": "把已交付任务产物绑定到原节点；同画布本地时间线成片可绑定到空 video 节点，绑定后用 nodeId 检查成片（校验归属、就绪资源与版本，幂等回执）",
     "readOnly": false,
     "scope": "canvas",
     "params": {
