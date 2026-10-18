@@ -73,16 +73,22 @@ type BeefAPISeedanceUploadRequest struct {
 	Mime   string `json:"mime"`
 }
 
-// prepareBeefAPISeedanceReferences uploads built-in BeefAPI Seedance inline
+// PrepareBeefAPIVideoReferences uploads built-in BeefAPI local/inline
 // references through the same generation key, then rewrites each item to the
 // completed HTTPS URL. PUT uses only the returned headers and known length.
-// Create/complete/read failures return before POST /videos. A 404/501 on the
-// first create may keep the previous inline JSON path when that body is still
-// under the existing 64 MiB wire limit.
-func PrepareBeefAPISeedanceReferences(ctx context.Context, config Config, input *Input, read BeefAPISeedanceMediaReader) error {
-	if input == nil || !IsBeefAPISeedancePreuploadConfig(ctx, config) {
+// Create/complete/read failures return before video creation. Only Seedance
+// allows a first-create 404/501 fallback within its existing 64 MiB wire limit;
+// HTTP-only contracts must never fall back to inline or asset:// references.
+func PrepareBeefAPIVideoReferences(ctx context.Context, config Config, input *Input, read BeefAPISeedanceMediaReader) (err error) {
+	requiresHTTP := requiresBeefAPIHTTPReferences(ctx, config)
+	if input == nil || (!requiresHTTP && !IsBeefAPISeedancePreuploadConfig(ctx, config)) {
 		return nil
 	}
+	defer func() {
+		if requiresHTTP && err != nil {
+			err = RequestPreparationError{Cause: err}
+		}
+	}()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -97,6 +103,9 @@ func PrepareBeefAPISeedanceReferences(ctx context.Context, config Config, input 
 			}
 			media := &group.items[index]
 			if SkipBeefAPISeedanceMedia(*media) {
+				if requiresHTTP && !IsPublicMediaURL(strings.TrimSpace(media.URL)) {
+					return errors.New("当前模型需要可访问的参考图片链接，请重新导入图片。本次尚未开始生成")
+				}
 				continue
 			}
 			if media.Bytes > 0 {
@@ -109,6 +118,9 @@ func PrepareBeefAPISeedanceReferences(ctx context.Context, config Config, input 
 				return err
 			}
 			if skip {
+				if requiresHTTP {
+					return errors.New("参考素材未能读取，请重新导入图片。本次尚未开始生成")
+				}
 				continue
 			}
 			if err := ValidateBeefAPISeedanceMediaSize(group.kind, int64(len(data))); err != nil {
@@ -147,6 +159,9 @@ func PrepareBeefAPISeedanceReferences(ctx context.Context, config Config, input 
 				Mime:   mime,
 			})
 			if !started && BeefAPISeedancePreuploadUnavailable(err) {
+				if requiresHTTP {
+					return errors.New("参考素材上传暂不可用，本次尚未开始生成。请稍后重试或使用可访问的图片链接")
+				}
 				return FallbackBeefAPISeedanceInline(ctx, input, read)
 			}
 			if err != nil {

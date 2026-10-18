@@ -130,7 +130,7 @@ test("partial reference contracts preserve the limits of unspecified media kinds
     } finally { contract.maxReferences = original; }
 });
 
-test("direct video transport sends Wan inline media and rejects unsupported references before sending", async () => {
+test("direct Wan transport requires HTTP references and rejects inline media before sending", async () => {
     const model = "wan3.0-video";
     const channel = createModelChannel({id: "beefapi", baseUrl: "https://enterprise.beefapi.com", models: [model]});
     const snapshot = normalizeConfigSnapshot({config: {...defaultConfig, channels: [channel]}}).config;
@@ -138,9 +138,12 @@ test("direct video transport sends Wan inline media and rejects unsupported refe
     const calls: unknown[] = [];
     const deps = {response: videoResponseTools, transport: {...createVideoTransport(config), post: async <T>(url: string, body: unknown) => { calls.push({url, body}); return {id: "test-wan", status: "queued"} as T; }}};
     const image = {id: "image-1", name: "test.png", type: "image/png", dataUrl: "data:image/png;base64,dGVzdA=="};
-    const task = await createVideoGenerationsTask(deps, config, model, "test", [image], [], []);
+    expect(beefAPIVideoContract(model)).toMatchObject({inlineMedia: false, requiresHTTPReferences: true});
+    await expect(createVideoGenerationsTask(deps, config, model, "test", [image], [], [])).rejects.toThrow("公网 URL");
+    expect(calls).toHaveLength(0);
+    const task = await createVideoGenerationsTask(deps, config, model, "test", [{...image, url: "https://media.example/uploaded.png"}], [], []);
     expect(task.id).toBe("test-wan");
-    expect(calls[0]).toMatchObject({body: {image_urls: [image.dataUrl]}});
+    expect(calls[0]).toMatchObject({body: {image_urls: ["https://media.example/uploaded.png"]}});
     await expect(createVideoGenerationsTask(deps, config, model, "test", [image, image], [], [])).rejects.toThrow("最多支持 1");
     expect(calls).toHaveLength(1);
     await expect(createVideoGenerationsTask(deps, {...config, baseUrl: "https://other.example"}, model, "test", [image], [], [])).rejects.toThrow("公网 URL");

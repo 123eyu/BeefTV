@@ -120,7 +120,7 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 				return nil, err
 			}
 		}
-		if err := PrepareBeefAPISeedanceReferences(ctx, input.Config, &input, ownedSeedanceMediaReader(ctx, userID)); err != nil {
+		if err := PrepareBeefAPIVideoReferences(ctx, input.Config, &input, ownedSeedanceMediaReader(ctx, userID)); err != nil {
 			return nil, err
 		}
 		if err := prepareFullVideoReferences(ctx, &input, ownedFullVideoMediaReader(ctx, userID)); err != nil {
