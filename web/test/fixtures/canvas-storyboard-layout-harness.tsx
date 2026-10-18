@@ -4,7 +4,7 @@ import { App, ConfigProvider } from "antd";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { CanvasScriptEditor, CanvasScriptNodeContent } from "../../src/components/canvas/canvas-script-node";
 import { deriveStoryboardPipelineProgress } from "../../src/lib/canvas/canvas-storyboard-progress";
-import { getAntThemeConfig } from "../../src/lib/app-theme";
+import { getAntThemeConfig } from "@/lib/app-theme";
 import { createStoryboardRow } from "../../src/lib/canvas/canvas-project-domain";
 import { CanvasNodeType, type CanvasNodeData } from "../../src/types/canvas";
 
