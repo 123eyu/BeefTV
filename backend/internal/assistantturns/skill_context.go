@@ -125,8 +125,8 @@ func (s *Service) ChangeSkillContextValidated(userID, canvasID string, change Sk
 	return s.changeSkillContext(userID, canvasID, change, validate, "")
 }
 
-// Only the trusted host's skill_load path may carry the current automatic turn
-// across its own skill revision. User selections and resets use the normal path.
+// Only the trusted host's skill_load path may carry valid continuation receipts
+// across a skill revision. User selections and resets use the normal path.
 func (s *Service) LoadTurnSkillContextValidated(userID, canvasID, turnID string, change SkillContextChange, validate SkillPinValidator) (*SkillContext, error) {
 	if validate == nil || turnID == "" || change.Action != "activate" {
 		return nil, contextError("invalid_skill_context_request", "技能加载参数无效")
@@ -256,9 +256,10 @@ func (s *Service) changeSkillContext(userID, canvasID string, change SkillContex
 			return contextError("skill_context_revision_conflict", "技能状态已变化，请刷新后重试")
 		}
 		if skillLoadTurnID != "" {
-			// This is one authorized tool call in the same turn, not a new user
-			// intent. Move only its existing receipt to the committed skill version.
-			if err := tx.Model(&model.AssistantContinuation{}).Where("user_id = ? AND canvas_id = ? AND session_id = ? AND turn_id = ? AND scope_id = ? AND scope_revision = ? AND state IN ?", userID, canvasID, change.SessionID, skillLoadTurnID, row.ScopeID, previous, []string{"claimed", "running"}).Update("scope_revision", row.Revision).Error; err != nil {
+			// A runtime tool load does not replace user intent. Carry every still
+			// valid receipt in this exact scope/version, including pending peers.
+			// Cancelled, completed and already stale scopes can never be revived.
+			if err := tx.Model(&model.AssistantContinuation{}).Where("user_id = ? AND canvas_id = ? AND session_id = ? AND scope_id = ? AND scope_revision = ? AND state IN ?", userID, canvasID, change.SessionID, row.ScopeID, previous, []string{"waiting", "claimed", "running"}).Update("scope_revision", row.Revision).Error; err != nil {
 				return err
 			}
 		} else {

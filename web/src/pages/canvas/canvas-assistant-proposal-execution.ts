@@ -1,4 +1,5 @@
 import type { AssistantGenerationProposal } from "@/services/api/agent-assistant";
+import { ApiError } from "@/services/api/request";
 import type { CanvasNodeData } from "@/types/canvas";
 import type { CanvasNodeGenerationOptions } from "./use-canvas-generation-executor";
 import { buildGenerationConfig } from "@/lib/canvas/canvas-project-generation";
@@ -72,7 +73,9 @@ export async function executeAssistantProposal({ proposal, nodes, claims, isHand
                 notify(CANVAS_OWNER_CHANGED_PROPOSAL_MESSAGE);
                 return;
             }
-            notify(error instanceof AssistantProposalBlockedError ? ASSISTANT_PROPOSAL_BLOCKED_TEXT[error.reason] : "无法核对提案的最新内容，请检查连接后重试。");
+            notify(error instanceof AssistantProposalBlockedError ? ASSISTANT_PROPOSAL_BLOCKED_TEXT[error.reason]
+                : error instanceof ApiError && error.reason === "continuation_intent_changed" ? "要求已更新，请让助手重新提出生成方案。"
+                : "无法核对提案的最新内容，请检查连接后重试。");
             return;
         }
         if (stillOwns && !stillOwns()) {

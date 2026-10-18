@@ -24,7 +24,7 @@
 - Stop 先永久取消 Go 授权，再对该回执的固定 session/request 使用现有 targeted Stop；不会取消原收费媒体任务或不相干的新用户回合。已到供应商的在途调用仍遵循现有停止边界。
 - 新用户消息 admission、显式新建/切换会话取消尚未运行的授权；已在执行的用户补充沿既有 steer 行为。新 scope 或技能 revision 改变使同会话接续失效。成功 Undo 在恢复画布的同事务取消源回合授权，Undo 拒绝则保留授权。
 - 取消同时为已有源回合设置持久撤销标记（schema v19），即使旧确认仍在准备、尚无接续回执，也不能稍后绑定到新意图。旧提案不能在新消息后重新授权自动接续；应由当前任务产生新提案。普通回合保存不能清除标记。新用户回合自己的初始技能选择保留该新回合的提案资格。
-- 宿主真实 `skill_load` 用 host-only 的 `origin: skill_load` 标记，要求绑定当前开放轮且操作为 activate；在同一事务验证身份、技能 CAS 和资源后同步自身回执的 scope revision。加载原 pin 或新 pin 都不会取消自己。用户显式技能选择、clear、new_scope 仍撤销旧自动授权，客户端不能借此标记绕过宿主身份。
+- 宿主真实 `skill_load` 用 host-only 的 `origin: skill_load` 标记，要求绑定当前开放轮且操作为 activate；在同一事务验证身份、技能 CAS 和资源后同步同用户、画布、会话和原 scope/version 下仍有效回执的 scope revision。加载原 pin 或新 pin 都不会取消自己或同范围内等待的已确认提案；已取消、完成及旧范围的记录不恢复。用户显式技能选择、clear、new_scope 仍撤销旧自动授权，客户端不能借此标记绕过宿主身份。
 - 每次 runtime/操作授权再验证原 scope、未撤销和未取消。Go 明确取消/范围改变时 host 将尚未提交的记录结算为停止，避免残留 active 锁住会话；数据库/网络等未知错误不当作取消成功。
 - Go claim 后响应丢失可回读同一身份；官方提交后丢响应按既有 history 恢复。前端不会把自动消息暴露为「新用户请求重试」。手动重新读取只重新核对原回执。
 - 如果 manifest 已登记但没有可靠任务回执，或只提交了部分原计划，授权保持未知，不自动补齐收费提交。用户可停止并请求新的明确方案。旧批次没有回执时仍走手动检查。
@@ -64,3 +64,11 @@ Go SQLite fixture：单图/视频、原生多输出/拆单、缺任务、删除�
 - 真实 host-only HTTP 路由加载合法安装技能：原实现第一次 activate 就取消自身，随后 404。现在加载新 pin、重复加载、请求重放后，自动轮仍 running/open，绑定上下文及后续操作授权可用；无宿主身份、无绑定轮或伪造 new_scope 均拒绝，显式用户选择仍撤销。
 
 针对验证：前端原四文件 57 pass/208 assertions；typecheck exit 0。Go `go test ./internal/assistantturns ./internal/database ./internal/handler -run 'Test(Continuation\|AssistantContinuation\|SkillContext\|V14\|V16\|AssistantPermissions\|V13)' -count=1` 三包通过，最后另跑 `go test ./internal/database -count=1` 整包通过。`bun test durable-continuation.test.mjs durable-skills.test.mjs` 两个官方 Node wrapper 通过（接续 6 cases，技能 16 cases）；实际 skill_load 带 origin，用户重新选择不带 origin。日志为 `/tmp/beeftv-auto-review-{go-red,skill-red,hook-red,hook-green,final-go,final-host,final-web,final-typecheck,final-database}.log`，测试数据均为临时 SQLite 或本机假模型，无付费请求。
+
+### 同范围多提案的补充回归
+
+基于 `41b64ca3`，实际 Go HTTP fixture 同时建立 A/B 两份已确认回执：A running，B waiting。A 正常加载技能后，原实现只推进 A，B 留在旧 scope revision；回归先红。修复在技能 CAS 同事务推进所有同用户、画布、会话和原 scope/version 的 waiting/claimed/running 回执，不修改 cancelled/done 或已失效范围。B 在第一次加载后可以 claim，第二次加载后仍可用；已取消回执保持不变，用户显式选择仍撤销 A/B。
+
+`continuation_intent_changed` 现在提示「要求已更新，请让助手重新提出生成方案。」；回归确认不提交媒体任务，普通连接错误仍保留原提示。
+
+验证命令：`go test ./internal/assistantturns ./internal/handler -run 'Test(Continuation\|AssistantContinuation\|SkillContext)' -count=1` 两包通过；最后新增 B claimed 状态后再跑 `go test ./internal/handler -run TestAssistantContinuationSkillLoad -count=1`。前端 `bun test test/canvas-assistant-proposal-execution.test.ts test/canvas-assistant-continuation.test.ts` 为 38 pass/100 assertions，`bun run typecheck` exit 0。红绿日志在 `/tmp/beeftv-auto-companion-{red,copy-red,green,final,web,typecheck}.log`；无真实模型、收费生成或浏览器操作。

@@ -149,6 +149,7 @@ func TestAssistantContinuationSkillLoadKeepsItsBoundTurnAuthorized(t *testing.T)
 	node := doc["nodes"].([]any)[0].(map[string]any)
 	node["type"] = "image"
 	node["metadata"] = map[string]any{"taskId": "skill-load-task", "taskStatus": "failed", "status": "error"}
+	doc["nodes"] = append(doc["nodes"].([]any), map[string]any{"id": "n2", "type": "image", "position": map[string]any{"x": 10, "y": 10}, "metadata": map[string]any{"taskId": "companion-task", "taskStatus": "failed", "status": "error"}})
 	raw, _ = json.Marshal(doc)
 	if _, err = env.service.UpsertUserCanvasProject(owner.ID, raw); err != nil {
 		t.Fatal(err)
@@ -176,6 +177,24 @@ func TestAssistantContinuationSkillLoadKeepsItsBoundTurnAuthorized(t *testing.T)
 		t.Fatal(err)
 	}
 	if err = env.service.VerifyAssistantContinuation(owner.ID, row.ID, row.TurnID, skillSessionOne); err != nil {
+		t.Fatal(err)
+	}
+	companion, err := env.service.ArmAssistantContinuation(owner.ID, assistantturns.ContinuationInput{CanvasID: env.canvasID, SessionID: skillSessionOne, SourceTurnID: source, ProposalID: "gp-companion", Kind: "image", NodeIDs: []string{"n2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	companionOperation := "proposal:gp-companion:n2"
+	if err = env.service.RegisterAssistantContinuationManifest(owner.ID, companion.ID, assistantturns.ContinuationManifest{SourceNodeID: "n2", Submissions: []assistantturns.ContinuationSubmission{{OperationID: companionOperation, OutputNodeIDs: []string{"n2"}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err = env.service.Database().Create(&model.Task{ID: "companion-task", UserID: owner.ID, ProjectID: env.canvasID, ClientOperationID: &companionOperation, Type: "canvas_image", Status: model.TaskStatusFailed, InputJSON: `{"metadata":{"sourceNodeId":"n2","nodeId":"n2"}}`}).Error; err != nil {
+		t.Fatal(err)
+	}
+	cancelled, err := env.service.ArmAssistantContinuation(owner.ID, assistantturns.ContinuationInput{CanvasID: env.canvasID, SessionID: skillSessionOne, SourceTurnID: source, ProposalID: "gp-cancelled", Kind: "image", NodeIDs: []string{"n2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = env.service.Database().Model(&model.AssistantContinuation{}).Where("id = ?", cancelled.ID).Update("state", "cancelled").Error; err != nil {
 		t.Fatal(err)
 	}
 	pin := installTestSkill(t, env, owner.ID, map[string]string{"SKILL.md": "---\nname: Continue\ndescription: edit\n---\nInspect then edit."})
@@ -218,6 +237,30 @@ func TestAssistantContinuationSkillLoadKeepsItsBoundTurnAuthorized(t *testing.T)
 		if stored.State != "running" || stored.ScopeRevision != ctx.Revision+1 {
 			t.Fatalf("lost continuation %+v", stored)
 		}
+		var waiting, revoked model.AssistantContinuation
+		env.service.Database().First(&waiting, "id = ?", companion.ID)
+		wantState := "waiting"
+		if index > 0 {
+			wantState = "claimed"
+		}
+		if waiting.State != wantState || waiting.ScopeRevision != ctx.Revision+1 {
+			t.Fatalf("skill load stranded the other confirmed proposal: %+v", waiting)
+		}
+		env.service.Database().First(&revoked, "id = ?", cancelled.ID)
+		if revoked.State != "cancelled" || revoked.ScopeRevision != cancelled.ScopeRevision {
+			t.Fatalf("skill load revived cancelled authority: %+v", revoked)
+		}
+		if index == 0 {
+			if _, err = env.service.ClaimAssistantContinuation(owner.ID, companion.ID); err != nil {
+				t.Fatal("other proposal cannot claim after runtime load", err)
+			}
+		}
+	}
+	if _, err = env.service.ClaimAssistantContinuation(owner.ID, companion.ID); err != nil {
+		t.Fatal("other confirmed result cannot continue after skill load", err)
+	}
+	if _, err = env.service.ClaimAssistantContinuation(owner.ID, cancelled.ID); err == nil {
+		t.Fatal("cancelled result revived")
 	}
 	ctx, _ := env.service.AssistantSkillContext(owner.ID, env.canvasID, skillSessionOne)
 	// An explicit user/session selection is not a runtime skill load.
@@ -228,6 +271,9 @@ func TestAssistantContinuationSkillLoadKeepsItsBoundTurnAuthorized(t *testing.T)
 	}
 	if _, err = env.service.BoundAssistantSkillContext(owner.ID, row.TurnID, skillSessionOne); err == nil {
 		t.Fatal("user selection did not revoke automatic turn")
+	}
+	if _, err = env.service.ClaimAssistantContinuation(owner.ID, companion.ID); err == nil {
+		t.Fatal("user selection did not revoke companion authority")
 	}
 	// A new normal user turn's own explicit initial selection is valid new intent.
 	fresh := "aabbccddffaa"

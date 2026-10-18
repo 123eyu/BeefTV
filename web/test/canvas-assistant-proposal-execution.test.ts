@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { ApiError } from "@/services/api/request";
 import { buildConfirmedGenerationConfig, executeAssistantProposal } from "@/pages/canvas/canvas-assistant-proposal-execution";
 import { AssistantProposalBlockedError, type AssistantProposalBlockedReason } from "@/pages/canvas/canvas-assistant-proposal-snapshot";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
@@ -36,6 +37,16 @@ test("proposal read failures are not reported as proven input drift", async () =
     expect(submissions).toBe(0);
     expect(args.claims.size).toBe(0);
     expect(notices).toEqual(["无法核对提案的最新内容，请检查连接后重试。"]);
+});
+
+test("a revoked continuation intent asks for a fresh proposal without submitting generation", async () => {
+    const notices: string[] = [];
+    let submissions = 0;
+    const args = input({ prepare: async () => { throw new ApiError("server detail", {status:409,reason:"continuation_intent_changed"}); }, generate: async () => { submissions++; }, notify: text => {notices.push(text);} });
+    await executeAssistantProposal(args);
+    expect(submissions).toBe(0);
+    expect(args.claims.size).toBe(0);
+    expect(notices).toEqual(["要求已更新，请让助手重新提出生成方案。"]);
 });
 
 const blockedCopy: [AssistantProposalBlockedReason, string][] = [

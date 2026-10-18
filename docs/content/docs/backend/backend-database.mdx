@@ -27,7 +27,7 @@ v16 `assistant-durable-session-binding` 追加 `durable_session_id` 与 `durable
 
 v18 `assistant-generation-continuations` 在既有 v17 活动技能上下文之后追加 `assistant_continuations`。一条用户确认记录固定原回合、提议、画布/会话/scope revision、原权限、全部提交 operationId/输出节点集合，以及接续 requestId/turnId；真实 task IDs 从原提交回读。认领与业务回合快照同事务提交，撤销/范围变化/停止使授权失效，不取消或重发收费媒体任务。结构检查包含完整字段、主键与 turnId 唯一索引；不改写旧表和历史 ledger。详见仓库 `docs/refactor/assistant-generation-continuation.md`。
 
-v19 `assistant-continuation-intent-fence` 为 `assistant_turns` 追加 `continuation_invalidated`，默认 false。停止、新用户输入或用户范围变化在取消已有回执的同事务标记旧源回合，阻止仍在准备中的旧确认稍后重新登记接续；普通回合保存不得清除此标记。宿主当前轮的正常 `skill_load` 不代表新用户意图，只在同事务同步自身接续回执的技能版本。旧历史、未知列与迁移记录保留，缺列阻止 Ready。
+v19 `assistant-continuation-intent-fence` 为 `assistant_turns` 追加 `continuation_invalidated`，默认 false。停止、新用户输入或用户范围变化在取消已有回执的同事务标记旧源回合，阻止仍在准备中的旧确认稍后重新登记接续；普通回合保存不得清除此标记。宿主当前轮的正常 `skill_load` 不代表新用户意图，在同事务同步同用户、画布、会话和原 scope/version 下仍有效的接续回执；已取消或失效的记录不恢复。旧历史、未知列与迁移记录保留，缺列阻止 Ready。
 
 
 v13 `upload-reservation-witness` 追加 `user_upload_reservations`，以 `(user_id, identity)` 唯一索引记录未完成上传预留的日期和字节数。日额仍由 `user_daily_upload_usages` 记账，预留索引与日额增加在同一事务内完成。资源进入 READY 时与状态保存在同一事务清除索引并保留日额；进入 FAILED 或放弃时与状态保存在同一事务按索引金额和日期释放。FAILED 准入只把状态改成 PENDING，不退日额。未结算资源写成 READY 前必须持有见证，缺见证时再预留；残留 FAILED 若仍持有原见证则沿用，不二次扣额。已结算 READY 丢失物理文件时，恢复不重新预留；物理写入或最终保存失败保留原 READY 状态并返回错误，下一次恢复仍复用原资源身份及已消费额度。启动恢复：无对应资源则释放一次；PENDING 保留索引；FAILED 释放；READY 清索引且保留日额。删除 READY 资源只清索引，不把已计入日额当成孤儿退还。重复清理不再扣减其他上传的日额。分片会话文件不是配额账；查询失败时保留恢复证据并记录恢复错误。同一身份的进行中重复预留映射为上传进行中。
