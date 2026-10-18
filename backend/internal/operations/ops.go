@@ -150,6 +150,9 @@ func opCanvasGenerationPropose(ctx *Context, params json.RawMessage) (any, error
 			return nil, InvalidArg("mixed_generation_models", "这些节点当前选用了不同的模型，请按模型分开提出生成")
 		}
 	}
+	if err := validateGenerationDependencies(doc, owned, nodeIDs, args.Kind); err != nil {
+		return nil, err
+	}
 	return map[string]any{
 		"proposalId": newProposalID(), "kind": args.Kind, "nodeIds": nodeIDs,
 		"model": resolved.Display, "modelKey": resolved.ModelKey, "note": strings.TrimSpace(args.Note),

@@ -58,6 +58,8 @@ listed := registry.List(operations.ManualCaller(false))
 
 `canvas.generation.propose` 只登记提议，不生成、不扣费；禁止携带 `opId`。确认用的模型是目标节点当前有效的选用：节点显式设置优先于全局默认，并按模型目录校验 kind。只有没有节点模型时使用默认；无法解析显式模型时要求重新选择，不替换为另一个付费模型。一批节点若有效模型不同，操作拒绝，由调用方按模型分开提议。同一批节点解析到不同 `modelConfigRevision` 时按配置已变动拒绝，请再提出一次。客户端仍检查最终执行模型与提议一致；规格兼容解析若需要换模型，则拒绝该提议，不带着旧确认发送。
 
+提议还检查当前画布的媒体依赖：沿直接参考输入、配置输入优先级、显式引用与视频帧参数验证；脚本输出边只提供文本，不算未就绪媒体。缺产物、仍在生成/提交状态的引用，以及同批其他目标将重生成的引用，整体返回 `generation_dependencies_not_ready`（412），`details.unreadyNodeIds` 指明先完成的素材，`details.blockedNodeIds` 指明依赖它们的目标。调用方先提出前置素材，产物就绪后再提出下游；不会过滤目标或自动调度。本检查不下载媒体或替代客户端既有素材水合/转换有效性校验，确认仍绑定画布版本。
+
 ### HTTP
 
 `GET /api/ops` 与 `POST /api/ops/:op` 仍是本机入口。响应多一个 `caller` 字段（`manual` / `assistant` / `external`）。外部 CLI/MCP 的 operationId 语义不变：写操作必须提供稳定幂等键，重试复用，不同 payload 冲突。授权发生在回放之前。
