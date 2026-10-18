@@ -91,8 +91,15 @@ test('official Durable retries idle body with partial retained, one completed to
     res.writeHead(200,{'content-type':'text/event-stream'});
     const frame=(delta,finish_reason=null)=>res.write(event({id:'fixture',object:'chat.completion.chunk',created:1,model:'fixture',choices:[{index:0,delta,finish_reason}]}));
     if(calls===1){frame({role:'assistant',tool_calls:[{index:0,id:'one-stable-tool',type:'function',function:{name:'canvas_nodes_create',arguments:'{}'}}]});frame({},'tool_calls');res.end('data: [DONE]\n\n');}
-    else if(calls===2){assert(payload.messages.some(message=>message.role==='tool'));frame({role:'assistant',content:'retained current partial'});const timer=setInterval(()=>res.write(': keepalive\n\n'),20);res.on('close',()=>clearInterval(timer));}
-    else {assert.equal(calls,3);assert(payload.messages.some(message=>message.role==='tool'));frame({role:'assistant',content:'completed after official retry'});frame({},'stop');res.end('data: [DONE]\n\n');}
+    else if(calls===2){assert(payload.messages.some(message=>message.role==='tool'));frame({role:'assistant',content:'retained current partial'});frame({tool_calls:[{index:0,id:'unfinished-tool',type:'function',function:{name:'canvas_nodes_create',arguments:'{"unfinished":'}}]});const timer=setInterval(()=>res.write(': keepalive\n\n'),20);res.on('close',()=>clearInterval(timer));}
+    else {
+      assert(calls===3 || calls===4);
+      const wireCalls=payload.messages.flatMap(message=>message.tool_calls || []).map(call=>call.id);
+      const wireResults=payload.messages.filter(message=>message.role==='tool').map(message=>message.tool_call_id);
+      assert.deepEqual(wireCalls,['one-stable-tool']);
+      assert.deepEqual(wireResults,wireCalls,'retry and reopen must not send an orphan result for a partial call');
+      frame({role:'assistant',content:'completed after official retry'});frame({},'stop');res.end('data: [DONE]\n\n');
+    }
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const realFetch=globalThis.fetch;
@@ -115,5 +122,10 @@ test('official Durable retries idle body with partial retained, one completed to
   assert(!JSON.stringify(progress).includes('idle'));
   const view=await entry.root.context(BACKGROUND_CONTEXT);const errors=view.entries.flatMap(item=>item.model||[]).filter(message=>message.role==='assistant'&&message.stopReason==='error');
   assert(errors.some(message=>JSON.stringify(message.content).includes('retained current partial')&&/idle timeout/.test(message.errorMessage)));
+  assert(errors.some(message=>message.content.some(part=>part.type==='toolCall'&&part.id==='unfinished-tool')),'the regression must retain an actual partial call in the audit transcript');
+  assert(!view.messages.some(message=>message.toolCallId==='unfinished-tool'||(Array.isArray(message.content)&&message.content.some(part=>part.type==='toolCall'&&part.id==='unfinished-tool'))),'official context excludes the failed call');
   const sessionId=entry.sessionId;await store.disposeAll();store=makeStore();const history=await store.history('canvas',sessionId);assert.equal(history.turns[0].reply,record.reply);assert.equal(calls,3);assert.equal(toolIds.length,1);
+  const reopened=await store.ensureSession('canvas',sessionId);
+  const next=await store.submit(reopened,{turnId:'idle-turn-2',permissionMode:'canvas',content:'summarize the preserved result',userText:'summarize the preserved result',revisionBefore:1});
+  assert.equal((await store.wait(reopened,next)).error,null);assert.equal(calls,4);assert.equal(toolIds.length,1);
 });
