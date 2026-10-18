@@ -2,6 +2,8 @@
 
 本页记录 BeefTV 内置助手宿主对官方 Pi 1.2.0 的复用。执行运行时只有 `@earendil-works/pi-durable` 一套：新会话走 Durable，已有 JSONL 会话只保留只读历史，不再在其上执行新回合。在旧会话里发新消息会为该画布新建一条 Durable 会话，并用旧会话最后的 user/assistant 文本作为交接说明开头。实现以本仓库 `agent-host/` 与钉选包内声明、示例、文档为准；`pi.dev` 最新文档可能对应更高版本。
 
+历史原生音视频的来源由官方已提交工具结果和同会话的准确 submission 身份确定。`done` 与 `unanswered` 都是已结束的轮次：后续模型失败或预算耗尽不抹去此前成功读取的媒体。历史重放仍由 Go 校验原轮次、撤销状态、资源归属和版本，不能由模型文字或本地媒体文件单独授予权限。`TestNativeHistoryRealDefaultHostRestartsAfterBudgetFailure` 覆盖真实 Go 与默认宿主进程重启后的同会话恢复，并保留资源失效时零模型请求的拒绝验证。
+
 本地钉选版本：`pi-durable`、`pi-coding-agent`、`pi-ai` 与 chord 1.2.0。配套 agent-core、codemode、mcp、tui、telemetry 通过 overrides 同钉 1.2.0，避免上游范围依赖自动选择未经验证的版本。锁文件由 Bun 生成；没有修改官方包或另建模型执行循环。Durable 接入验证见 [持久宿主验收](durable-host-verification-20261008.md)。
 
 从 1.0.4 升到 1.2.0 时已适配破坏性改动：业务工具的结果改用 `output` 字段返回；已有会话的磁盘格式标记仍是 1.0.4，旧会话照常打开。
