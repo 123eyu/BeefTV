@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -133,6 +134,26 @@ func (s *Service) PrepareUserCanvasStoryboard(userID, canvasID, nodeID string, i
 	imageWidth, imageHeight := storyboardDraftSize(input.Image)
 	videoWidth, videoHeight := storyboardDraftSize(input.Video)
 	rowStride := math.Max(imageHeight, videoHeight) + 80
+	videoSizes := map[string][2]float64{}
+	for _, id := range input.RowIDs {
+		width, height := videoWidth, videoHeight
+		if size, _ := input.Video["size"].(string); size == "" || size == "auto" {
+			if len(input.Image) > 0 {
+				width, height = imageWidth, imageHeight
+			} else if row := findStoryboardRow(rows, id); row != nil {
+				frameID, _ := row["imageNodeId"].(string)
+				if frame := findCanvasNode(doc, frameID); frame != nil {
+					w, _ := frame["width"].(float64)
+					h, _ := frame["height"].(float64)
+					if w > 0 && h > 0 {
+						width, height = storyboardDraftSize(map[string]any{"size": fmt.Sprintf("%g:%g", w, h)})
+					}
+				}
+			}
+		}
+		videoSizes[id] = [2]float64{width, height}
+		rowStride = math.Max(rowStride, height+80)
+	}
 	for index, id := range input.RowIDs {
 		row := findStoryboardRow(rows, id)
 		shot := PreparedStoryboardShot{RowID: id}
@@ -157,7 +178,7 @@ func (s *Service) PrepareUserCanvasStoryboard(userID, canvasID, nodeID string, i
 			title := fmt.Sprintf("镜头 %d · %s", rowShotNumber(row), label)
 			left, width, height := x, imageWidth, imageHeight
 			if kind == "video" {
-				left, width, height = x+imageWidth+80, videoWidth, videoHeight
+				left, width, height = x+imageWidth+80, videoSizes[id][0], videoSizes[id][1]
 			}
 			node := map[string]any{"id": createdID, "type": kind, "title": title, "metadata": metadata,
 				"position": map[string]any{"x": left, "y": 160 + float64(index)*rowStride}, "width": width, "height": height}
@@ -273,18 +294,31 @@ func storyboardPreparationReferences(doc, storyboard, row map[string]any, script
 	return refs, nil
 }
 
+var storyboardSizePattern = regexp.MustCompile(`(?i)^([0-9]+(?:\.[0-9]+)?)[x:]([0-9]+(?:\.[0-9]+)?)`)
+
 func storyboardDraftSize(patch map[string]any) (float64, float64) {
 	ratio := 16.0 / 9
 	if size, ok := patch["size"].(string); ok {
-		parts := strings.Split(size, ":")
-		if len(parts) == 2 {
-			w, e1 := strconv.ParseFloat(parts[0], 64)
-			h, e2 := strconv.ParseFloat(parts[1], 64)
+		parts := storyboardSizePattern.FindStringSubmatch(strings.TrimSpace(size))
+		if len(parts) == 3 {
+			w, e1 := strconv.ParseFloat(parts[1], 64)
+			h, e2 := strconv.ParseFloat(parts[2], 64)
 			if e1 == nil && e2 == nil && w > 0 && h > 0 && w/h >= 0.25 && w/h <= 4 {
 				ratio = w / h
 			}
+		} else if strings.Contains(size, "竖") || strings.Contains(size, "portrait") || strings.Contains(size, "9:16") {
+			ratio = 9.0 / 16
+		} else if strings.Contains(size, "square") || strings.Contains(size, "1:1") {
+			ratio = 1
 		}
 	}
-	width := math.Min(360, 640*ratio)
-	return width, width / ratio
+	// Match the actual empty-media sizing contract (720x405 base, 420x236
+	// readable minimum). Smaller draft boxes are expanded on UI load and would
+	// overlap their neighbours despite looking non-overlapping in the Go graph.
+	width, height := 720.0, 720.0/ratio
+	if ratio < 720.0/405 {
+		width, height = 405*ratio, 405
+	}
+	scale := math.Max(1, math.Max(420/width, 236/height))
+	return width * scale, height * scale
 }
