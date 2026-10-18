@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -368,6 +369,7 @@ func TestMediaDiscoveryExplainsEvidenceAndInspectionModes(t *testing.T) {
 		}
 		seen[descriptor.Summary] = true
 		var schema struct {
+			Required   []string `json:"required"`
 			Properties map[string]struct {
 				Description string   `json:"description"`
 				Enum        []string `json:"enum"`
@@ -375,6 +377,9 @@ func TestMediaDiscoveryExplainsEvidenceAndInspectionModes(t *testing.T) {
 		}
 		if err := json.Unmarshal(descriptor.Params, &schema); err != nil {
 			t.Fatal(err)
+		}
+		if slices.Contains(schema.Required, "expectedVersion") != (descriptor.ID != "media.overview") {
+			t.Fatalf("%s discovery does not match the required media version", descriptor.ID)
 		}
 		mode := schema.Properties["mode"]
 		for _, word := range []string{"frames", "静态", "video", "连续", "audio", "声音"} {

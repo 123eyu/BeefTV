@@ -105,8 +105,12 @@ func registerMediaOps(r *Registry) {
 	}
 	for _, id := range []string{"media.overview", "media.inspect", "media.check"} {
 		operation := id
+		required := `["canvasId"]`
+		if operation != "media.overview" {
+			required = `["canvasId","expectedVersion"]`
+		}
 		r.Register(Op{AssistantCanvas: true, ID: operation, Summary: summaries[operation], ReadOnly: true, Scope: ScopeCanvas,
-			Params:  json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"nodeId":{"type":"string"},"assetId":{"type":"string"},"resourceId":{"type":"string"},"expectedVersion":{"type":"string"},"startMs":{"type":"integer","minimum":0},"endMs":{"type":"integer","minimum":0},"mode":{"type":"string","description":"frames：离散静态截图，用于构图与画面内容，不能判断连续运动或声音；video：连续原生视频片段，用于运镜、动作、转场与音画关系，保留可用音轨；audio：原生音频片段，用于说话、对白、音乐和声音内容。按检查目标选择；inspect 每次最多 15 秒。","enum":["frames","video","audio"]}},"required":["canvasId"]}`),
+			Params:  json.RawMessage(fmt.Sprintf(`{"type":"object","properties":{"canvasId":{"type":"string"},"nodeId":{"type":"string"},"assetId":{"type":"string"},"resourceId":{"type":"string"},"expectedVersion":{"type":"string","minLength":1,"description":"先调用 media.overview，使用返回的 version；inspect 和 check 必填，不猜版本。"},"startMs":{"type":"integer","minimum":0},"endMs":{"type":"integer","minimum":0},"mode":{"type":"string","description":"frames：离散静态截图，用于构图与画面内容，不能判断连续运动或声音；video：连续原生视频片段，用于运镜、动作、转场与音画关系，保留可用音轨；audio：原生音频片段，用于说话、对白、音乐和声音内容。按检查目标选择；inspect 每次最多 15 秒。","enum":["frames","video","audio"]}},"required":%s}`, required)),
 			Handler: func(ctx *Context, raw json.RawMessage) (any, error) { return runMedia(ctx, operation, raw) }})
 	}
 }
