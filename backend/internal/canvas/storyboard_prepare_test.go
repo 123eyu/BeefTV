@@ -2,6 +2,7 @@ package canvas
 
 import (
 	"encoding/json"
+	"math"
 	"reflect"
 	"testing"
 )
@@ -150,7 +151,7 @@ func TestPrepareVideoUsesExistingImageAndReferenceIsNotVideoFirstFrame(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	summary, images, err := svc.PrepareUserCanvasStoryboard("owner", id, "script", StoryboardPreparation{RowIDs: rows, ReferenceNodeIDs: []string{refs[0].ID}, Image: map[string]any{"model": "image"}}, summary.Revision)
+	summary, images, err := svc.PrepareUserCanvasStoryboard("owner", id, "script", StoryboardPreparation{RowIDs: rows, ReferenceNodeIDs: []string{refs[0].ID}, Image: map[string]any{"model": "image", "size": "9:16"}}, summary.Revision)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,6 +163,18 @@ func TestPrepareVideoUsesExistingImageAndReferenceIsNotVideoFirstFrame(t *testin
 	for i, shot := range videos.Shots {
 		if shot.ImageNodeID != images.Shots[i].ImageNodeID {
 			t.Fatal("lost existing image")
+		}
+		video := findCanvasNode(doc, shot.VideoNodeID)
+		width, height := video["width"].(float64), video["height"].(float64)
+		if width < 420 || math.Abs(width/height-9.0/16) > 0.001 {
+			t.Fatal("video without explicit size must preserve its readable portrait frame geometry")
+		}
+		if i > 0 {
+			previous := findCanvasNode(doc, videos.Shots[i-1].VideoNodeID)
+			gap := video["position"].(map[string]any)["y"].(float64) - previous["position"].(map[string]any)["y"].(float64) - previous["height"].(float64)
+			if gap < 79.99 {
+				t.Fatalf("portrait result would overlap its neighbour: gap %g", gap)
+			}
 		}
 		matches := 0
 		for _, raw := range doc["connections"].([]any) {
