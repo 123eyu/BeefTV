@@ -19,7 +19,7 @@ import { mergedImageCapabilityConfig } from "@/lib/model-selection";
 import type { GenerationTask } from "@/services/api/task-center";
 
 import type { CanvasGenerationExecution } from "./canvas-generation-executor-types";
-import { canvasGenerationFailureMetadata, canvasImageGenerationHasPendingResult, imageSubmissionUnknown, isKeptGenerationResultCode } from "./canvas-generation-failure";
+import { canvasGenerationFailureMetadata, canvasImageGenerationHasPendingResult, canvasImagePendingResultMessage, isKeptGenerationResultCode } from "./canvas-generation-failure";
 
 const NODE_STATUS_LOADING = "loading" as const;
 const NODE_STATUS_SUCCESS = "success" as const;
@@ -57,8 +57,7 @@ export async function executeImageGeneration({
     registerPendingNodeIds,
 }: CanvasGenerationExecution) {
     if (canvasImageGenerationHasPendingResult(sourceNode, canvasNodes)) {
-        const missing = canvasNodes.find((node) => (node.id === sourceNode?.id || node.metadata?.batchRootId === sourceNode?.id) && node.metadata?.generationErrorCode === "results_missing");
-        showError(imageSubmissionUnknown(sourceNode?.metadata) ? "提交结果尚未确认，请查询原任务" : missing?.metadata?.errorDetails || sourceNode?.metadata?.errorDetails || "生成结果已保留，请点击「继续取回」");
+        showError(canvasImagePendingResultMessage(sourceNode, canvasNodes));
         return;
     }
     const expectedScope = captureUserScope();
@@ -374,7 +373,7 @@ export async function executeImageGeneration({
         });
         return;
     }
-    if (hasFailure) showError(isKeptGenerationResultCode(representativeFailure?.generationErrorCode) ? "生成结果已保留，请点击「继续取回」" : saveFailureMessage || (hasSuccess ? "部分图片生成失败" : "全部图片生成失败"));
+    if (hasFailure) showError(isKeptGenerationResultCode(representativeFailure?.generationErrorCode) ? representativeFailure?.errorDetails || "生成结果已保留，请点击「继续取回」" : saveFailureMessage || (hasSuccess ? "部分图片生成失败" : "全部图片生成失败"));
     setNodes((current) => {
         const next = current.map((node) => {
             if (node.id === nodeId && isConfigNode) {

@@ -21,6 +21,7 @@ export const GENERATION_ERROR_CATEGORIES = [
     "local_credential",
     "canvas_conflict",
     "result_apply_failed",
+    "result_target_unavailable",
     "context_too_long",
     "input_inaccessible",
     "input_too_large",
@@ -123,6 +124,7 @@ const CATEGORY_COPY: Record<GenerationErrorCategory, CategoryCopy> = {
     local_credential: { reason: "本地算力凭据读取失败", action: "请检查工作区数据目录并重新连接算力账号；不要删除工作区密钥" },
     canvas_conflict: { reason: "生成结果已保留，画布尚未更新", action: "请点击「继续取回」，不要重新生成" },
     result_apply_failed: { reason: "生成结果已保留，还没放回画布", action: "请点击「继续取回」，不要重新生成" },
+    result_target_unavailable: { reason: "生成结果已保存，无法放回原节点", action: "从「生成历史」取回，无需重新生成" },
     context_too_long: { reason: "输入内容超出模型长度限制", action: "请缩短提示词或减少参考内容后重试" },
     input_inaccessible: { reason: "参考素材无法读取", action: "请检查素材后重试" },
     input_too_large: { reason: "参考素材过大", action: "请压缩或更换素材后重试" },
@@ -486,11 +488,14 @@ function classifyUnknown(error: unknown, context: GenerationFailureContext): Cla
         if (record.reason === "stale_revision" || record.code === "canvas_conflict") {
             return { category: "canvas_conflict", fromCode: true, retryable: false };
         }
+        if (["node_task_mismatch", "node_mismatch", "canvas_mismatch", "node_deleted"].includes(String(record.reason || ""))) {
+            return { category: "result_target_unavailable", status: numericStatus(record.status), fromCode: true, retryable: false };
+        }
         if (typeof record.code === "string" && typeof record.message === "string") {
             const vodCopy = vodImageErrorCopy(record.code, record.message);
             if (vodCopy) return vodCopy;
         }
-        if (record.code === "download_failed" || record.code === "result_apply_failed") {
+        if (record.code === "download_failed" || record.code === "result_apply_failed" || record.code === "result_target_unavailable") {
             return { category: record.code, fromCode: true, retryable: false };
         }
         if (typeof record.message === "string" && isCanvasSaveConflictText(record.message) && (record.reason === "conflict" || record.status === 409 || record.status === 428)) {
