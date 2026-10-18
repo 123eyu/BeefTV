@@ -26,4 +26,6 @@ test('producer workflow respects studio changes, maintains plan_update, and insp
   for (const instruction of ['制作现场摘要', '不要用旧草稿覆盖用户的改动', 'plan_update', 'needs_user', '查看产物是否符合分镜要求', '只针对失败或缺失的节点重新提议']) {
     expect(SYSTEM_PROMPT).toContain(instruction);
   }
+  expect(SYSTEM_PROMPT).toContain('成功提案会结束本轮并等待用户确认');
+  expect(SYSTEM_PROMPT).toContain('不要把计划更新留到提案之后');
 });

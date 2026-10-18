@@ -431,7 +431,8 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     entry.generation.persistEffects = () => persistEffects(entry);
     entry.generation.permissionMode='full-access';
     const tools = [...buildTools(canvasId, entry.log, entry.generation, entry.turn, sessionId), ...hostTools(entry)].map((tool) => defineTool({
-      name: tool.name, description: tool.description, parameters: tool.parameters,
+      name: tool.name, description: tool.description + (tool.label === 'canvas.generation.propose'
+        ? '。先完成本阶段的计划更新，再提出生成提案；成功提案会结束本轮并等待用户确认。' : ''), parameters: tool.parameters,
       replay: durableToolReplay(tool), executionMode: 'sequential',
       ...(['media.overview', 'media.inspect', 'media.check'].includes(tool.label) ? { outputLimits: { maxBytes: 64 * 1024 * 1024, maxLines: 100000 } } : {}),
       execute: async (args, api, context) => {
@@ -440,13 +441,17 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
         if (entry.generation.pendingInput?.state === 'pending') throw fail('supplement_preparation_pending');
         await authorization(entry, entry.turn.turnId);
         try {
+          const proposalCount = entry.turn.proposals.length;
           // Bridge tools return {content}; Durable's ToolExecutionResult names it output.
           const { content, ...result } = await runWithBudget(entry, () => tool.execute(String(api.taskId), args, context.abortSignal));
           entry.generation.toolCalledSinceYield = true;
           if (!tool.readOnly && typeof readCanvas === 'function') {
             await refreshStudioDigest(entry, entry.turn.turnId, { selectedNodeIds: entry.input?.selectedNodeIds || [], computeDiff: false, signal: context.abortSignal });
           }
-          return { ...result, output: content };
+          // Official Durable ends only when every call in this response requests
+          // termination. Mixed/failed rounds keep their normal model continuation.
+          const proposed = tool.label === 'canvas.generation.propose' && result.isError !== true && entry.turn.proposals.length > proposalCount;
+          return { ...result, output: content, ...(proposed ? { control: { ...result.control, terminate: true } } : {}) };
         } finally { await persistEffects(entry); }
       },
     }));

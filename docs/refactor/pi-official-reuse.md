@@ -112,6 +112,8 @@
 
 以下为本地候选实现，正式发布与原生验收状态以对应版本回执为准。
 
+- 成功的 `canvas_generation_propose` 在本次有效提案已进入 effects 后返回官方 `control.terminate`；`finally persistEffects`、官方终态、Go complete 确认和 UI `turn_end` 的顺序不变。仅当本次响应所有工具都请求 terminate，Durable 才正常结束并省去总结模型请求；失败或混合工具回合仍继续，Stop 与已接受补充消息保持原语义。先完成 `plan_update` 再提案，宿主不替模型改计划。官方 SQLite fixture `durable-proposal-yield-cases.mjs` 覆盖工具独立结束、混合/失败、补充消息、Stop、完成确认失败后重开及同请求回放；空回复的历史确认卡另由前端组件回归覆盖。
+
 - `canvas_get` 的模型读取采用有界分页，完整字段读取和 revision 校验见 [`canvas-read-view.md`](../../agent-host/canvas-read-view.md)。Go 原始画布内容与授权校验不变。
 - `canvas_node_update`、`canvas_node_configure`、`canvas_node_bind_asset` 的模型回执只保留节点身份、本次修改字段的实际值和业务成功回执（含 revision、素材引用）；不会重复回送完整节点。长字段返回明确的 preview 与 `readView`，可经 `canvas_get` 按版本读取原文，防止官方 50KB 工具输出上限截掉回执末尾。Go 原始结果、宿主 effects、幂等与撤销存储不变；HTTP bridge 回归见 `agent-host/operation-bridge-write-view.test.mjs`。
 - 参数已知且不依赖其他结果的只读查询，可在同次响应提出多个调用，仍逐个执行。已知节点 ID 且参数互不依赖时，助手也可在同次响应提出多个 `canvas_edge_create` / `canvas_node_configure`。执行仍由官方 Durable 串行调度，bridge 只续接本轮自己的写入版本；外部变更继续由 Go CAS 拒绝。这不是整批事务或遇错自动停止，依赖新 ID / 返回结果的调用须等待，收到冲突后须重读。`agent-host/durable-write-batch-cases.mjs` 用真实官方运行时、同一假模型响应的三个工具调用和本地 CAS 服务验证串行、版本续接及外部冲突；不代替真实模型行为验收。
