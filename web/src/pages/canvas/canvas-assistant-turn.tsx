@@ -3,7 +3,7 @@ import { Crosshair, Undo2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { ASSISTANT_PROPOSAL_UNDONE_TEXT, agentAssistantFailureText, type AgentToolCall, type AssistantGenerationProposal, type AssistantTurn } from "@/services/api/agent-assistant";
+import { ASSISTANT_PROPOSAL_INVALIDATED_TEXT, ASSISTANT_PROPOSAL_UNDONE_TEXT, agentAssistantFailureText, type AgentToolCall, type AssistantGenerationProposal, type AssistantTurn } from "@/services/api/agent-assistant";
 import { ASSISTANT_UNDONE_INCOMPLETE_TEXT, assistantChangeSummary, assistantSkillLabel, assistantChangedNodeIds, assistantProposalText, assistantProposalProgress, assistantTurnCanContinue, assistantUnresolvedFailures, assistantUndoFailureText, assistantVisibleReply } from "./canvas-assistant-copy";
 import type { CanvasNodeData } from "@/types/canvas";
 import { dismissedProposalKey, type AssistantTurnStatus } from "./use-canvas-assistant";
@@ -20,6 +20,7 @@ type Props = {
     proposalFeedback?: Record<string, string>;
     /** Proposals whose 生成 click is still being checked or submitted. */
     runningProposalIds?: ReadonlySet<string>;
+    generationDisabled?: boolean;
     onLocate: (nodeIds: string[]) => void;
     onUndo: (turnId: string) => void;
     onRunProposal: (proposal: AssistantGenerationProposal, turnId: string) => void;
@@ -52,7 +53,7 @@ export function CanvasAssistantUserMessage({ text, selectedCount, continuationId
     );
 }
 
-export function CanvasAssistantTurnView({ turn, status, handledProposals, proposalFeedback, runningProposalIds, onLocate, onUndo, onRunProposal, onDismissProposal, onContinue, nodes, onCheckResults }: Props) {
+export function CanvasAssistantTurnView({ turn, status, handledProposals, proposalFeedback, runningProposalIds, generationDisabled, onLocate, onUndo, onRunProposal, onDismissProposal, onContinue, nodes, onCheckResults }: Props) {
     const config = useEffectiveConfig();
     const summary = assistantChangeSummary(turn.change);
     const changedNodeIds = assistantChangedNodeIds(turn.change);
@@ -140,9 +141,9 @@ export function CanvasAssistantTurnView({ turn, status, handledProposals, propos
                 const progress = started && nodes ? assistantProposalProgress(proposal, nodes) : null;
                 return (
                     <div key={proposal.proposalId} className="canvas-assistant-card">
-                        <span style={{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{assistantProposalText(proposal, portraitPriceLines(profile?.videoPricing), !started && !skipped && !undone)}</span>
-                        {priceError && !started && !skipped && !undone ? <span className="canvas-assistant-meta" role="status">{priceError}</span> : null}
-                        {!skipped && !running && (!undone || started) && proposalFeedback?.[proposal.proposalId] ? <span className="canvas-assistant-meta" role="status" style={{ overflowWrap: "anywhere" }}>{proposalFeedback[proposal.proposalId]}</span> : null}
+                        <span style={{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>{assistantProposalText(proposal, portraitPriceLines(profile?.videoPricing), !started && !skipped && !undone && !turn.proposalsInvalidated)}</span>
+                        {priceError && !started && !skipped && !undone && !turn.proposalsInvalidated ? <span className="canvas-assistant-meta" role="status">{priceError}</span> : null}
+                        {!skipped && !running && ((!undone && !turn.proposalsInvalidated) || started) && proposalFeedback?.[proposal.proposalId] ? <span className="canvas-assistant-meta" role="status" style={{ overflowWrap: "anywhere" }}>{proposalFeedback[proposal.proposalId]}</span> : null}
                         {started ? (
                             <>
                                 <span className="canvas-assistant-meta" role="status">{progress?.text || "已开始生成"}</span>
@@ -155,9 +156,11 @@ export function CanvasAssistantTurnView({ turn, status, handledProposals, propos
                             <span className="canvas-assistant-meta">{ASSISTANT_PROPOSAL_UNDONE_TEXT}</span>
                         ) : skipped ? (
                             <span className="canvas-assistant-meta">这次没有生成</span>
+                        ) : turn.proposalsInvalidated ? (
+                            <span className="canvas-assistant-meta" role="status">{ASSISTANT_PROPOSAL_INVALIDATED_TEXT}</span>
                         ) : (
                             <div className="canvas-assistant-card-actions">
-                                <Button size="small" type="primary" autoInsertSpace={false} loading={running} disabled={Boolean(priceError)} onClick={() => onRunProposal(proposal, turn.turnId)}>
+                                <Button size="small" type="primary" autoInsertSpace={false} loading={running} disabled={generationDisabled || Boolean(priceError)} onClick={() => onRunProposal(proposal, turn.turnId)}>
                                     生成
                                 </Button>
                                 <Button size="small" disabled={running} onClick={() => onDismissProposal(proposal.proposalId)}>

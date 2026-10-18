@@ -468,6 +468,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                         toolCalls: end.toolCalls || [],
                         change: end.change ?? null,
                         proposals: end.proposals || [],
+                        proposalsInvalidated: end.proposalsInvalidated,
                         outputs: end.outputs || [],
                         plan: end.plan ?? null,
                         error: end.error ? agentAssistantFailureText(end.errorReason ?? undefined, "这一轮没有全部完成，请核对已经落地的改动。") : null,
@@ -541,18 +542,17 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             rerenderIfActive(targetCanvas);
         } finally {
             if (!userScopeMatches(expectedScope)) return;
+            // A new message invalidates older source turns on the server, even
+            // if admission later fails. Keep generation disabled until that
+            // authoritative readback arrives; steer returns before this path.
+            runFor(targetCanvas).historyLoaded = false;
+            await loadHistory(targetCanvas, runFor(targetCanvas).sessionId ?? undefined);
+            if (!userScopeMatches(expectedScope)) return;
             const current = runFor(targetCanvas);
             current.streaming = current.backgroundActive;
             current.lifecycleNotice = null;
             current.controller = null;
             rerenderIfActive(targetCanvas);
-            void listAssistantSessions(targetCanvas).then((list) => {
-                if (!userScopeMatches(expectedScope)) return;
-                const latest = runFor(targetCanvas);
-                latest.sessions = list.sessions;
-                if (!latest.sessionId) latest.sessionId = list.currentSessionId;
-                rerenderIfActive(targetCanvas);
-            }).catch(() => { /* 会话列表读取失败不覆盖本轮结果；重新读取入口仍可用。 */ });
         }
     }, [loadHistory, rerenderIfActive, runFor, expectedScope, preferredPermissionMode]);
 

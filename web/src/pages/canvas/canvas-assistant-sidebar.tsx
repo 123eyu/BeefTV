@@ -239,6 +239,7 @@ export function CanvasAssistantSidebar(props: Props) {
                         handledProposals={assistant.handledProposals}
                         proposalFeedback={props.proposalFeedback}
                         runningProposalIds={props.runningProposalIds}
+                        generationDisabled={assistant.streaming || assistant.sessionBusy || assistant.awaitingReceipt || !assistant.historyLoaded || Boolean(assistant.historyError)}
                         onLocate={onLocateNodes}
                         onUndo={(turnId) => void assistant.undoTurn(turnId)}
                         onRunProposal={onRunProposal}

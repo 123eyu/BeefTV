@@ -77,6 +77,8 @@ export type AssistantPlan = {
 };
 
 export type AgentTurnEnd = {
+    /** Backend projection of the source turn's durable intent fence. */
+    proposalsInvalidated?: boolean;
     type: "turn_end";
     turnId?: string;
     /** Go-confirmed generation continuation identity, never inferred from text. */
@@ -102,6 +104,7 @@ export type AgentTurnEnd = {
 };
 
 export type AssistantTurn = {
+    proposalsInvalidated?: boolean;
     turnId: string;
     continuationId?: string;
     permissionMode?: AssistantPermissionMode;
@@ -265,6 +268,7 @@ export async function undoAssistantTurn(turnId: string, canvasId: string): Promi
 
 /** 已撤销的一轮不再开始生成；这是后端给出的唯一判定，界面隐藏按钮只是提示。 */
 export const ASSISTANT_PROPOSAL_UNDONE_TEXT = "这一轮已撤销，不会生成。";
+export const ASSISTANT_PROPOSAL_INVALIDATED_TEXT = "已失效，请让助手重新提出生成方案。";
 
 /**
  * 开始生成前由后端确认生成建议所属的一轮仍然有效。
@@ -277,6 +281,7 @@ export async function confirmAssistantProposalRunnable(turnId: string, proposalI
     } catch (error) {
         const reason = error instanceof ApiError ? error.reason : undefined;
         if (reason === "turn_undone") return ASSISTANT_PROPOSAL_UNDONE_TEXT;
+        if (reason === "continuation_intent_changed") return ASSISTANT_PROPOSAL_INVALIDATED_TEXT;
         if (reason === "turn_not_found") return "找不到这一轮对话，未提交生成。请让助手重新提出方案。";
         return "无法确认这项生成是否还能进行，未提交生成。请检查连接后重试。";
     }

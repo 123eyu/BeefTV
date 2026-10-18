@@ -22,6 +22,7 @@ const {
     AGENT_STREAM_INCOMPLETE_MESSAGE,
     assistantUndoFailure,
     cancelAgentChat,
+    confirmAssistantProposalRunnable,
     steerAgentChat,
     ensureAgentUiSession,
     resetAgentUiSession,
@@ -92,6 +93,15 @@ afterEach(() => {
 const TURN_END = JSON.stringify({ type: "turn_end", reply: "完成", toolCalls: [], error: null, cancelled: false });
 
 describe("创作助手回合流边界", () => {
+    test("已失效的生成确认返回明确提示，普通可用提案不受影响", async () => {
+        // Establish the UI session before replacing the proposal endpoint response.
+        sessionResponse = () => new Response(JSON.stringify({ data: { token: "ui-token", expiresAt: new Date(Date.now() + 1_800_000).toISOString() } }));
+        await ensureAgentUiSession();
+        httpPostSpy.mockRejectedValueOnce(new ApiError("internal detail", { status: 409, reason: "continuation_intent_changed" }));
+        expect(await confirmAssistantProposalRunnable("old", "gp-old", "canvas")).toBe("已失效，请让助手重新提出生成方案。");
+        httpPostSpy.mockResolvedValueOnce({ runnable: true } as never);
+        expect(await confirmAssistantProposalRunnable("current", "gp-current", "canvas")).toBeNull();
+    });
     test("交接会话身份在 observer_error 和断流前交给界面，不能冒充回合完成", async () => {
         let sessionId = "legacy-session";
         let ended = false;

@@ -233,6 +233,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 				turns, _ := history["turns"].([]any)
 				for _, value := range turns {
 					if turn, ok := value.(map[string]any); ok {
+						delete(turn, "proposalsInvalidated")
 						turnID, _ := turn["turnId"].(string)
 						outputs, err := svc.AssistantTurnOutputs(c.GetString("agentUserId"), strings.TrimSpace(c.Query("canvasId")), turnID)
 						if err != nil {
@@ -247,6 +248,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 						}
 						var pins []skills.Pin
 						if state != nil {
+							turn["proposalsInvalidated"] = state.ContinuationInvalidated
 							turn["undone"] = state.Undone
 							turn["change"] = state.Change
 							turn["permissionMode"] = state.PermissionMode
