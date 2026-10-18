@@ -79,6 +79,14 @@ test("活跃观察流实时显示完整文字与制作计划，刷新从历史�
         liveStream!.enqueue(line({ type: "text_snapshot", text: liveText }));
         await page.getByText("现在正在执行的计划", { exact: true }).waitFor();
         await page.getByText(liveText, { exact: true }).waitFor();
+        liveStream!.enqueue(line({ type: "lifecycle", phase: "tool", toolName: "canvas_node_configure" }));
+        await page.getByText("正在配置生成参数。", { exact: true }).waitFor();
+        liveStream!.enqueue(line({ type: "lifecycle", phase: "tool_end", toolName: "canvas_node_configure", success: true }));
+        await page.getByText("已配置生成参数，正在继续制作。", { exact: true }).waitFor();
+        liveStream!.enqueue(line({ type: "lifecycle", phase: "compaction" }));
+        await page.getByText("正在整理对话内容，方便继续。", { exact: true }).waitFor();
+        liveStream!.enqueue(line({ type: "lifecycle", phase: "compaction_end", success: true }));
+        await page.getByText("正在整理对话内容，方便继续。", { exact: true }).waitFor({ state: "hidden" });
         expect(chats.length).toBe(before);
         await page.reload();
         await page.getByText("现在正在执行的计划", { exact: true }).waitFor();
