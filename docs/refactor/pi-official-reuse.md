@@ -2,6 +2,10 @@
 
 本页记录 BeefTV 内置助手宿主对官方 Pi 1.2.0 的复用。执行运行时只有 `@earendil-works/pi-durable` 一套：新会话走 Durable，已有 JSONL 会话只保留只读历史，不再在其上执行新回合。在旧会话里发新消息会为该画布新建一条 Durable 会话，并用旧会话最后的 user/assistant 文本作为交接说明开头。实现以本仓库 `agent-host/` 与钉选包内声明、示例、文档为准；`pi.dev` 最新文档可能对应更高版本。
 
+宿主启动环境复用 `desktopnet` 的代理选择：非空 HTTP/HTTPS 环境配置优先，否则读取 Windows/macOS 静态系统代理。Go 在启动时覆盖去重大小写代理变量，并默认启用 Node 24 的公开 [`NODE_USE_ENV_PROXY=1`](https://nodejs.org/download/release/v24.15.0/docs/api/cli.html#node_use_env_proxy1)；显式 `NODE_USE_ENV_PROXY=0` 和 `NO_PROXY=*` 保留。`localhost`、`127.0.0.1`、`::1` 始终直连，避免宿主业务凭据进入外部代理。坏代理报连接错误，不自动改走直连；没有新网络执行器、SDK 内部 dispatcher 或重试循环。
+
+Node fetch 的 bypass 规则与 Go 不完全相同。对固定模型 `BaseURL`，启动器另用既有 Go 选择器判断直连，把该目标主机加入 Node bypass；这保留当前模型的 CIDR、系统 `<local>` 排除以及只设置 HTTP 代理时 HTTPS 应直连的选择。普通重定向继续使用 Node 原生域名/IP/端口规则，不承诺任意新重定向目标也支持 Go 的 CIDR 或系统本地域名规则；不执行 PAC/WPAD。代理设置在宿主启动时取快照，修改代理后需重启宿主。模型 BaseURL 已在供应商指纹内，空闲时更换地址会重启并重新投影；忙时保留原轮模型，不能在原进程内切换目标后沿用旧 bypass。
+
 历史原生音视频的来源由官方已提交工具结果和同会话的准确 submission 身份确定。`done` 与 `unanswered` 都是已结束的轮次：后续模型失败或预算耗尽不抹去此前成功读取的媒体。历史重放仍由 Go 校验原轮次、撤销状态、资源归属和版本，不能由模型文字或本地媒体文件单独授予权限。`TestNativeHistoryRealDefaultHostRestartsAfterBudgetFailure` 覆盖真实 Go 与默认宿主进程重启后的同会话恢复，并保留资源失效时零模型请求的拒绝验证。
 
 媒体检查事实沿既有工具日志、`beeftv.host` 文档和回合历史保存，不新建质量状态库。操作桥只有在 Go 读取成功且媒体内容转换成功后才记录成功与安全摘要；模型文本、工具参数和计划状态不提供检查事实。静态图片的零时长概览不生成影音检查记录，视频抽帧也不计为连续视频读取。用户界面分开显示步骤进度与各资源版本的实际读取、检测区间，整段静音是测量结果，不自动判定创作失败。原记录没有摘要时不猜测补齐；自然语言要求是否满足、角色一致性与语义质量的自动验收不在此合同内。
