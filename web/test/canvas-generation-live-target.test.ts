@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { rebaseCanvasGenerationTarget } from "@/lib/canvas/canvas-generation-live-target";
-import { clearInPlaceMediaOutputMetadata } from "@/lib/canvas/canvas-project-generation";
+import { clearInPlaceMediaOutputMetadata, resetGenerationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 
 const captured: CanvasNodeData = {
@@ -26,4 +26,20 @@ test("output cleanup preserves fields and editor changes made after the snapshot
     expect(next.position).toEqual(live.position);
     expect(next.metadata).toMatchObject({ content: "new-media", taskId: "new-task", generationOutputNodeIds: ["new-output"], prompt: "新的提示词", composerContent: "新的提示词", status: "loading" });
     expect(Object.hasOwn(next.metadata!, "storageKey")).toBe(false);
+});
+
+test("video preparation retains the visible output but clears the captured task identity", () => {
+    const video = { ...captured, type: CanvasNodeType.Video };
+    const pending = { ...video, metadata: { ...resetGenerationTaskMetadata(video.metadata, "loading"), prompt: "本次视频" } };
+    const next = rebaseCanvasGenerationTarget(video, pending, video);
+    expect(next.metadata).toMatchObject({ content: "old-media", storageKey: "old-resource", assetId: "old-asset", status: "loading" });
+    for (const key of ["taskId", "taskClientOperationId", "generationOutputNodeIds"]) expect(Object.hasOwn(next.metadata!, key)).toBe(false);
+});
+
+test("copied video output and configuration never overwrite a newer live result during preparation", () => {
+    const video = { ...captured, type: CanvasNodeType.Video };
+    const pending = { ...video, metadata: { ...resetGenerationTaskMetadata(video.metadata, "loading"), prompt: "本次视频" } };
+    const live = { ...video, metadata: { ...video.metadata, content: "new-media", storageKey: "new-resource", assetId: "new-asset", taskId: "new-task", generationEffectKeys: ["new-effect"], composerContent: "刚编辑的提示词" } };
+    const next = rebaseCanvasGenerationTarget(live, pending, video);
+    expect(next.metadata).toMatchObject({ content: "new-media", storageKey: "new-resource", assetId: "new-asset", taskId: "new-task", generationEffectKeys: ["new-effect"], composerContent: "刚编辑的提示词", status: "loading" });
 });

@@ -414,6 +414,14 @@ func alreadyBound(metadata map[string]any, patch TaskOutputBind) bool {
 }
 
 func applyGenerationBindMetadata(metadata map[string]any, patch TaskOutputBind) {
+	// Preparation keeps the previous video playable. Its previews and measured
+	// properties belong to that media, so replace them only when the new output binds.
+	if patch.MediaType == "video" && ((patch.StorageKey != "" && patch.StorageKey != nodeString(metadata, "storageKey")) ||
+		(patch.Content != "" && patch.Content != nodeString(metadata, "content"))) {
+		for _, key := range []string{"previewContent", "videoPreview", "naturalWidth", "naturalHeight", "durationMs", "hasAudio", "bytes", "mimeType", "outputParameterWarning"} {
+			delete(metadata, key)
+		}
+	}
 	if patch.Content != "" {
 		metadata["content"] = patch.Content
 	}

@@ -17,6 +17,15 @@ export function projectCanvasGenerationSubmission(
 /** Apply an attempt's output state without reverting edits made while it prepared. */
 export function rebaseCanvasGenerationTarget(live: CanvasNodeData, planned: CanvasNodeData, captured: CanvasNodeData | undefined): CanvasNodeData {
     const metadata = { ...live.metadata, ...planned.metadata };
+    // Copied snapshot fields are not new writes. Keep newer live output or
+    // configuration, while this attempt still owns its loading state.
+    for (const key of Object.keys(planned.metadata || {}) as Array<keyof NonNullable<CanvasNodeData["metadata"]>>) {
+        if (key !== "status" && Object.hasOwn(captured?.metadata || {}, key)
+            && JSON.stringify(planned.metadata?.[key]) === JSON.stringify(captured?.metadata?.[key])) {
+            if (Object.hasOwn(live.metadata || {}, key)) Object.assign(metadata, { [key]: live.metadata?.[key] });
+            else delete metadata[key];
+        }
+    }
     // The attempt deliberately clears the previous output/task. A spread alone
     // restores those deleted keys; delete only when the live value is still the
     // captured one, so preparation cannot erase a newer edit or result.
