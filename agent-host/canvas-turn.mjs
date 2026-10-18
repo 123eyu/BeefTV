@@ -85,8 +85,13 @@ export function collectTurnEffects(turn, opID, result, operationId) {
       if (result.timelineUpdated === true) turn.timelineUpdated = true;
       break;
     case 'canvas.nodes.create':
+    case 'canvas.script.prepare':
       for (const node of Array.isArray(result.created) ? result.created : []) {
         if (node && node.id) turn.createdNodeIds.push(String(node.id));
+      }
+      if (opID === 'canvas.script.prepare') {
+        if (result.nodeId) turn.updatedNodeIds.push(String(result.nodeId));
+        turn.createdEdgeIds.push(...asStringList(result.createdEdgeIds));
       }
       break;
     case 'canvas.node.update':

@@ -489,6 +489,10 @@ func (s *operationSession) CreateUserCanvasNodes(userID string, canvasID string,
 	return s.canvas.CreateUserCanvasNodes(userID, canvasID, drafts, expectedRevision)
 }
 
+func (s *operationSession) PrepareUserCanvasStoryboard(userID, canvasID, nodeID string, input canvas.StoryboardPreparation, expectedRevision int64) (canvas.UserDataSummary, canvas.StoryboardPreparationResult, error) {
+	return s.canvas.PrepareUserCanvasStoryboard(userID, canvasID, nodeID, input, expectedRevision)
+}
+
 func (s *operationSession) UpdateUserCanvasNodeFields(userID string, canvasID string, nodeID string, patch map[string]any, expectedRevision int64) (canvas.UserDataSummary, error) {
 	return s.canvas.UpdateUserCanvasNodeFields(userID, canvasID, nodeID, patch, expectedRevision)
 }

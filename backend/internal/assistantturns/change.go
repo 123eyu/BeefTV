@@ -107,11 +107,17 @@ func changeFromReceipts(record Record, receipts []model.AgentOpRecord) (*Change,
 			if item.payload["timelineUpdated"] == true {
 				change.TimelineUpdated = true
 			}
-		case "canvas.nodes.create":
+		case "canvas.nodes.create", "canvas.script.prepare":
 			for _, raw := range docItems(item.payload["created"]) {
 				if id, _ := raw["id"].(string); id != "" && !slices.Contains(change.CreatedNodeIDs, id) {
 					change.CreatedNodeIDs = append(change.CreatedNodeIDs, id)
 				}
+			}
+			if item.op == "canvas.script.prepare" {
+				if id, _ := item.payload["nodeId"].(string); id != "" {
+					change.UpdatedNodeIDs = uniqueSorted(append(change.UpdatedNodeIDs, id))
+				}
+				change.CreatedEdgeIDs = uniqueSorted(append(change.CreatedEdgeIDs, stringItems(item.payload["createdEdgeIds"])...))
 			}
 		case "canvas.document.commit":
 			change.DocumentUpdated = true

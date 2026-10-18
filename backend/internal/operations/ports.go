@@ -21,6 +21,7 @@ type Domain interface {
 	Task(userID string, id string) (*model.Task, error)
 	ResolveAssistantGenerationModel(kind, selectedModel string) (AssistantGenerationModel, error)
 	CreateUserCanvasNodes(userID string, canvasID string, drafts []canvas.NodeDraft, expectedRevision int64) (canvas.UserDataSummary, []canvas.CreatedNode, error)
+	PrepareUserCanvasStoryboard(userID, canvasID, nodeID string, input canvas.StoryboardPreparation, expectedRevision int64) (canvas.UserDataSummary, canvas.StoryboardPreparationResult, error)
 	UpdateUserCanvasNodeFields(userID string, canvasID string, nodeID string, patch map[string]any, expectedRevision int64) (canvas.UserDataSummary, error)
 	AppendUserCanvasStoryboardRows(userID string, canvasID string, nodeID string, drafts []canvas.StoryboardRowDraft, expectedRevision int64) (canvas.UserDataSummary, []canvas.StoryboardRowIdentity, error)
 	UpdateUserCanvasStoryboardRows(userID string, canvasID string, nodeID string, patches []canvas.StoryboardRowPatch, expectedRevision int64) (canvas.UserDataSummary, canvas.StoryboardRowUpdate, error)

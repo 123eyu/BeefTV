@@ -608,6 +608,122 @@
     "replay": "safe"
   },
   {
+    "id": "canvas.script.prepare",
+    "summary": "一次为已有分镜创建并配置首帧/视频草稿，绑定分镜、连接参考图并按镜头排布；整批一次保存，不开始生成。已有绑定拒绝覆盖",
+    "readOnly": false,
+    "scope": "canvas",
+    "params": {
+      "additionalProperties": false,
+      "properties": {
+        "canvasId": {
+          "type": "string"
+        },
+        "expectedRevision": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "image": {
+          "additionalProperties": false,
+          "description": "本批节点共同生成参数；省略则不创建该类型。视频时长采用每行 durationSeconds，提示词直接采用分镜原文；视频必须明确是否生成声音",
+          "properties": {
+            "model": {
+              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力",
+              "type": "string"
+            },
+            "quality": {
+              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力",
+              "type": "string"
+            },
+            "size": {
+              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力",
+              "type": "string"
+            },
+            "transparentBackground": {
+              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力",
+              "type": "string"
+            }
+          },
+          "required": [
+            "model"
+          ],
+          "type": "object"
+        },
+        "nodeId": {
+          "description": "已有分镜脚本节点",
+          "type": "string"
+        },
+        "operationId": {
+          "description": "调用方生成的稳定幂等键；重试同一操作必须复用同一个值，服务端据此回读原结果",
+          "type": "string"
+        },
+        "referenceNodeIds": {
+          "description": "同画布角色或风格图片，仅连接到各首帧图片节点；视频只连接自己的首帧",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 4,
+          "type": "array"
+        },
+        "rowIds": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "type": "array"
+        },
+        "video": {
+          "additionalProperties": false,
+          "description": "本批节点共同生成参数；省略则不创建该类型。视频时长采用每行 durationSeconds，提示词直接采用分镜原文；视频必须明确是否生成声音",
+          "properties": {
+            "generateAudio": {
+              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "type": "string"
+            },
+            "model": {
+              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力",
+              "type": "string"
+            },
+            "size": {
+              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力",
+              "type": "string"
+            },
+            "vquality": {
+              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力",
+              "type": "string"
+            },
+            "watermark": {
+              "description": "下次生成使用的草稿参数；提交生成时仍会校验模型能力",
+              "type": "string"
+            }
+          },
+          "required": [
+            "model",
+            "generateAudio"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "canvasId",
+        "nodeId",
+        "expectedRevision",
+        "rowIds",
+        "operationId"
+      ],
+      "type": "object"
+    },
+    "assistantModes": [
+      "full-access",
+      "canvas"
+    ],
+    "replay": "safe"
+  },
+  {
     "id": "canvas.script.row.remove",
     "summary": "按行 ID 批量删除分镜行并重排镜号（未知行整批拒绝）",
     "readOnly": false,
