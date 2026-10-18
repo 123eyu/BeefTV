@@ -4,6 +4,8 @@
 
 宿主启动环境复用 `desktopnet` 的代理选择：非空 HTTP/HTTPS 环境配置优先，否则读取 Windows/macOS 静态系统代理。Go 在启动时覆盖去重大小写代理变量，并默认启用 Node 24 的公开 [`NODE_USE_ENV_PROXY=1`](https://nodejs.org/download/release/v24.15.0/docs/api/cli.html#node_use_env_proxy1)；显式 `NODE_USE_ENV_PROXY=0` 和 `NO_PROXY=*` 保留。`localhost`、`127.0.0.1`、`::1` 始终直连，避免宿主业务凭据进入外部代理。坏代理报连接错误，不自动改走直连；没有新网络执行器、SDK 内部 dispatcher 或重试循环。
 
+Pi SDK 的静态导入会经设置模块加载 npm undici，安装直接连接的全局 dispatcher，覆盖 Node 的初始环境代理。`server.mjs` 因此在全部导入完成、首个请求和 fetch 包装之前，仅对 `NODE_USE_ENV_PROXY=1` 调用 Node 24.14 起公开的 [`http.setGlobalProxyFromEnv()`](https://nodejs.org/download/release/v24.15.0/docs/api/http.html#httpsetglobalproxyfromenvproxyenv)；正式 runtime 为 24.15.0，不调用 SDK 私有 CLI 初始化。`model-proxy-cases.mjs` 启动真实宿主与官方 Durable/ModelRuntime，以本地 HTTP/HTTPS 模型替身、CONNECT 代理和独立 ops 替身验证请求路由、显式禁用、全局 bypass 与代理失败；原生 fetch 单独通过不能替代此消费者验证。
+
 Node fetch 的 bypass 规则与 Go 不完全相同。对固定模型 `BaseURL`，启动器另用既有 Go 选择器判断直连，把该目标主机加入 Node bypass；这保留当前模型的 CIDR、系统 `<local>` 排除以及只设置 HTTP 代理时 HTTPS 应直连的选择。普通重定向继续使用 Node 原生域名/IP/端口规则，不承诺任意新重定向目标也支持 Go 的 CIDR 或系统本地域名规则；不执行 PAC/WPAD。代理设置在宿主启动时取快照，修改代理后需重启宿主。模型 BaseURL 已在供应商指纹内，空闲时更换地址会重启并重新投影；忙时保留原轮模型，不能在原进程内切换目标后沿用旧 bypass。
 
 历史原生音视频的来源由官方已提交工具结果和同会话的准确 submission 身份确定。`done` 与 `unanswered` 都是已结束的轮次：后续模型失败或预算耗尽不抹去此前成功读取的媒体。历史重放仍由 Go 校验原轮次、撤销状态、资源归属和版本，不能由模型文字或本地媒体文件单独授予权限。`TestNativeHistoryRealDefaultHostRestartsAfterBudgetFailure` 覆盖真实 Go 与默认宿主进程重启后的同会话恢复，并保留资源失效时零模型请求的拒绝验证。

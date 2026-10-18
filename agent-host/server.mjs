@@ -22,6 +22,10 @@ import {nativeSourceKey} from './native-history.mjs';
 import { createNativePartStore } from './native-part-store.mjs';
 import { fetchModelWithProgressIdle } from './model-stream-idle.mjs';
 
+// SDK imports install npm undici's direct dispatcher. Restore Node's public env
+// proxy support after imports, before any SDK/ops request or fetch wrapper runs.
+if (process.env.NODE_USE_ENV_PROXY === '1') http.setGlobalProxyFromEnv();
+
 const OPS_URL = (process.env.BEEFTV_OPS_URL || 'http://127.0.0.1:18090/api').replace(/\/+$/, '');
 const HOST_TOKEN = process.env.BEEFTV_AGENT_HOST_TOKEN || '';
 const DESKTOP_TOKEN = process.env.BEEFTV_AGENT_DESKTOP_TOKEN || '';
