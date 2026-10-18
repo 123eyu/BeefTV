@@ -185,6 +185,7 @@ const durable = createDurableSessionStore({
     return models;
   },
   getModelRef: () => ({ provider: PROVIDER_ID, modelId: MODEL_ID }),
+  authorizeContinuation: ({id,turnId,sessionId}) => ops.opsRequest('POST',`/assistant/runtime/continuations/${encodeURIComponent(id)}/verify`,{turnId,sessionId}),
   skills: {
     readContext:async (entry,turnId) => ops.opsRequest('GET',`/assistant/runtime/canvases/${encodeURIComponent(entry.canvasId)}/skill-context?sessionId=${encodeURIComponent(entry.sessionId)}${turnId?`&turnId=${encodeURIComponent(turnId)}`:''}`),
     changeContext:async (entry,change,turnId) => ops.opsRequest('POST',`/assistant/runtime/canvases/${encodeURIComponent(entry.canvasId)}/skill-context`,{...change,sessionId:entry.sessionId,...(turnId?{turnId}:{})}),
@@ -532,6 +533,7 @@ const server = http.createServer(async (req, res) => {
       const revisionBefore = Number(body.revisionBefore || 0);
       const requestedSessionId = String(body.sessionId || '').trim();
       const chosen = requestedSessionId || currentId(canvasId);
+	  if (body.continuationId && (!requestedSessionId || chosen !== currentId(canvasId))) { respond(res,409,{reason:'session_not_current'}); return; }
       if (!canvasId || (!userText && !body.attachments?.length) || !turnId) { respond(res,400,{reason:'invalid_request'}); return; }
       if (providerReason) { respond(res,503,{reason:providerReason}); return; }
       // A Stop naming this request, from before its arrival until the official submit, cancels it (durable submit).
@@ -542,7 +544,9 @@ const server = http.createServer(async (req, res) => {
       body.permissionMode=authority.permissionMode || 'canvas';
       // 只有 Durable 一套执行运行时：选中的是 Durable 会话就直接接上；否则（旧 JSONL 会话或尚无会话）
       // 新建一条 Durable 会话，并用旧会话文本作为交接说明开头。
-      const entry = isDurableSessionId(chosen)
+      const entry = body.continuationId
+        ? await durable.ensureCurrentSession(canvasId, chosen)
+        : isDurableSessionId(chosen)
         ? await durable.ensureSession(canvasId,chosen)
         : chosen ? await durable.handoffSession(canvasId, legacy.readHandoffNote(canvasId,chosen), chosen)
           : await durable.ensureSession(canvasId);

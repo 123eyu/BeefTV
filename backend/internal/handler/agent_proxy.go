@@ -288,6 +288,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 	}
 
 	registerAssistantSkillContextRoutes(r, svc, guard, hostJSON)
+	registerAssistantContinuationRoutes(r, svc, guard)
 	r.GET("/assistant/sessions", func(c *gin.Context) {
 		if !guard(c, false) {
 			return
@@ -312,6 +313,10 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		if _, allowed := requireOwnedCanvas(c, payload.CanvasID); !allowed {
 			return
 		}
+		if err := svc.CancelAssistantContinuations(c.GetString("agentUserId"), payload.CanvasID, "", true); err != nil {
+			failService(c, err)
+			return
+		}
 		hostJSON(c, http.MethodPost, "/sessions", body)
 	})
 
@@ -327,6 +332,10 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			return
 		}
 		if _, allowed := requireOwnedCanvas(c, payload.CanvasID); !allowed {
+			return
+		}
+		if err := svc.CancelAssistantContinuations(c.GetString("agentUserId"), payload.CanvasID, "", true); err != nil {
+			failService(c, err)
 			return
 		}
 		hostJSON(c, http.MethodPost, "/sessions/activate", body)
@@ -433,6 +442,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			return
 		}
 		var payload struct {
+			ContinuationID  string                    `json:"continuationId"`
 			PermissionMode  string                    `json:"permissionMode"`
 			CanvasID        string                    `json:"canvasId"`
 			Message         string                    `json:"message"`
@@ -454,6 +464,30 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		}
 		canvasRaw, allowed := requireOwnedCanvas(c, payload.CanvasID)
 		if !allowed {
+			return
+		}
+		var continuation *assistantturns.ContinuationView
+		if payload.ContinuationID != "" {
+			var claimErr error
+			continuation, claimErr = svc.ClaimAssistantContinuation(c.GetString("agentUserId"), payload.ContinuationID)
+			if claimErr != nil {
+				skillContextFailure(c, claimErr)
+				return
+			}
+			if continuation.CanvasID != payload.CanvasID || continuation.SessionID != payload.SessionID {
+				c.JSON(409, gin.H{"reason": "continuation_scope_changed"})
+				return
+			}
+			payload.Message = continuation.Message
+			payload.RequestID = &continuation.RequestID
+			payload.PermissionMode = continuation.PermissionMode
+			payload.SelectedNodeIDs = continuation.SelectedNodeIDs
+			payload.Attachments = nil
+			payload.References = nil
+			payload.Skills = nil
+			body, _ = json.Marshal(payload)
+		} else if err := svc.CancelAssistantContinuations(c.GetString("agentUserId"), payload.CanvasID, payload.SessionID, true); err != nil {
+			failService(c, err)
 			return
 		}
 		if !assistantturns.ValidMode(payload.PermissionMode) {
@@ -511,7 +545,14 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		input.PermissionMode = assistantturns.Mode(payload.PermissionMode)
 		input.SkillPins = pins
 		c.Header("X-Beeftv-Turn-Admission", "unknown")
-		revisionBefore, snapshotErr := svc.BeginAssistantTurn(c.GetString("agentUserId"), payload.CanvasID, turnID, input)
+		var revisionBefore int64
+		var snapshotErr error
+		if continuation != nil {
+			turnID = continuation.TurnID
+			revisionBefore = continuation.RevisionBefore
+		} else {
+			revisionBefore, snapshotErr = svc.BeginAssistantTurn(c.GetString("agentUserId"), payload.CanvasID, turnID, input)
+		}
 		if snapshotErr != nil {
 			// No request has reached the host, even if saving the turn snapshot
 			// failed ambiguously. There can be no model or operation to recover.
@@ -544,7 +585,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		upstream, err := host.NewChildRequest(context.WithoutCancel(c.Request.Context()), http.MethodPost, "/chat",
 			strings.NewReader(string(forwarded)))
 		if err != nil {
-			settle = true
+			settle = continuation == nil
 			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "reason": "host_unreachable",
 				"msg": "内置创作助手宿主未运行"})
 			return
@@ -558,7 +599,9 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode/100 != 2 {
-			settle = true
+			// A continuation has one fixed turn. Keep an uncertain host admission
+			// recoverable under that identity; only its actual completion or Stop settles it.
+			settle = continuation == nil
 			// 宿主拒绝这次对话时没有流可转：按统一失败信封回，reason 保持宿主给的机器可读原因。
 			payload, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 			var rejection struct {
@@ -622,6 +665,10 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		// 停止指向一次具体发送：会话与请求标识必须成对且格式有效，宿主再核对会话属于这块画布。
 		// 只转发校验过的字段；不带这两个字段的旧调用仍按画布停止当前回合。
 		target := map[string]string{"canvasId": payload.CanvasID}
+		cancelSession := ""
+		if payload.SessionID != nil {
+			cancelSession = *payload.SessionID
+		}
 		if payload.SessionID != nil || payload.RequestID != nil {
 			if payload.SessionID == nil || payload.RequestID == nil ||
 				!assistantSessionIDPattern.MatchString(*payload.SessionID) || !assistantRequestIDPattern.MatchString(*payload.RequestID) {
@@ -630,6 +677,10 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			}
 			target["sessionId"] = *payload.SessionID
 			target["requestId"] = *payload.RequestID
+		}
+		if err := svc.CancelAssistantContinuations(c.GetString("agentUserId"), payload.CanvasID, cancelSession, false); err != nil {
+			failService(c, err)
+			return
 		}
 		body, err := json.Marshal(target)
 		if err != nil {

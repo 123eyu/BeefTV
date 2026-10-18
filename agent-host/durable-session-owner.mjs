@@ -41,6 +41,7 @@ function prependStudioChanges(content, diffText) {
 }
 const idPattern = /^durable:([a-f0-9-]{36})$/;
 const fail = (reason) => Object.assign(new Error(reason), { reason });
+const continuationRevoked = (error) => ['continuation_cancelled', 'continuation_scope_changed'].includes(error?.reason);
 const requestSignature = messages => crypto.createHash('sha256').update(JSON.stringify(messages)).digest('hex');
 export const isDurableSessionId = (id) => idPattern.test(String(id || ''));
 export function durableToolReplay(tool) {
@@ -109,7 +110,7 @@ export function durableLifecycleState(current, event) {
 }
 
 export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModels, getModelRef,
-  buildTools, authorizeTurn, completeTurn = async () => {}, runWithBudget = (_entry, fn) => fn(),
+  buildTools, authorizeTurn, authorizeContinuation = null, completeTurn = async () => {}, runWithBudget = (_entry, fn) => fn(),
   extensions = () => [], settings = {}, skills = null, readCanvas = null, maxPlanContinuations = 6, thinkingLevel = agentThinkingLevel() }) {
   if (!THINKING_LEVELS.includes(thinkingLevel)) throw fail('invalid_thinking_level');
   if (typeof authorizeTurn !== 'function') throw fail('durable_authorizer_required');
@@ -171,6 +172,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
   async function state(entry) { return await entry.harness.snapshot(STATE, CTX); }
   async function authorization(entry, turnId, allowClosed = false) {
     const result = await authorizeTurn({ canvasId: entry.canvasId, turnId, sessionId: entry.sessionId });
+    if (result?.continuationRevoked === true && result.canvasId === entry.canvasId && result.turnId === turnId) throw fail('continuation_cancelled');
     const mode=result?.permissionMode || 'canvas';
     if (!['read-only','canvas','full-access'].includes(mode)) throw fail('invalid_permission_mode');
     if (entry.input?.turnId===turnId && (entry.input.permissionMode || 'canvas')!==mode) throw fail('permission_mode_frozen');
@@ -655,8 +657,27 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     if (!sessionId) return createSession(canvasId);
     return activateSession(canvasId, sessionId);
   }
+  // Restore only the current pointer, under the same lock as explicit switches.
+  // A delayed automatic request must never install its old session.
+  async function ensureCurrentSession(canvasId, sessionId) {
+    return lock(canvasId, async () => {
+      const entry = sessions.get(canvasId);
+      if (entry) {
+        if (entry.sessionId !== sessionId) throw fail('session_not_current');
+        return entry;
+      }
+      let pointer;
+      try { pointer = JSON.parse(fs.readFileSync(currentPath(canvasId), 'utf8')).sessionId; }
+      catch (error) { throw fail(error.code === 'ENOENT' ? 'session_not_current' : 'session_pointer_failed'); }
+      if (!sessionId || pointer !== sessionId) throw fail('session_not_current');
+      return install(await open(canvasId, sessionId));
+    });
+  }
   async function submit(entry, input) {
     return lock(entry.canvasId, async () => {
+      // Automatic work must never activate an old conversation. The same lock
+      // serializes explicit session changes and this final admission.
+      if (input.continuationId && sessions.get(entry.canvasId) !== entry) throw fail('session_not_current');
       const existing = await state(entry);
       const requestId = String(input.requestId || input.turnId || '').trim();
       if (!requestId || !input.turnId || !input.content) throw fail('invalid_request');
@@ -677,7 +698,12 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       }
       if (existing.active && (existing.active.turnId !== input.turnId || JSON.stringify(existing.active.content) !== JSON.stringify(input.content) ||
         JSON.stringify(skillsToLoad(existing.active.skills || [])) !== JSON.stringify(skillsToLoad(input.skills || [])))) throw fail('submission_request_conflict');
-      const auth=await authorization(entry, input.turnId);
+      let auth;
+      try { auth = await authorization(entry, input.turnId); }
+      catch (error) {
+        if (input.continuationId && continuationRevoked(error)) return stoppedRequest(entry, existing.active || {...input, requestId});
+        throw error;
+      }
       const modelRef = await turnModel(entry, existing.active);
       input={...input,modelRef,permissionMode:auth?.permissionMode || 'canvas'};
       if (stopIntended(entry, await state(entry), requestId)) {
@@ -716,6 +742,15 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       // The reset above must not swallow a Stop sent while this request was being prepared.
       // Checked synchronously before the official submit; a later Stop finds it running.
       if (stopIntended(entry, current, requestId)) return stoppedRequest(entry, admitted);
+      if (input.continuationId) {
+        if (!authorizeContinuation) throw fail('continuation_unavailable');
+        try { await authorizeContinuation({id:input.continuationId,turnId:admitted.turnId,sessionId:entry.sessionId}); }
+        catch (error) {
+          if (continuationRevoked(error)) return stoppedRequest(entry, admitted);
+          throw error;
+        }
+        if (stopIntended(entry, await state(entry), requestId)) return stoppedRequest(entry, admitted);
+      }
       entry.submittedRequest = requestId;
       const submission = await entry.root.submit({ type: 'input', requestId, content: admitted.submittedContent ?? admitted.content, whenBusy: 'reject' }, CTX);
       await update(entry, (doc) => { if (doc.active) doc.active.submissionId = submission.id; });
@@ -810,7 +845,12 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     if (!active) return null;
     hydrate(entry, active);
     // Opening/reading never schedules pending work. Only validated recovery does.
-    const auth = await authorization(entry, active.turnId, true);
+    let auth;
+    try { auth = await authorization(entry, active.turnId, true); }
+    catch (error) {
+      if (active.continuationId && continuationRevoked(error)) return stoppedRequest(entry, active);
+      throw error;
+    }
     if (entry.waiters > 0) return null;
     // Completion is already committed: only acknowledge it, never re-run or rebuild it.
     // Pre-submit stops have no official submission, including after Go has already closed.
@@ -1103,6 +1143,6 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     for (const entry of entries) await entry.harness.close(CTX);
     return entries.length;
   }
-  return { sessions, createSession, handoffSession, activateSession, ensureSession, submit, recover, supplement, beginPendingInput, fenceStop, wait,
+  return { sessions, createSession, handoffSession, activateSession, ensureSession, ensureCurrentSession, submit, recover, supplement, beginPendingInput, fenceStop, wait,
     stop, cancelRequest, hasSession, history, status, recordEvent, listCanvasSessions, disposeAll, skillContext, changeSkillContext };
 }

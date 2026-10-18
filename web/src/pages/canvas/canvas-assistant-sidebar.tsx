@@ -34,6 +34,7 @@ type Props = {
     proposalFeedback?: Record<string, string>;
     runningProposalIds?: ReadonlySet<string>;
     nodes?: CanvasNodeData[];
+    continuation?: { pending: boolean; notice: string; stop: () => Promise<void>; refresh: () => void };
 };
 
 const PLAN_STATUS_TEXT: Record<AssistantPlan["items"][number]["status"], string> = { todo: "待做", doing: "进行中", done: "已完成", needs_user: "等待确认", blocked: "需要处理" };
@@ -249,6 +250,13 @@ export function CanvasAssistantSidebar(props: Props) {
                 ))}
 
                 <CanvasAssistantPlan plan={assistant.plan} />
+                {props.continuation?.notice ? <div className="canvas-assistant-card" aria-label="自动继续状态">
+                    <span role="status">{props.continuation.notice}</span>
+                    <div className="canvas-assistant-card-actions">
+                        {props.continuation.pending ? <Button size="small" onClick={() => void props.continuation?.stop()}>停止自动继续</Button> : null}
+                        <Button size="small" onClick={props.continuation.refresh}>重新读取</Button>
+                    </div>
+                </div> : assistant.plan?.items.some(item => item.status !== "done") ? <p className="canvas-assistant-meta">确认生成后，将在此画布自动检查结果并继续原计划；下一批生成仍由你确认。</p> : null}
 
                 {assistant.pendingUserText || assistant.pendingAttachments.length ? (
                     <div className="canvas-assistant-turn">

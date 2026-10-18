@@ -5,7 +5,7 @@ import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { createModels } from '@earendil-works/pi-ai/models';
 import { createDurableSessionStore } from '../durable-session-owner.mjs';
 
-export async function modelFixture(directory, selected, available, onRequest = () => {}) {
+export async function modelFixture(directory, selected, available, onRequest = () => {}, overrides = {}) {
   const requests = [], payloads = [];
   const server = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
@@ -25,7 +25,7 @@ export async function modelFixture(directory, selected, available, onRequest = (
   const store = createDurableSessionStore({ sessionRoot: path.join(directory, 'sessions'), workspaceRoot: path.join(directory, 'workspace'),
     getModels: () => models, getModelRef: () => ({ provider: 'beeftv', modelId: selected }), buildTools: () => [],
     authorizeTurn: async () => ({ open: true, canvasId: 'canvas', permissionMode: 'canvas' }),
-    completeTurn: async data => completed.push(data.turnId), settings: { retry: { maxRetries: 0 } } });
+    completeTurn: async data => completed.push(data.turnId), settings: { retry: { maxRetries: 0 } }, ...overrides });
   return { store, requests, payloads, completed, async close() { await store.disposeAll(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); } };
 }
 

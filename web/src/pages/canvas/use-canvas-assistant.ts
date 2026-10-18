@@ -350,7 +350,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         void loadHistory(canvasId);
     }, [canvasId, loadHistory, open, runFor, status?.available]);
 
-    const send = useCallback(async (text: string, selectedNodeIds: string[], references: AgentChatReference[] = [], input: { attachments?: AssistantAttachment[]; skills?: AssistantSkillSelection[]; permissionMode?: AssistantPermissionMode } = {}) => {
+    const send = useCallback(async (text: string, selectedNodeIds: string[], references: AgentChatReference[] = [], input: { attachments?: AssistantAttachment[]; skills?: AssistantSkillSelection[]; permissionMode?: AssistantPermissionMode; continuation?: { id: string; sessionId: string; requestId: string } } = {}) => {
         if (!userScopeMatches(expectedScope)) return;
         const message = text.trim();
         if (!message && !input.attachments?.length) return;
@@ -361,6 +361,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         const attachments = (input.attachments || []).map(item => ({ ...item }));
         const skills = (input.skills || []).map(item => ({ ...item }));
         const run = runFor(targetCanvas);
+        if (input.continuation && (run.sessionId !== input.continuation.sessionId || run.streaming || !run.historyLoaded)) return;
         if (run.streaming) {
             if (!run.dispatched || !run.sessionId || run.supplementBusy) return;
             const supplement = { text: message, attachments, skills, status: "sending" as "sending" | "accepted" | "unconfirmed" };
@@ -396,9 +397,9 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         run.dispatched = false;
         run.backgroundActive = false;
         run.recovery = null;
-        run.lastSent = { text: message, selectedNodeIds: selectedSnapshot, references: referenceSnapshot, attachments, skills, permissionMode };
+        run.lastSent = input.continuation ? null : { text: message, selectedNodeIds: selectedSnapshot, references: referenceSnapshot, attachments, skills, permissionMode };
         // A new identity per send: Stop names exactly this one, and a retry is a new request.
-        const requestId = createClientId();
+        const requestId = input.continuation?.requestId || createClientId();
         run.requestId = requestId;
         rerenderIfActive(targetCanvas);
         try {
@@ -490,7 +491,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                     } else onCanvasChangedRef.current?.(targetCanvas, assistantChangedNodeIds(turn.change));
                     rerenderIfActive(targetCanvas);
                 },
-            }, { signal: controller.signal, selectedNodeIds: selectedSnapshot, references: referenceSnapshot, sessionId: run.sessionId ?? undefined, requestId, attachments, skills, permissionMode });
+            }, { signal: controller.signal, selectedNodeIds: selectedSnapshot, references: referenceSnapshot, sessionId: run.sessionId ?? undefined, requestId, attachments, skills, permissionMode, continuationId: input.continuation?.id });
         } catch (streamError) {
             if (!userScopeMatches(expectedScope)) return;
             if (controller.signal.aborted && !runFor(targetCanvas).dispatched) {

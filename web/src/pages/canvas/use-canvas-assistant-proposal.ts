@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 
 import { confirmAssistantProposalRunnable, type AssistantGenerationProposal } from "@/services/api/agent-assistant";
+import { armAssistantContinuation, registerAssistantSubmission } from "@/services/api/assistant-continuation";
 import type { Skill } from "@/services/api/skills";
 import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 
@@ -20,6 +21,9 @@ type UseCanvasAssistantProposalOptions = {
     handledProposals: ReadonlySet<string>;
     markProposalHandled: (proposalId: string) => void;
     handleGenerateNode: GenerateNode;
+    continuationSessionId?: string | null;
+    continuePlan?: boolean;
+    onContinuationArmed?: () => void;
 };
 
 export function useCanvasAssistantProposal({
@@ -30,6 +34,9 @@ export function useCanvasAssistantProposal({
     handledProposals,
     markProposalHandled,
     handleGenerateNode,
+    continuationSessionId,
+    continuePlan,
+    onContinuationArmed,
 }: UseCanvasAssistantProposalOptions) {
     const claimsRef = useRef(new Set<string>());
     const [assistantProposalFeedback, setAssistantProposalFeedback] = useState<Record<string, string>>({});
@@ -51,6 +58,8 @@ export function useCanvasAssistantProposal({
             const owner = lifetime.capture(projectId);
             const generateForThisRun = handleGenerateNodeRef.current;
             const proposalId = proposal.proposalId;
+            const sessionId = continuationSessionId;
+            let continuationId: string | undefined;
             setAssistantProposalFeedback((current) => ({ ...current, [proposalId]: "" }));
             setRunningProposalIds((current) => new Set(current).add(proposalId));
             void executeAssistantProposal({
@@ -59,16 +68,19 @@ export function useCanvasAssistantProposal({
                 claims: claimsRef.current,
                 isHandled: handledRef.current.has(proposal.proposalId),
                 confirmRunnable: () => confirmAssistantProposalRunnable(turnId, proposal.proposalId, owner.canvasId),
-                prepare: () =>
-                    prepareAssistantProposalSnapshot(
+                prepare: async () => {
+                    const snapshot = await prepareAssistantProposalSnapshot(
                         proposal,
                         () => readAssistantProposalSourceState(owner.canvasId, nodesRef.current, connectionsRef.current, addedSkillsRef.current),
                         () => readPersistedAssistantProposalSource(owner.canvasId),
                     ).catch(error => {
                         if (error instanceof AssistantProposalBlockedError && (error.reason === "canvas_saving" || error.reason === "canvas_conflict") && lifetime.matches(owner, projectIdRef.current)) recordAssistantProposalCanvasRejection(owner.canvasId);
                         throw error;
-                    }),
-                generate: generateForThisRun,
+                    });
+                    if (continuePlan && sessionId) { continuationId = (await armAssistantContinuation(owner.canvasId, sessionId, turnId, proposal)).id; onContinuationArmed?.(); }
+                    return snapshot;
+                },
+                generate: (id, kind, prompt, options) => generateForThisRun(id, kind, prompt, { ...options, ...(continuationId ? { onSubmissionPlan: manifest => registerAssistantSubmission(continuationId!, manifest).then(() => undefined) } : {}) }),
                 stillOwns: () => lifetime.matches(owner, projectIdRef.current),
                 markHandled: (proposalId) => markHandledRef.current(proposalId),
                 notify: (content) => {
@@ -82,7 +94,7 @@ export function useCanvasAssistantProposal({
                 });
             });
         },
-        [connectionsRef, lifetime, nodesRef, projectId],
+        [connectionsRef, lifetime, nodesRef, projectId, continuationSessionId, continuePlan, onContinuationArmed],
     );
 
     return { runAssistantProposal, assistantProposalFeedback, runningProposalIds };

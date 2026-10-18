@@ -207,6 +207,9 @@ func (s *Service) ScopeForHost(userID, turnID string) (Scope, bool, error) {
 	if rec.UserID != userID || rec.Undone || rec.effectiveState() != StateOpen {
 		return Scope{}, false, nil
 	}
+	if err := s.continuationTurnAllowed(s.store.DB(), turnID); err != nil {
+		return Scope{}, false, err
+	}
 	taskIDs := append([]string{}, rec.AssociatedTaskIDs...)
 	receipts, err := s.store.SucceededByTurn(nil, rec.UserID, rec.TurnID)
 	if err != nil {
@@ -350,7 +353,10 @@ func (s *Service) Finalize(turnID string) error {
 			rec.Document = nil
 			rec.CanvasSnapshots = nil
 		}
-		return s.persist(tx, rec)
+		if err := s.persist(tx, rec); err != nil {
+			return err
+		}
+		return tx.Model(&model.AssistantContinuation{}).Where("turn_id = ? AND state IN ?", rec.TurnID, []string{"claimed", "running"}).Update("state", "done").Error
 	})
 }
 

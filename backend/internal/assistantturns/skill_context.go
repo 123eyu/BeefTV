@@ -219,6 +219,9 @@ func (s *Service) changeSkillContext(userID, canvasID string, change SkillContex
 		if update.RowsAffected != 1 {
 			return contextError("skill_context_revision_conflict", "技能状态已变化，请刷新后重试")
 		}
+		if err := s.cancelContinuations(tx, userID, canvasID, change.SessionID, "", false); err != nil {
+			return err
+		}
 		result, err = contextProjection(*row)
 		if err != nil {
 			return err

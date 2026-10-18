@@ -394,6 +394,7 @@ export type AssistantSkillSelection = { skillId: string; versionId: string; cont
 export type AssistantSupplementInput = { message: string; attachments?: AssistantAttachment[]; skills?: AssistantSkillSelection[] };
 
 export type AgentChatRequest = {
+    continuationId?: string;
     permissionMode?: AssistantPermissionMode;
     signal?: AbortSignal;
     selectedNodeIds?: string[];
@@ -452,6 +453,7 @@ export async function streamAgentChat(
     if (references.length) body.references = references;
     if (sessionId) body.sessionId = sessionId;
     if (requestId) body.requestId = requestId;
+    if (request.continuationId) body.continuationId = request.continuationId;
     if (attachments.length) body.attachments = attachments.map(attachmentRequestValue);
     if (skills.length) body.skills = skills.map(({ skillId, versionId, contentHash }) => ({ skillId, versionId, contentHash }));
     const response = await fetch(`${apiBaseURL}/assistant/chat`, {

@@ -13,7 +13,7 @@ import { mediaResultMetadata } from "@/lib/canvas/canvas-node-semantics";
 import { CONTENT_MODERATION_ERROR_CODE, type GenerationFailureMetadata } from "@/lib/generation-error";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
-import { captureUserScope, isUserScopeAbandonedError, userScopeMatches } from "@/lib/user-scope-guard";
+import { assertUserScope, captureUserScope, isUserScopeAbandonedError, userScopeMatches } from "@/lib/user-scope-guard";
 import { CanvasGenerationTargetSaveError } from "@/services/canvas-generation-errors";
 import { mergedImageCapabilityConfig } from "@/lib/model-selection";
 import type { GenerationTask } from "@/services/api/task-center";
@@ -53,6 +53,7 @@ export async function executeImageGeneration({
     taskContext,
     retryContext,
     clientOperationId,
+    onSubmissionPlan,
     showError,
     registerPendingNodeIds,
 }: CanvasGenerationExecution) {
@@ -74,9 +75,6 @@ export async function executeImageGeneration({
     const isImageNode = sourceNode?.type === CanvasNodeType.Image;
     const isExistingImageNode = isImageNode && Boolean(sourceNode?.metadata?.content || sourceNode?.metadata?.storageKey);
     const reuseSourceNode = canGenerateImageInPlace(sourceNode);
-    const retired = reuseSourceNode && sourceNode ? retireImageBatchChildren(sourceNode, canvasNodes, canvasConnections) : { nodes: canvasNodes, connections: canvasConnections, removedIds: [] as string[] };
-    const workingNodes = retired.nodes;
-    const workingConnections = retired.connections;
     // 已有图片生成新结果并保留旧版本；参考图只来自入边，避免把旧结果误当成自身输入。
     const referenceImages = generationContext.referenceImages;
     const generationType = referenceImages.length ? ("edit" as const) : ("generation" as const);
@@ -96,6 +94,20 @@ export async function executeImageGeneration({
     const rootId = reuseSourceNode ? nodeId : nanoid();
     const childIds = count > 1 ? Array.from({ length: count }, () => nanoid()) : [];
     const targetIds = count > 1 ? childIds : [rootId];
+    if (onSubmissionPlan) {
+        if (!clientOperationId) throw new Error("生成提交缺少确认标识");
+        await onSubmissionPlan({ sourceNodeId: nodeId, submissions: nativeOutputCount
+            ? [{ operationId: clientOperationId, outputNodeIds: targetIds }]
+            : targetIds.map((id, index) => ({ operationId: count > 1 ? `${clientOperationId}:${index}` : clientOperationId, outputNodeIds: [id] })) });
+        assertUserScope(expectedScope);
+        controller.signal.throwIfAborted();
+        canvasNodes = nodesRef?.current || canvasNodes;
+        canvasConnections = useCanvasStore.getState().projects.find(project => project.id === projectId)?.connections || canvasConnections;
+        if (!canvasNodes.some(node => node.id === nodeId)) throw new Error("原节点已删除，未开始生成");
+    }
+    const retired = reuseSourceNode && sourceNode ? retireImageBatchChildren(sourceNode, canvasNodes, canvasConnections) : { nodes: canvasNodes, connections: canvasConnections, removedIds: [] as string[] };
+    const workingNodes = retired.nodes;
+    const workingConnections = retired.connections;
     registerPendingNodeIds(reuseSourceNode && count > 1 ? childIds : [rootId, ...childIds]);
     const rootWidth = outputNodeSize.width;
     const rootHeight = outputNodeSize.height;

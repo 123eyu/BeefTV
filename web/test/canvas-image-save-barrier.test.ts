@@ -22,7 +22,46 @@ const project: CanvasProject = { id: "canvas-1", title: "画布", createdAt: "20
 const input = { projectId: project.id, nodeId: "new-image", mode: "image" as const, prompt: "小猫", config: {} as never, clientOperationId: "test-image-save" };
 const task: GenerationTask = { id: "task-original", type: "canvas_image", status: "succeeded", prompt: input.prompt, attempts: 1, createdAt: "2026-01-01", updatedAt: "2026-01-01", failureDiagnostics: { source: "unknown", requests: [{ operation: "image_generate", method: "POST", dispatched: true, outcome: "response_received", httpStatus: 200, startedAt: "2026-01-01", durationMs: 10 }] } };
 
+test("continuation manifest freezes split output identities before any image task or placeholder mutation", async () => {
+    const target = { ...project.nodes[0]!, id: "source", metadata: { status: "idle" as const } };
+    let mutations = 0;
+    const rejected = new Error("confirmation receipt unavailable");
+    let manifest: Parameters<NonNullable<CanvasGenerationExecution["onSubmissionPlan"]>>[0] | undefined;
+    await expect(executeImageGeneration({
+        sourceNode: target, nodeId: target.id, canvasNodes: [target], canvasConnections: [],
+        prompt: "生成画面", effectivePrompt: "生成画面", projectId: project.id, clientOperationId: "proposal:gp-one:source",
+        generationConfig: { model: "test-model", count: "2", channels: [] }, generationContext: { referenceImages: [] }, controller: new AbortController(),
+        onSubmissionPlan: async value => { manifest = value; throw rejected; },
+        setNodes: () => { mutations++; }, setConnections: () => { mutations++; }, registerPendingNodeIds: () => { mutations++; },
+        startGenerationRequest: () => { mutations++; },
+    } as unknown as CanvasGenerationExecution)).rejects.toBe(rejected);
+    expect(mutations).toBe(0);
+    expect(manifest?.sourceNodeId).toBe("source");
+    expect(manifest?.submissions.map(item => item.operationId)).toEqual(["proposal:gp-one:source:0", "proposal:gp-one:source:1"]);
+    expect(new Set(manifest?.submissions.flatMap(item => item.outputNodeIds)).size).toBe(2);
+});
+
 beforeEach(() => useCanvasStore.setState({ projects: [structuredClone(project)] }));
+
+for (const [kind, execute] of [[CanvasNodeType.Image, executeImageGeneration], [CanvasNodeType.Video, executeVideoGeneration]] as const) {
+    test(`${kind} manifest rejection or Stop during registration leaves no new output or task`, async () => {
+        for (const stop of [false, true]) {
+            const source = { ...project.nodes[0]!, type: kind, metadata: { status: "idle" as const } };
+            const controller = new AbortController();
+            let mutations = 0;
+            let manifests = 0;
+            const unexpected = () => { mutations++; };
+            await expect(execute({
+                sourceNode: source, nodeId: source.id, canvasNodes: [source], nodesRef: { current: [source] }, canvasConnections: [],
+                prompt: "镜头", effectivePrompt: "镜头", projectId: project.id, clientOperationId: "proposal:gp-one:source",
+                generationConfig: { model: "test-model", count: "1", channels: [] }, generationContext: { referenceImages: [], referenceVideos: [], referenceAudios: [] }, controller,
+                onSubmissionPlan: async () => { manifests++; if (stop) controller.abort(); else throw new Error("receipt unavailable"); },
+                setNodes: unexpected, setConnections: unexpected, registerPendingNodeIds: unexpected, startGenerationRequest: unexpected,
+            } as unknown as CanvasGenerationExecution)).rejects.toThrow();
+            expect(manifests).toBe(1); expect(mutations).toBe(0);
+        }
+    });
+}
 
 test("submission creates a stable operation ID without randomUUID in an HTTP WebView", async () => {
     const descriptor = Object.getOwnPropertyDescriptor(crypto, "randomUUID");
