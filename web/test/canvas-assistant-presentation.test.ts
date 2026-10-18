@@ -253,11 +253,19 @@ describe("右侧栏位互斥", () => {
 
 describe("官方生命周期进度", () => {
     test("媒体工具显示真实进行中的工作，结束不伪造已成功", () => {
-        expect(assistantLifecycleText({ phase: "tool", toolName: "media_overview" })).toBe("正在浏览素材，确认画面和声音。");
-        expect(assistantLifecycleText({ phase: "tool", toolName: "media_inspect" })).toBe("正在查看和听取选定片段。");
+        expect(assistantLifecycleText({ phase: "tool", toolName: "media_overview" })).toBe("正在读取素材概要。");
+        expect(assistantLifecycleText({ phase: "tool", toolName: "media_inspect" })).toBe("正在检查选定素材。");
         expect(assistantLifecycleText({ phase: "tool", toolName: "media_check" })).toBe("正在检查黑屏、音轨和文件信息。");
         expect(assistantLifecycleText({ phase: "tool", toolName: "unknown_tool" })).toBeNull();
-        expect(assistantLifecycleText({ phase: "tool_end", toolName: "media_check" })).toBeNull();
+        expect(assistantLifecycleText({ phase: "tool_end", toolName: "media_check" })).not.toContain("已检查");
+        expect(assistantLifecycleText({ phase: "tool_end", toolName: "media_check", success: false })).not.toContain("已检查");
+        expect(assistantLifecycleText({ phase: "tool_end", toolName: "media_check", success: true })).toBe("已检查媒体文件信息，正在继续制作。");
+    });
+    test("制作操作显示进行中和已确认的完成状态，不暴露工具名", () => {
+        expect(assistantLifecycleText({ phase: "tool", toolName: "canvas_node_configure" })).toBe("正在配置生成参数。");
+        expect(assistantLifecycleText({ phase: "tool_end", toolName: "canvas.node.configure", success: true })).toBe("已配置生成参数，正在继续制作。");
+        expect(assistantLifecycleText({ phase: "tool_end", toolName: "canvas_timeline_render", success: true })).toBe("已提交成片合成，正在继续制作。");
+        expect(assistantLifecycleText({ phase: "tool_end", toolName: "unknown_tool", success: true })).toBeNull();
     });
     test("压缩和重试各用一句完整的话，结束事件不再显示进度", () => {
         expect(assistantLifecycleText({ phase: "compaction" })).toBe("正在整理对话内容，方便继续。");

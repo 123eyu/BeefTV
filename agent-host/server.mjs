@@ -232,10 +232,11 @@ function ownsSession(canvasId, sessionId) {
 }
 function emitDurable(entry, event) {
   // History reads restore this progress. It lives in memory only; the official task persists itself.
+  const events = durableStreamEvents(event, entry.lifecycle);
   entry.lifecycle = durableLifecycleState(entry.lifecycle, event);
   if (event.type === 'plan') entry.livePlan = event.plan;
   const text = entry.textProjection.accept(event);
-  for (const payload of [...(text ? [text] : []), ...durableStreamEvents(event)]) for (const listener of entry.listeners || []) listener(payload);
+  for (const payload of [...(text ? [text] : []), ...events]) for (const listener of entry.listeners || []) listener(payload);
 }
 function followDurable(entry, submission) {
   if (!entry.running) {

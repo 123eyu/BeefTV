@@ -83,16 +83,25 @@ export function durableRetryReason(message) {
 }
 const retryLifecycle = (attempt, error) => ({ type: 'lifecycle', phase: 'retry', attempt, reason: durableRetryReason(error) });
 function snapshotLifecycle(event) {
+  const compaction = (event.compactions || []).find((item) => item.blocking);
+  if (compaction) return { type: 'lifecycle', phase: 'compaction', taskId: compaction.taskId };
   if (event.generation?.retry) return retryLifecycle(event.generation.attempt, event.generation.retry.error);
   const tool = (event.tools || []).find((slot) => slot.status === 'running');
   return tool ? { type: 'lifecycle', phase: 'tool', toolName: tool.name } : null;
 }
 // Official Durable events -> host lifecycle/plan lines. Visible text is projected separately.
-export function durableStreamEvents(event) {
+export function durableStreamEvents(event, current = null) {
   switch (event?.type) {
     case 'plan': return [{ type: 'plan', plan: event.plan }];
     case 'tool_execution_start': return [{ type: 'lifecycle', phase: 'tool', toolName: event.toolName }];
-    case 'tool_execution_end': return [{ type: 'lifecycle', phase: 'tool_end', toolName: event.toolName }];
+    case 'tool_execution_end': {
+      const result = event.entry?.model?.find((message) => message.role === 'toolResult' && message.toolCallId === event.toolCallId && message.toolName === event.toolName);
+      return [{ type: 'lifecycle', phase: 'tool_end', toolName: event.toolName,
+        ...(typeof result?.isError === 'boolean' ? { success: !result.isError } : {}) }];
+    }
+    case 'compaction_start': return event.blocking ? [{ type: 'lifecycle', phase: 'compaction', taskId: event.taskId }] : [];
+    case 'compaction_end': return current?.phase === 'compaction' && current.taskId === event.taskId
+      ? [{ type: 'lifecycle', phase: 'compaction_end', success: !event.error }] : [];
     case 'auto_retry_start': return [retryLifecycle(event.attempt, event.errorMessage)];
     case 'auto_retry_end': return [{ type: 'lifecycle', phase: 'retry_end', attempt: event.attempt }];
     case 'snapshot': { const progress = snapshotLifecycle(event); return progress ? [progress] : []; }
@@ -104,8 +113,10 @@ export function durableLifecycleState(current, event) {
   switch (event?.type) {
     case 'snapshot': return snapshotLifecycle(event);
     case 'auto_retry_start': case 'tool_execution_start': return durableStreamEvents(event)[0];
+    case 'compaction_start': return durableStreamEvents(event, current)[0] || current;
+    case 'compaction_end': return durableStreamEvents(event, current).length ? null : current;
     case 'auto_retry_end': return current?.phase === 'retry' ? null : current;
-    case 'tool_execution_end': return current?.phase === 'tool' ? null : current;
+    case 'tool_execution_end': return current?.phase === 'tool' && current.toolName === event.toolName ? durableStreamEvents(event)[0] : current;
     default: return current;
   }
 }

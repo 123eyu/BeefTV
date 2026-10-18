@@ -20,6 +20,33 @@ describe('official Durable events projected to the panel stream', () => {
     expect(durableStreamEvents({ type: 'auto_retry_end', attempt: 1 })).toEqual([{ type: 'lifecycle', phase: 'retry_end', attempt: 1 }]);
   });
 
+  test('only the matching official tool result confirms success and never forwards its payload', () => {
+    const event = { type: 'tool_execution_end', toolCallId: 'c1', toolName: 'canvas_node_configure', entry: { model: [
+      { role: 'toolResult', toolCallId: 'c1', toolName: 'canvas_node_configure', isError: false, content: [{ type: 'text', text: SECRET }] },
+    ] } };
+    expect(durableStreamEvents(event)[0]).toEqual({ type: 'lifecycle', phase: 'tool_end', toolName: 'canvas_node_configure', success: true });
+    expect(JSON.stringify(durableStreamEvents(event))).not.toContain(SECRET);
+    event.entry.model[0].isError = true;
+    expect(durableStreamEvents(event)[0].success).toBe(false);
+    event.entry.model[0].toolCallId = 'other';
+    expect(durableStreamEvents(event)[0]).not.toHaveProperty('success');
+    expect(durableStreamEvents({ ...event, entry: undefined })[0]).not.toHaveProperty('success');
+  });
+
+  test('blocking compaction is visible, background work cannot replace foreground progress', () => {
+    const tool = { type: 'lifecycle', phase: 'tool', toolName: 'media_inspect' };
+    const start = { type: 'compaction_start', taskId: 42, blocking: true };
+    const busy = durableLifecycleState(tool, start);
+    expect(busy).toEqual({ type: 'lifecycle', phase: 'compaction', taskId: 42 });
+    expect(durableStreamEvents({ ...start, blocking: false }, tool)).toEqual([]);
+    expect(durableLifecycleState(tool, { ...start, blocking: false })).toEqual(tool);
+    expect(durableStreamEvents({ type: 'compaction_end', taskId: 99 }, busy)).toEqual([]);
+    expect(durableLifecycleState(busy, { type: 'compaction_end', taskId: 99 })).toEqual(busy);
+    expect(durableStreamEvents({ type: 'compaction_end', taskId: 42, error: SECRET }, busy)).toEqual([{ type: 'lifecycle', phase: 'compaction_end', success: false }]);
+    expect(durableLifecycleState(busy, { type: 'compaction_end', taskId: 42 })).toBeNull();
+    expect(durableStreamEvents({ type: 'snapshot', compactions: [{ taskId: 42, blocking: true }], tools: [] })).toEqual([busy]);
+  });
+
   test('a snapshot taken during backoff or a running tool restores that progress', () => {
     const backoff = { type: 'snapshot', entries: [], tools: [], generation: { attempt: 2, retry: { at: 1, error: `429 Too Many Requests ${SECRET}` } } };
     expect(durableStreamEvents(backoff)).toEqual([{ type: 'lifecycle', phase: 'retry', attempt: 2, reason: 'rate_limited' }]);
@@ -82,7 +109,7 @@ describe('Durable visible text projection', () => {
 describe('latest transient progress kept for history polling', () => {
   const retry = { type: 'lifecycle', phase: 'retry', attempt: 1, reason: 'timeout' };
   const tool = { type: 'lifecycle', phase: 'tool', toolName: 'media_inspect' };
-  test('start sets, matching end clears, unrelated events keep the current state', () => {
+  test('start sets, tool end keeps its receipt, unrelated events keep the current state', () => {
     let state = durableLifecycleState(null, { type: 'auto_retry_start', attempt: 1, at: 1, errorMessage: 'stream idle timeout' });
     expect(state).toEqual(retry);
     expect(durableLifecycleState(state, { type: 'message_update', changes: [] })).toEqual(retry);
@@ -90,7 +117,8 @@ describe('latest transient progress kept for history polling', () => {
     expect(durableLifecycleState(state, { type: 'auto_retry_end', attempt: 1 })).toBeNull();
     state = durableLifecycleState(null, { type: 'tool_execution_start', toolName: 'media_inspect' });
     expect(state).toEqual(tool);
-    expect(durableLifecycleState(state, { type: 'tool_execution_end', toolName: 'media_inspect' })).toBeNull();
+    expect(durableLifecycleState(state, { type: 'tool_execution_end', toolName: 'media_inspect' })).toEqual({ type: 'lifecycle', phase: 'tool_end', toolName: 'media_inspect' });
+    expect(durableLifecycleState(state, { type: 'tool_execution_end', toolName: 'other' })).toEqual(state);
   });
   test('a snapshot replaces stale progress', () => {
     expect(durableLifecycleState(retry, { type: 'snapshot', entries: [], tools: [] })).toBeNull();

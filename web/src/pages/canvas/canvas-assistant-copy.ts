@@ -196,16 +196,34 @@ export const ASSISTANT_STARTER_PROMPTS = [
     "检查哪些镜头还缺参考图",
 ];
 
-/** 官方压缩/重试进度：只说现在在做什么，不提内部事件名。 */
-export function assistantLifecycleText(event: { phase: AgentLifecycleEvent["phase"] | "tool" | "tool_end"; toolName?: string } | string | null | undefined): string | null {
+const ASSISTANT_TOOL_ACTIVITY: Record<string, [string, string]> = {
+    media_overview: ["正在读取素材概要。", "已读取素材概要"],
+    media_inspect: ["正在检查选定素材。", "已读取选定素材"],
+    media_check: ["正在检查黑屏、音轨和文件信息。", "已检查媒体文件信息"],
+    canvas_get: ["正在读取画布。", "已读取画布"],
+    model_catalog: ["正在查看可用模型和报价。", "已读取模型目录"],
+    canvas_nodes_create: ["正在创建画布节点。", "已创建画布节点"],
+    canvas_node_configure: ["正在配置生成参数。", "已配置生成参数"],
+    canvas_node_update: ["正在更新画布内容。", "已更新画布内容"],
+    canvas_edge_create: ["正在连接参考素材。", "已连接参考素材"],
+    canvas_script_rows_append: ["正在编排分镜。", "已编排分镜"],
+    canvas_script_row_update: ["正在更新分镜。", "已更新分镜"],
+    canvas_timeline_update: ["正在安排剪辑时间线。", "已保存剪辑时间线"],
+    canvas_timeline_render: ["正在提交成片合成。", "已提交成片合成"],
+    canvas_generation_propose: ["正在准备生成方案。", "已准备生成方案"],
+};
+
+/** 只显示官方活动和已核对的操作回执，不把工具完成等同于创作质量验收。 */
+export function assistantLifecycleText(event: Pick<AgentLifecycleEvent, "phase" | "toolName" | "success"> | string | null | undefined): string | null {
     const phase = typeof event === "string" ? event : event?.phase;
     switch (phase) {
-        case "tool": {
-            const tool = typeof event === "string" ? undefined : event?.toolName;
-            if (tool === "media_overview" || tool === "media.overview") return "正在浏览素材，确认画面和声音。";
-            if (tool === "media_inspect" || tool === "media.inspect") return "正在查看和听取选定片段。";
-            if (tool === "media_check" || tool === "media.check") return "正在检查黑屏、音轨和文件信息。";
-            return null;
+        case "tool": case "tool_end": {
+            const tool = typeof event === "string" ? "" : event?.toolName?.replaceAll(".", "_") || "";
+            const activity = ASSISTANT_TOOL_ACTIVITY[tool];
+            if (!activity) return null;
+            if (phase === "tool") return activity[0];
+            return typeof event !== "string" && event?.success === true
+                ? `${activity[1]}，正在继续制作。` : "正在核对操作结果，继续处理。";
         }
         case "compaction":
             return "正在整理对话内容，方便继续。";
