@@ -1,9 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { StrictMode, useCallback, useEffect, useLayoutEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { createRoot } from "react-dom/client";
 import { MemoryRouter } from "react-router";
 import { App } from "antd";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useCanvasGeneration } from "../../src/pages/canvas/use-canvas-generation";
+import { useCanvasGenerationExecutor } from "../../src/pages/canvas/use-canvas-generation-executor";
+import { stampCanvasNodeChanges } from "../../src/lib/canvas/canvas-node-timestamps";
+import { createModelChannel, defaultConfig, encodeChannelModel, useConfigStore } from "../../src/stores/use-config-store";
 import { useCanvasProjectLifecycle } from "../../src/pages/canvas/use-canvas-project-lifecycle";
 import { useCanvasHistory } from "../../src/pages/canvas/use-canvas-history";
 import { canvasAppearanceForTheme } from "../../src/lib/canvas/canvas-appearance";
@@ -23,6 +26,12 @@ const noop = () => {};
 const cached = (window as any).__reopenProject ?? { id: "c1", revision: 105, title: "Restart", createdAt: "2026-10-02", updatedAt: "2026-10-02", nodes: Array.from({ length: 10 }, (_, i) => ({ id: `n${i}`, type: "image", title: `Node ${i}`, width: 320, height: 200, position: { x: i * 400, y: 0 }, metadata: {} })), connections: [], chatSessions: [], activeChatId: null, appearance: canvasAppearanceForTheme("dark"), backgroundMode: "grid", showImageInfo: false, viewport: { x: 0, y: 0, k: 1 }, directorScenes: [] };
 const harness = (window as any).__lifecycle = { renders: [], updates: [], media: noop, deleteEdges: noop, save: async () => {}, restartLoad: async (_remote: unknown) => {}, setSession: (ready: boolean) => useUserStore.getState().setHydrated(ready) };
 const scenario = new URLSearchParams(location.search).get("scenario");
+const channel = createModelChannel({ id: "synthetic", name: "Synthetic", baseUrl: location.origin + "/upstream", apiKey: "synthetic-not-a-secret", interfaceType: "openai-image", models: ["gpt-image-2.5"] });
+const imageModel = encodeChannelModel(channel.id, "gpt-image-2.5");
+if (scenario === "image-save") {
+    useConfigStore.getState().replaceConfig({ ...defaultConfig, channels: [channel], model: imageModel, imageModel, models: [imageModel], size: "9:16", quality: "high" });
+    cached.nodes[0].metadata = { model: imageModel, size: "9:16", count: "1", quality: "high", prompt: "Short storyboard description", composerContent: "A detailed synthetic image prompt", content: "", status: "idle" };
+}
 if (scenario === "interrupted") {
     // The canvas was closed mid-work: a generation was running on n2 and uploads on n3 and n4.
     cached.nodes[2].metadata = { status: "loading", taskId: "task-done" };
@@ -58,7 +67,23 @@ function Harness() {
             if (++count === 17) { clearInterval(timer); resolve(); }
         }, 50);
     });
-    const [nodes, setNodes] = useState<CanvasNodeData[]>([]);
+    const [nodes, setNodesState] = useState<CanvasNodeData[]>([]);
+    const nodesRef = useRef(nodes);
+    // Use the page's updater contract: functional updates also advance the live
+    // ref, while direct generation writes reach it synchronously.
+    const setNodes = useCallback<Dispatch<SetStateAction<CanvasNodeData[]>>>(value => {
+        if (typeof value === "function") {
+            setNodesState(current => {
+                const next = stampCanvasNodeChanges(current, value(current));
+                nodesRef.current = next;
+                return next;
+            });
+        } else {
+            const next = stampCanvasNodeChanges(nodesRef.current, value);
+            nodesRef.current = next;
+            setNodesState(next);
+        }
+    }, []);
     const [connections, setConnections] = useState<CanvasConnection[]>([]);
     const [chatSessions, setChatSessions] = useState<CanvasAssistantSession[]>([]);
     const [activeChatId, setActiveChatId] = useState<string | null>(null);
@@ -67,9 +92,31 @@ function Harness() {
     const [showImageInfo, setShowImageInfo] = useState(false);
     const [viewport, setViewport] = useState({ x: 0, y: 0, k: 1 });
     const [projectLoaded, setProjectLoaded] = useState(false);
-    const nodesRef = useRef(nodes), connectionsRef = useRef(connections), chatSessionsRef = useRef(chatSessions), activeChatIdRef = useRef(activeChatId), viewportRef = useRef(viewport);
+    const connectionsRef = useRef(connections), chatSessionsRef = useRef(chatSessions), activeChatIdRef = useRef(activeChatId), viewportRef = useRef(viewport);
     const history = useCanvasHistory({ projectLoaded, nodes, connections, chatSessions, activeChatId, canvasAppearance, backgroundMode, showImageInfo, setNodes, setConnections, setChatSessions, setActiveChatId, applyCanvasAppearance: setCanvasAppearance, setBackgroundMode, setShowImageInfo, setSelectedNodeIds: noop, setSelectedConnectionId: noop, setContextMenu: noop });
     useCanvasProjectLifecycle({ projectId, projectLoaded, nodes, connections, chatSessions, activeChatId, canvasAppearance, backgroundMode, showImageInfo, viewport, nodesRef, connectionsRef, chatSessionsRef, activeChatIdRef, viewportRef, historyPausedRef: history.historyPausedRef, setNodes, setConnections, setChatSessions, setActiveChatId, setCanvasAppearance, setBackgroundMode, setShowImageInfo, setViewport, setProjectLoaded, resetHistory: history.resetHistory, adoptExternalSnapshot: history.adoptExternalSnapshot, cleanupAssetImages: noop, cleanupCanvasFiles: noop });
+    const generation = useCanvasGeneration({ projectId, projectLoaded: false, nodes, nodesRef, setNodes });
+    const generate = useCanvasGenerationExecutor({ projectId, addedSkills: [], assets: [], nodesRef, connectionsRef, setNodes, setConnections, setSelectedNodeIds: noop, setSelectedConnectionId: noop, setDialogNodeId: noop,
+        setRunningNodeId: generation.setRunningNodeId, startGenerationRequest: generation.startGenerationRequest, finishGenerationRequest: generation.finishGenerationRequest, bindGenerationTask: generation.bindGenerationTask, applyGenerationTaskResult: generation.applyGenerationTaskResult });
+    (harness as any).generateImage = async () => {
+        // Hold the first write-back so the editor still has its pre-generation
+        // baseline. Flush at the store publication boundary to exercise the
+        // preparation/submission race independently of React scheduling speed.
+        history.historyPausedRef.current = true;
+        const controller = new AbortController();
+        (harness as any).controller = controller;
+        const stop = useCanvasStore.subscribe(state => {
+            const target = state.openProject("c1")?.nodes[0];
+            if (target?.metadata?.generationSubmissionState !== "submitting") return;
+            stop();
+            window.dispatchEvent(new Event("pagehide"));
+        });
+        try {
+            await generate("n0", "image", nodesRef.current[0]!.metadata!.composerContent!, { controller, clientOperationId: "proposal:synthetic:n0", confirmedInputs: { nodes: cached.nodes, connections: [], config: useConfigStore.getState().config, assets: [], skills: [] }, onSubmissionPlan: async manifest => {
+                await fetch("/_manifest", { method: "POST", body: JSON.stringify(manifest) });
+            } });
+        } finally { stop(); (harness as any).generationSettled = true; }
+    };
     useLayoutEffect(() => { nodesRef.current = nodes; connectionsRef.current = connections; chatSessionsRef.current = chatSessions; activeChatIdRef.current = activeChatId; viewportRef.current = viewport; }, [nodes, connections, chatSessions, activeChatId, viewport]);
     useEffect(() => { harness.renders.push({ nodes: nodes.length, edges: connections.length, projectLoaded }); });
     (harness as any).dirty = () => hasUnconfirmedCanvasEdits("c1");
@@ -131,4 +178,4 @@ function MountController() {
     (harness as any).unmount = () => setMounted(false);
     return mounted ? <Harness /> : <div data-testid="unmounted">Left canvas</div>;
 }
-createRoot(document.getElementById("root")!).render(<MemoryRouter><QueryClientProvider client={new QueryClient()}><App><MountController /></App></QueryClientProvider></MemoryRouter>);
+createRoot(document.getElementById("root")!).render(<StrictMode><MemoryRouter><QueryClientProvider client={new QueryClient()}><App><MountController /></App></QueryClientProvider></MemoryRouter></StrictMode>);

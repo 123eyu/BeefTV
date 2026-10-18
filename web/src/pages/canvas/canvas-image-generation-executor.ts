@@ -1,5 +1,5 @@
 import { nanoid } from "nanoid";
-import { rebaseCanvasGenerationTarget } from "@/lib/canvas/canvas-generation-live-target";
+import { projectCanvasGenerationSubmission, rebaseCanvasGenerationTarget } from "@/lib/canvas/canvas-generation-live-target";
 
 import { NODE_DEFAULT_SIZE } from "@/constant/canvas";
 import { canGenerateImageInPlace, findAvailableGenerationGroupPosition, imageGenerationChildPosition, generationFailureNodeStatus, imageGenerationGroupSize } from "@/lib/canvas/canvas-generation-layout";
@@ -249,11 +249,8 @@ export async function executeImageGeneration({
                                 isCurrent,
                                 onSubmission: (metadata) => {
                                     if (!isCurrent()) return;
-                                    const ids = new Set([rootId, ...targetIds]);
-                                    const next = nodesRef.current.map((node) => ids.has(node.id) ? { ...node, metadata: { ...node.metadata, ...metadata } } : node);
-                                    if (projectId) useCanvasStore.getState().updateProject(projectId, { nodes: next });
-                                    nodesRef.current = next;
-                                    setNodes(next);
+                                    projectCanvasGenerationSubmission(nodesRef, setNodes, [rootId, ...targetIds], metadata);
+                                    if (projectId) useCanvasStore.getState().updateProject(projectId, { nodes: nodesRef.current });
                                 },
                             },
                         );
@@ -289,7 +286,7 @@ export async function executeImageGeneration({
                             },
                         },
                         {
-                            onSubmission: (metadata) => setNodes((current) => current.map((node) => node.id === targetId ? { ...node, metadata: { ...node.metadata, ...metadata } } : node)),
+                            onSubmission: (metadata) => projectCanvasGenerationSubmission(nodesRef, setNodes, [targetId], metadata),
                             bindTask: (task) => bindGenerationTask(targetId, task),
                             consumeTask: (task) => applyGenerationTaskResult(targetId, task),
                             isCurrent,

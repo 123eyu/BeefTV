@@ -148,9 +148,11 @@ export async function runCanvasGenerationTaskToConsumer(
         const submission = (state: NonNullable<CanvasNodeMetadata["generationSubmissionState"]>) => {
             if (!isCurrent()) return;
             const metadata = { taskClientOperationId: input.clientOperationId, generationSubmissionState: state, taskStage: state === "submitting" ? "正在提交生成任务" : state === "unknown" ? "提交结果待确认，请查询原任务" : undefined };
+            // Editor and store are one writer here. Advance the editor's live
+            // refs before publishing the store change can trigger persistence.
+            dependencies.onSubmission?.(metadata);
             const project = useCanvasStore.getState().openProject(input.projectId);
             if (project) useCanvasStore.getState().updateProject(project.id, { nodes: project.nodes.map((node) => node.id === input.nodeId ? { ...node, metadata: { ...node.metadata, ...metadata } } : node) });
-            dependencies.onSubmission?.(metadata);
         };
         submission("submitting");
         try {

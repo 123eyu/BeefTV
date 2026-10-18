@@ -9,11 +9,13 @@ let release: () => void;
 let gate: Promise<void>;
 let commits: any[] = [];
 let taskReads = 0;
+let taskPosts: any[] = [];
+let manifests: any[] = [];
 const remote = { id: "c1", revision: 111, title: "Restart", createdAt: "2026-10-02", updatedAt: "2026-10-02", nodes: Array.from({ length: 10 }, (_, i) => ({ id: `n${i}`, type: "image", title: `Node ${i}`, width: 320, height: 200, position: { x: i * 400, y: 0 }, metadata: {} })), connections: Array.from({ length: 6 }, (_, i) => ({ id: `e${i}`, fromNodeId: `n${i}`, toNodeId: `n${i + 1}` })), chatSessions: [], activeChatId: null, appearance: canvasAppearanceForTheme("dark"), backgroundMode: "grid", showImageInfo: false, viewport: { x: 0, y: 0, k: 1 }, directorScenes: [] };
 let backend = structuredClone(remote);
 
 beforeAll(async () => {
-    const build = await Bun.build({ entrypoints: [import.meta.dir + "/fixtures/canvas-lifecycle-restart-harness.tsx"], target: "browser", define: { "import.meta.env.DEV": "false", "import.meta.env.PROD": "true", "import.meta.env.MODE": '"production"', "import.meta.env.VITE_CANVAS_LOCAL_MODE": '"true"', "import.meta.env.VITE_CANVAS_BACKEND_URL": '"/api"', "process.env.NODE_ENV": '"production"' }, plugins: [{ name: "source", setup(builder) {
+    const build = await Bun.build({ entrypoints: [import.meta.dir + "/fixtures/canvas-lifecycle-restart-harness.tsx"], target: "browser", define: { "import.meta.env.DEV": "false", "import.meta.env.PROD": "true", "import.meta.env.MODE": '"production"', "import.meta.env.VITE_CANVAS_LOCAL_MODE": '"true"', "import.meta.env.VITE_CANVAS_BACKEND_URL": '"/api"', "process.env.NODE_ENV": JSON.stringify(process.env.CANVAS_TEST_REACT_MODE || "production") }, plugins: [{ name: "source", setup(builder) {
         builder.onResolve({ filter: /^@\// }, args => ({ path: Bun.resolveSync("../src/" + args.path.slice(2), import.meta.dir) }));
         builder.onLoad({ filter: /\.(css|svg|png|jpe?g|gif|webp|woff2?)$/ }, () => ({ contents: "export default ''", loader: "js" }));
     } }] });
@@ -23,6 +25,17 @@ beforeAll(async () => {
     server = Bun.serve({ port: 0, async fetch(request) {
         const path = new URL(request.url).pathname;
         if (path === "/harness.js") return new Response(script, { headers: { "Content-Type": "application/javascript" } });
+        if (path === "/_manifest") {
+            manifests.push(await request.json());
+            await new Promise(resolve => setTimeout(resolve, 40));
+            return json({});
+        }
+        if (path === "/api/tasks" && request.method === "POST") {
+            const body = await request.json();
+            taskPosts.push({ body, saved: structuredClone(backend) });
+            return json({ id: "synthetic-image-task", type: "canvas_image", status: "failed", error: "Synthetic terminal task; no model called", attempts: 1, createdAt: "2026-10-18", updatedAt: "2026-10-18" });
+        }
+        if (path === "/api/tasks/synthetic-image-task") return json({ id: "synthetic-image-task", type: "canvas_image", status: "failed", error: "Synthetic terminal task; no model called", attempts: 1, createdAt: "2026-10-18", updatedAt: "2026-10-18" });
         if (path === "/api/canvas-projects/c1") { await gate; return json({ project: backend }); }
         if (path === "/api/ops/canvas.document.commit") {
             const body = await request.json();
@@ -47,7 +60,27 @@ beforeEach(() => {
     backend = structuredClone(remote);
     commits = [];
     taskReads = 0;
+    taskPosts = [];
+    manifests = [];
 });
+
+test("first image submission flushes an unobserved preparation state without a false conflict", async () => {
+    const page = await browser.newPage();
+    const warnings: string[] = [];
+    page.on("console", message => { if (message.type() === "warning") warnings.push(message.text()); });
+    backend.nodes[0]!.metadata = { model: "synthetic::gpt-image-2.5", size: "9:16", count: "1", quality: "high", prompt: "Short storyboard description", composerContent: "A detailed synthetic image prompt", content: "", status: "idle" };
+    release();
+    await page.goto(`${server.url}?scenario=image-save`);
+    await page.waitForFunction(() => document.querySelector('[data-testid="graph"]')?.textContent === "true:10:6");
+    await page.evaluate(() => { void (window as any).__lifecycle.generateImage(); });
+    await page.waitForFunction(() => (window as any).__lifecycle.generationSettled, undefined, { timeout: 8_000 });
+    expect(manifests).toHaveLength(1);
+    expect(warnings.filter(message => message.includes("冲突"))).toEqual([]);
+    expect(await page.evaluate(() => (window as any).__lifecycle.held())).toEqual({ paused: false, candidateTitle: null });
+    expect(taskPosts).toHaveLength(1);
+    expect(taskPosts[0].saved.nodes[0].metadata).toMatchObject({ taskClientOperationId: "proposal:synthetic:n0", generationSubmissionState: "submitting" });
+    await page.close();
+}, 30_000);
 
 for (const restartLoad of [false, true]) test(`confirmed edges survive cached load and media update (hydration restarts load: ${restartLoad})`, async () => {
     const page = await browser.newPage();
