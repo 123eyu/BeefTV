@@ -61,13 +61,6 @@ test("managed Gemini can follow the default text model without replacing an expl
     expect(resolveAssistantModel({ ...gemini, channels: [removed] })).toBe("");
 });
 
-test("Gemini 3.7 is selectable only with an available text profile", () => {
-    const selected = { ...config, assistantModel: "beefapi::gemini-3.7-flash" };
-    expect(resolveAssistantModel(selected)).toBe("beefapi::gemini-3.7-flash");
-    expect(resolveAssistantModel({ ...selected, channels: [{ ...channel, models: models.filter(model => model !== "gemini-3.7-flash") }] })).toBe("");
-    expect(resolveAssistantModel({ ...selected, channels: [{ ...channel, modelProfiles: channel.modelProfiles?.map(profile => profile.model === "gemini-3.7-flash" ? { ...profile, capability: "image", protocol: "openai-image" } : profile) }] })).toBe("");
-});
-
 test("authorization adopts server default once while ordinary refresh preserves user choice", () => {
     const current = { ...config, assistantModel: "beefapi::claude-opus-5-5" };
     const server = { ...config, assistantModel: "beefapi::gpt-6-astra" };

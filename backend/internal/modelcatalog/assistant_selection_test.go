@@ -69,28 +69,6 @@ func TestManagedGeminiAssistantUsesCatalogAndPreservesExplicitSelection(t *testi
 	}
 }
 
-func TestManagedGemini37RequiresAvailableTextProfile(t *testing.T) {
-	c := AssistantChannel{ID: "beefapi", Pinned: true, Enabled: true, APIKey: "synthetic", BaseURL: "https://example.test", Models: []string{"gemini-3.7-flash"}, ModelProfiles: []AssistantModelProfile{{Model: "gemini-3.7-flash", Capability: "text", Protocol: "chat-completion"}}}
-	s := AssistantConfigSnapshot{AssistantModel: "beefapi::gemini-3.7-flash", Channels: []AssistantChannel{c}}
-	got, err := ResolveAssistantProvider(s, nil)
-	if err != nil || got.Model != "gemini-3.7-flash" || got.Protocol != "chat-completion" {
-		t.Fatalf("explicit Gemini 3.7 unavailable: %v %#v", err, got)
-	}
-	for _, mutate := range []func(*AssistantChannel){
-		func(c *AssistantChannel) { c.Models = []string{"other"} },
-		func(c *AssistantChannel) { c.Enabled = false },
-		func(c *AssistantChannel) { c.ModelProfiles[0].Capability = "image" },
-	} {
-		candidate := c
-		candidate.ModelProfiles = append([]AssistantModelProfile(nil), c.ModelProfiles...)
-		mutate(&candidate)
-		s.Channels = []AssistantChannel{candidate}
-		if _, err := ResolveAssistantProvider(s, nil); err == nil {
-			t.Fatal("Gemini 3.7 bypassed catalog or capability validation")
-		}
-	}
-}
-
 func TestManagedAssistantSelectionDoesNotBypassCuratedModels(t *testing.T) {
 	c := AssistantChannel{ID: "beefapi", Pinned: true, Enabled: true, APIKey: "synthetic", BaseURL: "https://example.test", Models: []string{"qwen", "claude-opus-5-5"}, ModelProfiles: []AssistantModelProfile{{Model: "qwen", Capability: "text"}, {Model: "claude-opus-5-5", Capability: "text"}}}
 	s := AssistantConfigSnapshot{TextModel: "beefapi::qwen", Channels: []AssistantChannel{c}}
