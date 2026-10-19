@@ -200,6 +200,10 @@ NewAPI Channel 2 与 BeefAPI 视频的暂时下载断连会保留原任务 ID �
 
 `failureDiagnostics` 同时保留本轮执行证据：运行版本和平台、任务配置中的模型/尺寸/质量/数量、提示词长度、参考素材数量与图片大小、本地参考图限制，以及最多 8 次请求（首次及最近 7 次，省略数量另计）的发起状态、HTTP 状态、请求 ID、开始时间、耗时和字节数。任务配置不等于最终出站参数；协议可能转换或省略字段，核对实际发送值须凭请求 ID 关联请求日志。HTTP 200 仅表示收到响应；`executionResult=completed` 才表示生成处理完成。转后台回查时状态为 `pending`，同一次任务继续累积有界轨迹并保留首次请求。成功任务也保存这些证据，以便区分后续本地保存失败或画布应用失败（复制内容来源为 `client_result`）。请求轨迹覆盖统一 Provider HTTP 客户端；旧记录、未经过该客户端的插件请求或上游未提供的 ID 仍可能缺失，不能仅凭空轨迹推断未发送。
 
+内置 BeefAPI Seedance 的素材预上传分为申请地址、上传文件（PUT）和确认上传，轨迹分别记录为 `reference_create`、`reference_put`、`reference_complete`。上传失败的 `source=reference_upload`；摘要包含素材类型、从 1 开始的序号和失败阶段，并保留实际采集到的 HTTP 状态、连接阶段、存储错误代码和请求 ID。存储错误正文只提取代码与请求 ID，不保存签名地址、签名头、素材内容或原始 XML。
+
+生成尚未提交时，文件上传连接失败、签名拒绝、限流或临时服务异常可改用网关已有的内嵌素材接口，合并后的 Base64 与 JSON 仍受原 64 MiB 上限约束，并重新校验剩余素材的类型、大小和模型限制。已经完成上传的素材链接保留，最终只提交一次生成。取消、地址安全校验拒绝、素材校验失败、上传确认失败以及无法满足大小限制时停止提交并保留错误；不会因上传失败重试付费生成。无法恢复的上传错误使用 `reference_preupload_failed`，禁止自动重试，允许用户检查网络后手动重试。
+
 生成结果正在取回时，任务详情与列表的 `delivery.outputs[]` 给出该任务每个输出的 `downloadedBytes`、`totalBytes`（未知为 -1）、`bytesPerSecond` 和 `state`（`downloading` / `retrying`），供页面显示进度。它只存在进程内存中，不写数据库，取回结束即消失，重启后不保留；没有取回中的下载时该字段省略。
 
 生成成功后仍在下载的结果，可用 `POST /tasks/:id/cancel` 停止取回：生成状态保持 `succeeded`，`stage=delivery_paused`；单次下载满 15 分钟则停止并记为 `delivery_timed_out`。尚未取回的输出使用相同的 `materializationErrorCode`。暂停跨应用重启保留，后台不会自动重启；`POST /tasks/:id/retry` 对这两种成功任务只解除暂停，由交付 worker 继续取回原结果，不重新生成或取消上游任务。应用关闭会停止当前下载，未手动暂停或超时的任务在下次启动后恢复。

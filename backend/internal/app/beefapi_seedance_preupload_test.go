@@ -237,7 +237,7 @@ func TestBeefAPISeedancePreuploadCompleteErrorPreventsGenerate(t *testing.T) {
 		providerMedia{},
 	)
 	err := prepareBeefAPISeedanceReferences(harness.ctx(), input.Config, &input, nil)
-	if err == nil || err.Error() != "还没有收到文件，请先把文件传完再确认" {
+	if err == nil || !strings.Contains(err.Error(), "参考图 1 确认上传失败：还没有收到文件，请先把文件传完再确认") {
 		t.Fatalf("error = %v, want user-facing complete message", err)
 	}
 	if harness.generates != 0 {
@@ -248,7 +248,7 @@ func TestBeefAPISeedancePreuploadCompleteErrorPreventsGenerate(t *testing.T) {
 	}
 }
 
-func TestBeefAPISeedancePreuploadCompleteUnknown400UsesGeneric(t *testing.T) {
+func TestBeefAPISeedancePreuploadCompleteUnknown400KeepsDiagnostic(t *testing.T) {
 	harness := newBeefAPISeedanceUploadHarness(t)
 	harness.completeStatus = http.StatusBadRequest
 	harness.completeBody = []byte(`{"error":{"message":"ticket sha256 mismatch on r2 upload_url"}}`)
@@ -258,8 +258,9 @@ func TestBeefAPISeedancePreuploadCompleteUnknown400UsesGeneric(t *testing.T) {
 		providerMedia{},
 	)
 	err := prepareBeefAPISeedanceReferences(harness.ctx(), input.Config, &input, nil)
-	if !errors.Is(err, errBeefAPISeedanceUploadIncomplete) {
-		t.Fatalf("error = %v, want generic incomplete", err)
+	var upload *generation.ReferenceUploadError
+	if !errors.As(err, &upload) || upload.HTTPStatus != 400 || upload.Meta.Stage != "complete" || !strings.Contains(upload.Detail, "sha256 mismatch") {
+		t.Fatalf("error = %v, want structured confirmation error", err)
 	}
 	if harness.generates != 0 {
 		t.Fatal("generation posted after unknown complete 400")
