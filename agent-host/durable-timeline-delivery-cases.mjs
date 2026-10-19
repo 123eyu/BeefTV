@@ -13,10 +13,14 @@ const timeline = { version: 2, durationMs: 12000, tracks: [{ id: 'video', kind: 
   clips: [{ id: 'shot', kind: 'video', trackId: 'video', nodeId: 'source', startMs: 0, durationMs: 12000 }],
   output: { width: 480, height: 854, fps: 24 } };
 
-for (const scenario of ['delivery', 'large-bind', 'foreign-edit', 'export-failure']) {
+for (const scenario of ['delivery', 'lines', 'large-bind', 'foreign-edit', 'export-failure']) {
   test(`one official tool performs delivery: ${scenario}`, { timeout: 30000 }, async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'beeftv-delivery-'));
     let revision = 5;
+    const requestTimeline = scenario === 'lines' ? { ...timeline, clips: [...timeline.clips,
+      { id: 'caption', kind: 'subtitle', trackId: 'captions', startMs: 0, durationMs: 12000, text: '旧字幕', lines: ['第一行', '第二行'] }] } : timeline;
+    const expectedTimeline = scenario === 'lines' ? { ...timeline, clips: [...timeline.clips,
+      { id: 'caption', kind: 'subtitle', trackId: 'captions', startMs: 0, durationMs: 12000, text: '第一行\n第二行' }] } : timeline;
     const posts = [], effects = new Map();
     const names = new Set(['canvas.timeline.update', 'canvas.timeline.render', 'canvas.nodes.create', 'canvas.task.bind', 'canvas.project.export', 'task.get']);
     const server = createServer(async (req, res) => {
@@ -40,7 +44,7 @@ for (const scenario of ['delivery', 'large-bind', 'foreign-edit', 'export-failur
       }
       let result;
       if (op === 'canvas.timeline.update') {
-        assert.deepEqual(p.timeline, timeline);
+        assert.deepEqual(p.timeline, expectedTimeline);
         result = { canvasId: 'canvas', revision: ++revision, timelineUpdated: true };
       } else if (op === 'canvas.timeline.render') {
         result = { canvasId: 'canvas', sourceRevision: revision, taskId: 'original-render', status: 'queued', charged: false };
@@ -70,7 +74,7 @@ for (const scenario of ['delivery', 'large-bind', 'foreign-edit', 'export-failur
       fixture = await modelFixture(directory, 'fixture', ['fixture'], body => {
         if (++responses === 1) {
           assert.ok(body.tools.some(tool => tool.function.name === 'canvas_timeline_deliver'));
-          return { toolCalls: [{ id: 'deliver', name: 'canvas_timeline_deliver', args: { expectedRevision: 5, timeline, title: '新成片' } }] };
+          return { toolCalls: [{ id: 'deliver', name: 'canvas_timeline_deliver', args: { expectedRevision: 5, timeline: requestTimeline, title: '新成片' } }] };
         }
         return { reply: '交付回执已读取。' };
       }, { buildTools: bridge.buildTools });
@@ -82,7 +86,7 @@ for (const scenario of ['delivery', 'large-bind', 'foreign-edit', 'export-failur
       assert.equal(fixture.requests.length, 2, 'mechanical stages must not call the model');
       const reply = fixture.payloads[1].messages.find(message => message.role === 'tool');
       const delivered = JSON.parse(typeof reply.content === 'string' ? reply.content : reply.content.map(part => part.text || '').join(''));
-      if (scenario === 'delivery' || scenario === 'large-bind') {
+      if (scenario === 'delivery' || scenario === 'large-bind' || scenario === 'lines') {
         assert.equal(delivered.result.status, 'delivered');
         assert.equal(delivered.result.project.resourceId, 'project-zip');
         assert.equal(delivered.result.nodeId, 'result-node');
@@ -102,6 +106,7 @@ for (const scenario of ['delivery', 'large-bind', 'foreign-edit', 'export-failur
       await fixture.store.wait(entry, submission);
       assert.equal(posts.length, before, 'repeat observation must not rerun nested effects');
       assert.equal(fixture.requests.length, 2);
+      if (scenario === 'lines') assert.deepEqual(requestTimeline.clips.at(-1).lines, ['第一行', '第二行'], 'composition must not mutate journaled arguments');
     } finally {
       await fixture?.close();
       server.closeAllConnections(); await new Promise(resolve => server.close(resolve));

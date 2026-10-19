@@ -5,6 +5,11 @@ export function timelineDeliveryTool(tools) {
   const byOperation = new Map(tools.map(tool => [tool.label, tool]));
   if (!required.every(name => byOperation.has(name))) return null;
   const render = byOperation.get('canvas.timeline.render');
+  const timelineSchema = structuredClone(byOperation.get('canvas.timeline.update').parameters.properties.timeline);
+  timelineSchema.properties.clips.items.properties.lines = {
+    type: 'array', minItems: 1, maxItems: 8, items: { type: 'string' },
+    description: '多行字幕逐行提供字符串；保存为真实换行，并优先于text。不要把换行转义写进每行正文。',
+  };
   return {
     name: 'canvas_timeline_deliver', label: 'canvas.timeline.deliver', readOnly: false, replay: 'safe',
     description: '免费完成时间线交付：可先保存timeline，再渲染、等待文件、创建空成片节点并绑定、导出可编辑工程，一次返回视频与工程回执。仅处理已有素材，不生成付费素材。expectedRevision必须是当前画布版本；省略timeline则使用已保存时间线。成功后用返回nodeId实际检查成片。失败保留已完成步骤，按failedStep和原任务继续，不重复渲染。',
@@ -12,7 +17,7 @@ export function timelineDeliveryTool(tools) {
       type: 'object', additionalProperties: false,
       properties: {
         expectedRevision: render.parameters.properties.expectedRevision,
-        timeline: byOperation.get('canvas.timeline.update').parameters.properties.timeline,
+        timeline: timelineSchema,
         options: render.parameters.properties.options,
         title: { type: 'string', maxLength: 120, description: '新成片节点名称；默认“成片”' },
         ...(render.parameters.properties.canvasId ? { canvasId: render.parameters.properties.canvasId } : {}),
@@ -44,7 +49,12 @@ export function timelineDeliveryTool(tools) {
       try {
         let revision = args.expectedRevision;
         if (args.timeline !== undefined) {
-          const updated = await call('canvas.timeline.update', { expectedRevision: revision, timeline: args.timeline }, 'timeline');
+          const timeline = { ...args.timeline, clips: args.timeline.clips.map(clip => {
+            if (clip.kind !== 'subtitle' || !Array.isArray(clip.lines)) return clip;
+            const { lines, ...rest } = clip;
+            return { ...rest, text: lines.join('\n') };
+          }) };
+          const updated = await call('canvas.timeline.update', { expectedRevision: revision, timeline }, 'timeline');
           revision = updated.revision;
         }
         const rendered = await call('canvas.timeline.render', { expectedRevision: revision, ...(args.options ? { options: args.options } : {}) }, 'render');
