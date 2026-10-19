@@ -45,7 +45,7 @@ func TestV16SessionMigrationPreservesV15RoundAndUnknownColumns(t *testing.T) {
 	}
 	var after []localSchemaMigration
 	db.Order("version").Find(&after)
-	if len(after) != len(before)+4 {
+	if len(after) != len(before)+5 {
 		t.Fatal("migration ledger count")
 	}
 	for i, v := range before {

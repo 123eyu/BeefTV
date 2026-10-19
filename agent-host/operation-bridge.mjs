@@ -9,6 +9,7 @@ import { budgetError, spendToolStep } from './request-budget.mjs';
 import { mediaToolResult, mediaFacts } from './media-content.mjs';
 import { canvasReadView, CANVAS_READ_VIEW_SCHEMA } from './canvas-read-view.mjs';
 import { canvasWriteView, canvasWriteViewDescription } from './canvas-write-view.mjs';
+import { awaitBusinessTasks } from './await-business-tasks.mjs';
 
 const CANVAS_NODE_UPDATE = 'canvas.node.update';
 
@@ -170,7 +171,10 @@ export function createOperationBridge({
           // tool must reuse that revision, even after this turn's chain advances.
           if (chainWrite && generation.persistEffects) await generation.persistEffects();
           assertToolGeneration(generation, descriptor, signal);
-          const data = await opsRequest('POST', `/ops/${descriptor.id}`, { opId, params }, signal, turn.turnId);
+          let data = await opsRequest('POST', `/ops/${descriptor.id}`, { opId, params }, signal, turn.turnId);
+          if (descriptor.id === 'canvas.generation.submit') {
+            data = await awaitBusinessTasks(data, { opsRequest, turnId: turn.turnId, signal, canvasId: params.canvasId });
+          }
           // A replay can recover the receipt lost between business commit and
           // the durable checkpoint. Only our persisted request may advance
           // its own canvas chain by exactly one; older replays never reset it.

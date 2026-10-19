@@ -61,6 +61,10 @@ export function assistantActionLabel(tool: string | undefined): string {
             return "读取画布";
         case "canvas.generation.propose":
             return "准备生成";
+        case "canvas.generation.submit":
+            return "生成素材";
+        case "canvas.project.export":
+            return "导出工程";
         default:
             return "改动画布";
     }
@@ -122,7 +126,20 @@ export function assistantUndoFailureText(failure: AssistantUndoFailure): string 
 /** 提议可能来自自建渠道，不能把所有费用都归到 BeefAPI。 */
 export function assistantProposalText(proposal: AssistantGenerationProposal, priceLines: string[] = [], awaitingConfirmation = true): string {
     const count = proposal.nodeIds?.length ?? 0;
-    const target = proposal.kind === "video" ? "视频" : "图片";
+    if (proposal.production) {
+        const targets = proposal.production.targets;
+        const images = targets.filter(t => t.kind === "image").length;
+        const videos = targets.filter(t => t.kind === "video");
+        const audio = targets.filter(t => t.kind === "audio");
+        const labels: Record<string,string> = {size:"画幅",quality:"质量",vquality:"分辨率",seconds:"时长（秒）",generateAudio:"生成声音",audioVoice:"音色",audioSpeed:"语速",audioFormat:"音频格式",audioInstructions:"朗读指令",transparentBackground:"透明背景",watermark:"水印"};
+        const lines = [`整片制作方案：${images} 张图片、${videos.length} 段视频、${audio.length} 段配音`, ...targets.map(t => {
+            const params = Object.entries(t.parameters).filter(([key]) => labels[key]).map(([key,value]) => `${labels[key]}：${value}`).join(" · ");
+            const refs = t.referenceNodeIds.map(id => targets.find(item => item.nodeId === id)?.title || "已有参考素材");
+            return `${t.title} · ${t.modelKey.split("::").pop()} · ${t.parameters.count || "1"} 个\n${params}${refs.length ? `\n参考：${refs.join("、")}` : ""}\n${t.kind === "audio" ? "台词" : "提示词"}：${t.prompt}`;
+        })];
+        return lines.join("\n\n") + (awaitingConfirmation ? "\n\n确认后按此方案生成素材，并自动完成声音、字幕和剪辑。素材按所选渠道计费；失败后确认新方案重新生成也会重新计费，新增或修改生成内容时会重新确认。" : "");
+    }
+    const target = proposal.kind === "video" ? "视频" : proposal.kind === "audio" ? "音频" : "图片";
     const title = `为 ${count} 个节点生成${target} · ${seedancePortraitLabel(proposal.model) || proposal.model}`;
     return awaitingConfirmation ? `${title}\n${priceLines.length ? priceLines.join("\n") + "\n" : ""}确认后开始，按所选渠道计费。` : title;
 }
@@ -131,15 +148,15 @@ export function assistantProposalText(proposal: AssistantGenerationProposal, pri
 export function assistantProposalProgress(proposal: AssistantGenerationProposal, nodes: CanvasNodeData[]) {
     const byId = new Map(nodes.map(node => [node.id, node]));
     const outputs = new Map<string, CanvasNodeData>();
-    let unknown = false, batchUnverified = false;
-    for (const sourceId of new Set(proposal.nodeIds)) {
+    let unknown = false, batchUnverified = false, planned = 0;
+    for (const sourceId of new Set(proposal.production?.targets.map(t => t.nodeId) || proposal.nodeIds)) {
         const operationId = `proposal:${proposal.proposalId}:${sourceId}`;
         const matches = (node: CanvasNodeData) => {
             const actual = node.metadata?.taskClientOperationId || "";
             return actual === operationId || (actual.startsWith(`${operationId}:`) && /^\d+$/.test(actual.slice(operationId.length + 1)));
         };
         const matched = nodes.filter(matches);
-        if (!matched.length) { unknown = true; continue; }
+        if (!matched.length) { if (proposal.production) planned++; else unknown = true; continue; }
         const roots = new Set(matched.flatMap(node => node.metadata?.isBatchRoot ? [node.id] : node.metadata?.batchRootId ? [node.metadata.batchRootId] : []));
         if (roots.size) {
             for (const rootId of roots) {
@@ -162,7 +179,7 @@ export function assistantProposalProgress(proposal: AssistantGenerationProposal,
             for (const node of matched) outputs.set(node.id, node);
         }
     }
-    let complete = 0, failed = 0, pending = 0, retrieving = 0;
+    let complete = 0, failed = 0, pending = planned, retrieving = 0;
     for (const node of outputs.values()) {
         const meta = node.metadata || {};
         if (meta.taskStatus === "failed" || meta.taskStatus === "cancelled") failed++;
@@ -175,10 +192,10 @@ export function assistantProposalProgress(proposal: AssistantGenerationProposal,
     const ready = !unknown && outputs.size > 0 && pending === 0 && retrieving === 0;
     const visibleResults = failed ? `${complete} 个结果已就绪，${failed} 个结果因任务失败或取消而未生成。` : `${complete}/${outputs.size} 个可见结果已就绪。`;
     const text = unknown ? batchUnverified ? `${visibleResults} 无法确认这批结果是否完整。可在画布选择已就绪结果发给助手检查。` : "部分生成状态待确认，请查看任务列表。"
-        : pending ? `生成中，${complete}/${outputs.size} 个结果已就绪。`
+        : pending ? `生成中，${complete}/${outputs.size + planned} 个结果已就绪。`
         : retrieving ? `${complete}/${outputs.size} 个结果已就绪，其余结果还不可用。请查看节点上的取回提示。`
         : failed ? `${complete} 个结果已就绪，${failed} 个结果因任务失败或取消而未生成。`
-        : `${complete} 个结果已就绪，可以请助手检查。`;
+        : proposal.production ? `${complete} 个素材已保存，后续制作与交付进度见助手消息。` : `${complete} 个结果已就绪，可以请助手检查。`;
     return { ready, text, nodeIds: [...outputs.keys()] };
 }
 

@@ -125,6 +125,7 @@ func (s *Service) startGenerationDeliveryRecovery(context.Context) {
 			if err := s.RecoverIncompleteGenerationDeliveries(0); err != nil {
 				log.Printf("generation delivery recovery paused: worker_id=%s error=%v", s.workerID, err)
 			}
+			s.recoverAssistantContinuations(ctx)
 		}
 		recoverOnce()
 		ticker := time.NewTicker(generationDeliveryRecoveryInterval)

@@ -53,6 +53,7 @@ type AssistantConfigSnapshot struct {
 	TextModel      string             `json:"textModel"`
 	ImageModel     string             `json:"imageModel"`
 	VideoModel     string             `json:"videoModel"`
+	AudioModel     string             `json:"audioModel"`
 	BaseURL        string             `json:"baseUrl"`
 	Channels       []AssistantChannel `json:"channels"`
 }
@@ -250,6 +251,8 @@ func AssistantGenerationModelKey(snapshot AssistantConfigSnapshot, kind string) 
 		modelKey = strings.TrimSpace(snapshot.ImageModel)
 	case "video":
 		modelKey = strings.TrimSpace(snapshot.VideoModel)
+	case "audio":
+		modelKey = strings.TrimSpace(snapshot.AudioModel)
 	default:
 		return "", ""
 	}
@@ -287,7 +290,7 @@ func ResolveAssistantGenerationModel(snapshot AssistantConfigSnapshot, kind, sel
 }
 
 func assistantGenerationModelMatchesKind(snapshot AssistantConfigSnapshot, modelKey, kind string) bool {
-	if kind != "image" && kind != "video" {
+	if kind != "image" && kind != "video" && kind != "audio" {
 		return false
 	}
 	modelKey = strings.TrimSpace(modelKey)
@@ -303,20 +306,21 @@ func assistantGenerationModelMatchesKind(snapshot AssistantConfigSnapshot, model
 }
 
 func assistantGenerationModelConflictsKind(snapshot AssistantConfigSnapshot, modelKey, kind string) bool {
-	if kind != "image" && kind != "video" {
+	if kind != "image" && kind != "video" && kind != "audio" {
 		return true
 	}
 	modelKey = strings.TrimSpace(modelKey)
 	if modelKey == "" {
 		return false
 	}
-	other := "video"
-	if kind == "video" {
-		other = "image"
-	}
-	_, otherDefault := AssistantGenerationModelKey(snapshot, other)
-	if otherDefault != "" && modelKey == otherDefault {
-		return true
+	for _, other := range []string{"image", "video", "audio"} {
+		if other == kind {
+			continue
+		}
+		_, otherDefault := AssistantGenerationModelKey(snapshot, other)
+		if otherDefault != "" && modelKey == otherDefault {
+			return true
+		}
 	}
 	capability, found := assistantGenerationModelCapability(snapshot, modelKey)
 	if !found || capability == "" {

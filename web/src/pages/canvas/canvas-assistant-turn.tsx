@@ -149,7 +149,7 @@ export function CanvasAssistantTurnView({ turn, status, handledProposals, propos
                         {started ? (
                             <>
                                 <span className="canvas-assistant-meta" role="status">{progress?.text || "已开始生成"}</span>
-                                {progress && onCheckResults && !undone ? <div className="canvas-assistant-card-actions">
+                                {progress && onCheckResults && !undone && !proposal.production ? <div className="canvas-assistant-card-actions">
                                     <Button size="small" disabled={running || !progress.ready} onClick={() => onCheckResults(progress.nodeIds)}>检查结果</Button>
                                     <span className="canvas-assistant-meta">填入检查要求后，由你发送。</span>
                                 </div> : null}
@@ -163,7 +163,7 @@ export function CanvasAssistantTurnView({ turn, status, handledProposals, propos
                         ) : (
                             <div className="canvas-assistant-card-actions">
                                 <Button size="small" type="primary" autoInsertSpace={false} loading={running} disabled={generationDisabled || Boolean(priceError)} onClick={() => onRunProposal(proposal, turn.turnId)}>
-                                    生成
+                                    {proposal.production ? "确认并制作整片" : "生成"}
                                 </Button>
                                 <Button size="small" disabled={running} onClick={() => onDismissProposal(proposal.proposalId)}>
                                     先不用

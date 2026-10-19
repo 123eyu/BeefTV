@@ -133,8 +133,18 @@ Node fetch 的 bypass 规则与 Go 不完全相同。对固定模型 `BaseURL`�
 
 ## 限制
 
+2026-10-19 本地候选：已确认生成的接续不再依赖当前画布的 React effect。Go 复用既有 generation recovery worker，分页读取 `assistant_continuations`，在任务终态、素材保存及节点绑定完整后认领原 receipt；后台与前端提交相同 `requestId/turnId`，由官方 Durable 去重。断流或未知受理只重观察原身份，只有目标回合终态或既有 host completion 回调结算；Stop、新意图和关闭 scope 继续通过持久状态阻止接续。应用退出时取消观察，重开重新认领，不在退出期间运行本地制作。没有新增队列服务、数据库或 Agent 循环。
+
+接续支持图片、视频和音频。整片提案先保存全部有限素材草稿，界面确认后在既有 `AssistantTurn` 保存精确授权；后续接续轮使用 `canvas.generation.submit` 提交同一计划的素材。新增素材或改变模型、提示词、数量与参数仍须重新确认。它是有限素材授权，不代表人民币预算硬封顶已实现。
+
+`await-business-tasks.mjs` 只在官方 Durable 工具内部观察 Go 已受理的任务，等待任务成功、输出资源保存及目标节点实际绑定；它不请求模型、不提交替代任务、不创建队列。提交操作标记可重放的依据是 Go 原子操作回执及稳定 `proposal:<proposalId>:<nodeId>` 任务键，而非供应商生成可任意重试。Stop 沿官方工具 signal 结束观察，未知状态仍保留原身份。后台首批接续继续使用既有 worker。工程交付采用原生 v4 ZIP 与已有资源下载，不引入第二种工程格式或渲染器。测试见 `assistant_production_test.go`、`await-business-tasks.test.mjs`、既有后台接续及 Durable 测试；真实整片与 GUI 改稿另记验收回执。
+
+制作技能也按当前业务工具执行：系统提示不再要求每个技能步骤都等待确认；内置技能 `14811816970252` 改用 BeefTV 分镜、节点、生成提案、媒体检查与时间线工具，去掉外部 CLI、固定模型和虚构文件操作。技能包仍按内容版本保存，既有安装版本与活动任务 pin 不自动改写；只有加载新版技能的任务才使用新版方法。
+
 - 未接官方 web-ui / TUI / 实验服务器。
 - 旧 JSONL 会话只读：不自动迁入 Durable；发新消息时以交接说明开一条新 Durable 会话，旧文件保留。在接续会话创建之前按请求停止只记在宿主内存里：这段时间宿主崩溃会丢掉这条停止。
 - 压缩依赖官方内部路径，其内部事件名不映射到面板。自动重试只以归类后的进度显示，次数与退避仍由官方策略决定。
 - 官方 `SessionManager` 在出现 assistant 消息前延迟落 jsonl；宿主读取历史时只认已落盘的会话文件。
 - Go 媒体操作、时间线修改、事务内本地渲染接入见 `agent-media-harness-integration.md`；没有改付费生成协议或默认主模型。
+
+新用户输入或切换会话时，先在现有 continuation receipt 保存 `stopping` 并撤销业务写权限，再用原 canvas/session/request 调用官方 host 的 targeted cancel。host 会先回调 Go complete、再 await Durable stop，因此 complete 不能擦掉待确认的停止身份；只有 host 明确确认后才标 cancelled 并接纳新输入。HTTP 未知保留 stopping 供原请求重试，显式 steer 保持原执行。

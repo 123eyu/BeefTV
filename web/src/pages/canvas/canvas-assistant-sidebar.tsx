@@ -257,7 +257,7 @@ export function CanvasAssistantSidebar(props: Props) {
                         {props.continuation.pending ? <Button size="small" onClick={() => void props.continuation?.stop()}>停止自动继续</Button> : null}
                         <Button size="small" onClick={props.continuation.refresh}>重新读取</Button>
                     </div>
-                </div> : assistant.plan?.items.some(item => item.status !== "done") ? <p className="canvas-assistant-meta">确认生成后，将在此画布自动检查结果并继续原计划；下一批生成仍由你确认。</p> : null}
+                </div> : assistant.plan?.items.some(item => item.status !== "done") ? <p className="canvas-assistant-meta">确认过的素材会自动制作并继续原计划；需要新增素材时，会先向你确认。</p> : null}
 
                 {assistant.pendingUserText || assistant.pendingAttachments.length ? (
                     <div className="canvas-assistant-turn">

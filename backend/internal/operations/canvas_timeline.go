@@ -9,7 +9,7 @@ import (
 
 func registerCanvasTimelineOps(r *Registry) {
 	r.Register(Op{ReplaySafe: true, AssistantCanvas: true, ID: "canvas.timeline.update", Summary: "修改当前画布时间线（裁剪、顺序、音量、字幕；仅用已关联素材，带 revision CAS）", Scope: ScopeCanvas,
-		Params: json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"expectedRevision":{"type":"integer","minimum":0},"timeline":{"type":"object","description":"时间线 v2；时间均为毫秒。所有可见 video/image 片段按 startMs 播放且不可重叠（跨轨也一样）；空隙补黑。音频、字幕可与视觉重叠。仅使用当前画布已关联的素材或已保存时间线中的资源。","properties":{"version":{"type":"integer","enum":[2]},"durationMs":{"type":"integer","minimum":0},"tracks":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"type":"string","enum":["video","audio","subtitle","text","image"]},"visible":{"type":"boolean"},"muted":{"type":"boolean"}},"required":["id","kind"]}},"clips":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"type":"string","enum":["video","image","audio","subtitle"]},"nodeId":{"type":"string","description":"媒体片段对应当前画布节点；字幕无需 nodeId"},"directMedia":{"type":"object","description":"也可引用当前画布已关联的资源；不能传路径或任意 URL","properties":{"id":{"type":"string"},"assetId":{"type":"string"},"kind":{"type":"string","enum":["video","image","audio"]},"storageKey":{"type":"string","description":"resource:资源ID"}},"required":["id","kind","storageKey"]},"trackId":{"type":"string"},"startMs":{"type":"integer","minimum":0},"durationMs":{"type":"integer","minimum":1,"description":"播放及裁剪长度；sourceStartMs + durationMs 不得超过素材时长（静态图片除外）"},"sourceStartMs":{"type":"integer","minimum":0,"description":"媒体裁剪起点；默认 0"},"volume":{"type":"number","minimum":0,"description":"默认 1；0 为静音"},"fadeInMs":{"type":"integer","minimum":0,"description":"音频淡入时长；不改变画面"},"fadeOutMs":{"type":"integer","minimum":0,"description":"音频淡出时长；不改变画面"},"text":{"type":"string","description":"字幕内容；仅 kind=subtitle 使用"}},"required":["id","kind","trackId","startMs","durationMs"]}}},"required":["version","tracks","clips","durationMs"]}},"required":["canvasId","expectedRevision","timeline"]}`), Handler: opCanvasTimelineUpdate})
+		Params: json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"expectedRevision":{"type":"integer","minimum":0},"timeline":{"type":"object","description":"时间线 v2；时间均为毫秒。所有可见 video/image 片段按 startMs 播放且不可重叠（跨轨也一样）；空隙补黑。音频、字幕可与视觉重叠。仅使用当前画布已关联的素材或已保存时间线中的资源。","properties":{"version":{"type":"integer","enum":[2]},"durationMs":{"type":"integer","minimum":0},"tracks":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"type":"string","enum":["video","audio","subtitle","text","image"]},"visible":{"type":"boolean"},"muted":{"type":"boolean"},"label":{"type":"string"},"order":{"type":"integer"},"locked":{"type":"boolean"}},"required":["id","kind"]}},"clips":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"kind":{"type":"string","enum":["video","image","audio","subtitle"]},"nodeId":{"type":"string","description":"媒体片段对应当前画布节点；字幕无需 nodeId"},"directMedia":{"type":"object","description":"也可引用当前画布已关联的资源；不能传路径或任意 URL","properties":{"id":{"type":"string"},"assetId":{"type":"string"},"kind":{"type":"string","enum":["video","image","audio"]},"storageKey":{"type":"string","description":"resource:资源ID"}},"required":["id","kind","storageKey"]},"trackId":{"type":"string"},"startMs":{"type":"integer","minimum":0},"durationMs":{"type":"integer","minimum":1,"description":"播放及裁剪长度；sourceStartMs + durationMs 不得超过素材时长（静态图片除外）"},"sourceStartMs":{"type":"integer","minimum":0,"description":"媒体裁剪起点；默认 0"},"volume":{"type":"number","minimum":0,"description":"默认 1；0 为静音"},"fadeInMs":{"type":"integer","minimum":0,"description":"音频淡入时长；不改变画面"},"fadeOutMs":{"type":"integer","minimum":0,"description":"音频淡出时长；不改变画面"},"text":{"type":"string","description":"字幕内容；仅 kind=subtitle 使用"},"title":{"type":"string"},"subtitleEntryIndex":{"type":"integer"}},"required":["id","kind","trackId","startMs","durationMs"]}},"output":{"type":["object","null"],"description":"保存到工程的输出规格；省略保留已存规格，null清除，后续GUI和助手导出共用","properties":{"width":{"type":"integer","minimum":2},"height":{"type":"integer","minimum":2},"fps":{"type":"integer","minimum":1},"sampleRate":{"type":"integer","minimum":8000},"burnSubtitles":{"type":"boolean"}}}},"required":["version","tracks","clips","durationMs"]}},"required":["canvasId","expectedRevision","timeline"]}`), Handler: opCanvasTimelineUpdate})
 }
 
 func opCanvasTimelineUpdate(ctx *Context, params json.RawMessage) (any, error) {
@@ -36,11 +36,32 @@ func opCanvasTimelineUpdate(ctx *Context, params json.RawMessage) (any, error) {
 	if revision != *args.ExpectedRevision {
 		return nil, Conflict("revision_conflict", "画布已经变化，请重新读取", map[string]any{"currentRevision": revision})
 	}
+	if args.Timeline.Output == nil {
+		var requested struct {
+			Timeline map[string]json.RawMessage `json:"timeline"`
+		}
+		if err = json.Unmarshal(params, &requested); err != nil {
+			return nil, InvalidArg("invalid_params", "timeline 必须是对象")
+		}
+		// An edit may replace tracks and clips without restating project output.
+		// Explicit null clears the setting; omission retains only valid output.
+		if _, present := requested.Timeline["output"]; !present {
+			var saved struct {
+				Output *editing.Options `json:"output"`
+			}
+			previous, marshalErr := json.Marshal(doc["timeline"])
+			if marshalErr == nil && json.Unmarshal(previous, &saved) == nil && saved.Output != nil {
+				if _, outputErr := editing.NormalizeOptions(*saved.Output); outputErr == nil {
+					args.Timeline.Output = saved.Output
+				}
+			}
+		}
+	}
 	sources, err := timelineSources(ctx, doc, &args.Timeline)
 	if err != nil {
 		return nil, err
 	}
-	if _, err = editing.Compile(args.Timeline, sources, editing.DefaultOptions()); err != nil {
+	if _, err = editing.Compile(args.Timeline, sources, editing.Options{}); err != nil {
 		return nil, InvalidArg("invalid_timeline", err.Error())
 	}
 	// Encode the typed timeline; unknown fields can never introduce paths or URLs.

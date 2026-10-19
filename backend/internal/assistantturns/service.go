@@ -216,18 +216,22 @@ func (s *Service) ScopeForHost(userID, turnID string) (Scope, bool, error) {
 		return Scope{}, false, err
 	}
 	for _, receipt := range receipts {
-		if receipt.Op != "canvas.timeline.render" {
+		if receipt.Op != "canvas.timeline.render" && receipt.Op != "canvas.generation.submit" {
 			continue
 		}
 		var result struct {
-			CanvasID string `json:"canvasId"`
-			TaskID   string `json:"taskId"`
+			CanvasID string   `json:"canvasId"`
+			TaskID   string   `json:"taskId"`
+			TaskIDs  []string `json:"taskIds"`
 		}
 		if json.Unmarshal([]byte(receipt.ResultJSON), &result) != nil {
 			return Scope{}, false, errors.New("本地渲染回执损坏")
 		}
 		if (result.CanvasID == rec.CanvasID || Mode(rec.PermissionMode) == PermissionFullAccess) && strings.TrimSpace(result.TaskID) != "" {
 			taskIDs = append(taskIDs, result.TaskID)
+		}
+		if result.CanvasID == rec.CanvasID {
+			taskIDs = append(taskIDs, result.TaskIDs...)
 		}
 	}
 	sessionPins, err := s.sessionSkillPins(rec)

@@ -354,7 +354,7 @@ export function CanvasTimelineDialog({
     const addNodeToTimeline = (targetNode: CanvasNodeData) => {
         const kind = targetNode.type === "video" ? "video" : targetNode.type === "audio" ? "audio" : null;
         if (!kind) return;
-        const trackId = kind === "video" ? DEFAULT_VIDEO_TRACK_ID : DEFAULT_AUDIO_TRACK_ID;
+        const trackId = draft.tracks.find((track) => track.kind === kind)?.id ?? (kind === "video" ? DEFAULT_VIDEO_TRACK_ID : DEFAULT_AUDIO_TRACK_ID);
         const targetTrack = draft.tracks.find((track) => track.id === trackId);
         if (!targetTrack || targetTrack.locked) {
             message.warning(kind === "video" ? "视频轨已锁定或不存在" : "音频轨已锁定或不存在");
@@ -402,7 +402,7 @@ export function CanvasTimelineDialog({
             message.info("图片/文本素材暂不支持直接入轨，请先在画布中添加节点");
             return;
         }
-        const trackId = kind === "video" ? DEFAULT_VIDEO_TRACK_ID : DEFAULT_AUDIO_TRACK_ID;
+        const trackId = draft.tracks.find((track) => track.kind === kind)?.id ?? (kind === "video" ? DEFAULT_VIDEO_TRACK_ID : DEFAULT_AUDIO_TRACK_ID);
         const targetTrack = draft.tracks.find((track) => track.id === trackId);
         if (!targetTrack || targetTrack.locked) {
             message.warning(kind === "video" ? "视频轨已锁定或不存在" : "音频轨已锁定或不存在");

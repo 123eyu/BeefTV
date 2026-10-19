@@ -30,7 +30,7 @@ type ContinuationView struct {
 	Message         string   `json:"message"`
 }
 
-const ContinuationMessage = "【自动继续】这次已确认的生成任务已结束。先核对本次任务的成功或失败状态和实际结果，不把节点保留的旧媒体当成本次产物。检查实际产物是否符合原制作计划与分镜，再继续检查、剪辑和本地渲染。保留成功结果；有失败时解释原因，只能提出新的生成方案等待确认，不能直接开始付费生成。不要改动或发送我的未发送草稿。"
+const ContinuationMessage = "【自动继续】这次已确认的生成任务已结束。先核对本次任务的成功或失败状态和实际结果，不把节点保留的旧媒体当成本次产物。若用户已确认整片制作方案，使用 canvas_generation_submit 执行其中尚缺的素材，它会等待原任务保存绑定后返回，然后继续声音、字幕、剪辑、渲染和工程导出。没有整片授权或素材已修改时，仍须提出新方案等待确认。保留成功结果；失败和结果未知时先查原任务，不重复购买。不要改动或发送我的未发送草稿。"
 
 type ContinuationInput struct {
 	CanvasID     string   `json:"canvasId"`
@@ -59,7 +59,7 @@ func continuationView(row model.AssistantContinuation) ContinuationView {
 }
 
 func (s *Service) ArmContinuation(userID string, input ContinuationInput) (*ContinuationView, error) {
-	if len(input.NodeIDs) == 0 || len(input.NodeIDs) > 8 || (input.Kind != "image" && input.Kind != "video") || !strings.HasPrefix(input.ProposalID, "gp-") {
+	if len(input.NodeIDs) == 0 || len(input.NodeIDs) > 8 || (input.Kind != "image" && input.Kind != "video" && input.Kind != "audio") || !strings.HasPrefix(input.ProposalID, "gp-") {
 		return nil, continuationError("invalid")
 	}
 	sum := sha256.Sum256([]byte(userID + "\x00" + input.SourceTurnID + "\x00" + input.ProposalID))
@@ -143,7 +143,7 @@ func (s *Service) continuationScope(tx *gorm.DB, row *model.AssistantContinuatio
 	if ctx.ScopeID != row.ScopeID || ctx.Revision != row.ScopeRevision || ctx.Lifecycle != "active" {
 		return continuationError("scope_changed")
 	}
-	if row.State == "cancelled" {
+	if row.State == "cancelled" || row.State == "stopping" {
 		return continuationError("cancelled")
 	}
 	return nil
@@ -410,6 +410,11 @@ func (s *Service) ClaimContinuation(userID, id string) (*ContinuationView, error
 		}
 		assets, tasks := AssociatedReferences(raw)
 		rec := Record{TurnID: row.TurnID, UserID: userID, CanvasID: row.CanvasID, DurableSessionID: row.SessionID, PermissionMode: row.PermissionMode, RevisionBefore: DocumentRevision(doc), CreatedAt: s.now(), State: StateOpen, Document: raw, SelectedNodeIDs: selected, AssociatedAssetIDs: assets, AssociatedTaskIDs: uniqueSorted(append(tasks, ids...))}
+		var source model.AssistantTurn
+		if err := tx.First(&source, "turn_id = ?", row.SourceTurnID).Error; err != nil {
+			return err
+		}
+		rec.GenerationAuthorizationJSON = source.GenerationAuthorizationJSON
 		if _, err = s.store.Insert(tx, recordToModel(rec, s.now())); err != nil {
 			return err
 		}

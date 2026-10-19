@@ -41,7 +41,7 @@ func TestContinuationMigrationPreservesHistoryAndChecksReceiptStructure(t *testi
 	}
 	var after []localSchemaMigration
 	db.Order("version").Find(&after)
-	if len(after) != len(before)+2 || after[len(after)-2].Name != "assistant-generation-continuations" || after[len(after)-1].Name != "assistant-continuation-intent-fence" {
+	if len(after) != len(before)+3 || after[len(before)].Name != "assistant-generation-continuations" || after[len(before)+1].Name != "assistant-continuation-intent-fence" || after[len(before)+2].Name != "assistant-production-authorization" {
 		t.Fatal("migration identity")
 	}
 	for i, row := range before {
@@ -80,7 +80,7 @@ func TestContinuationIntentFenceMigrationPreservesV18History(t *testing.T) {
 	if RequireLocalSchema(db) == nil {
 		t.Fatal("missing fence accepted")
 	}
-	if err = db.Exec("DELETE FROM local_schema_migrations WHERE version = 19").Error; err != nil {
+	if err = db.Exec("DELETE FROM local_schema_migrations WHERE version >= 19").Error; err != nil {
 		t.Fatal(err)
 	}
 	var before []localSchemaMigration
@@ -103,7 +103,7 @@ func TestContinuationIntentFenceMigrationPreservesV18History(t *testing.T) {
 	}
 	var after []localSchemaMigration
 	db.Order("version").Find(&after)
-	if len(after) != len(before)+1 || after[len(after)-1].Name != "assistant-continuation-intent-fence" {
+	if len(after) != len(before)+2 || after[len(before)].Name != "assistant-continuation-intent-fence" || after[len(before)+1].Name != "assistant-production-authorization" {
 		t.Fatal("migration identity")
 	}
 	for i, row := range before {

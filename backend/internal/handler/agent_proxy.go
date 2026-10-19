@@ -315,8 +315,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		if _, allowed := requireOwnedCanvas(c, payload.CanvasID); !allowed {
 			return
 		}
-		if err := svc.CancelAssistantContinuations(c.GetString("agentUserId"), payload.CanvasID, "", true); err != nil {
-			failService(c, err)
+		if !stopAssistantContinuationsForIntent(c, svc, host, payload.CanvasID, "") {
 			return
 		}
 		hostJSON(c, http.MethodPost, "/sessions", body)
@@ -336,8 +335,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		if _, allowed := requireOwnedCanvas(c, payload.CanvasID); !allowed {
 			return
 		}
-		if err := svc.CancelAssistantContinuations(c.GetString("agentUserId"), payload.CanvasID, "", true); err != nil {
-			failService(c, err)
+		if !stopAssistantContinuationsForIntent(c, svc, host, payload.CanvasID, "") {
 			return
 		}
 		hostJSON(c, http.MethodPost, "/sessions/activate", body)
@@ -423,6 +421,30 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		ok(c, gin.H{"runnable": true})
 	})
 
+	r.POST("/assistant/turns/:turnId/proposals/:proposalId/production", func(c *gin.Context) {
+		if !guard(c, true) {
+			return
+		}
+		_, payload, valid := readAssistantBody(c, app.AssistantProductionConfirmation{})
+		if !valid {
+			return
+		}
+		if _, allowed := requireOwnedCanvas(c, payload.CanvasID); !allowed {
+			return
+		}
+		if !assistantProposalIDPattern.MatchString(c.Param("proposalId")) {
+			fail(c, http.StatusBadRequest, app.BadAuthRequest("生成建议标识无效"))
+			return
+		}
+		payload.ProposalID = c.Param("proposalId")
+		result, err := svc.ConfirmAssistantProduction(c.GetString("agentUserId"), c.Param("turnId"), payload)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, result)
+	})
+
 	r.POST("/assistant/chat", func(c *gin.Context) {
 		// Only failures before BeginAssistantTurn prove no business turn was admitted.
 		c.Header("X-Beeftv-Turn-Admission", "rejected")
@@ -488,8 +510,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			payload.References = nil
 			payload.Skills = nil
 			body, _ = json.Marshal(payload)
-		} else if err := svc.CancelAssistantContinuations(c.GetString("agentUserId"), payload.CanvasID, payload.SessionID, true); err != nil {
-			failService(c, err)
+		} else if !stopAssistantContinuationsForIntent(c, svc, host, payload.CanvasID, payload.SessionID) {
 			return
 		}
 		if !assistantturns.ValidMode(payload.PermissionMode) {

@@ -72,13 +72,20 @@ export type AssistantCanvasChange = Omit<AssistantTurnChange, "canvasChanges"> &
 /** 付费生成提议：后端只登记，不生成、不扣费，执行发生在画布既有生成链路。 */
 export type AssistantGenerationProposal = {
     proposalId: string;
-    kind: "image" | "video";
+    kind: "image" | "video" | "audio";
     nodeIds: string[];
     model: string;
     modelKey: string;
     note?: string;
+    production?: { targets: { nodeId: string; title: string; kind: "image" | "video" | "audio"; modelKey: string; prompt: string; parameters: Record<string,string>; metadata?: Record<string, unknown>; referenceNodeIds: string[] }[] };
     source?: { canvasId: string; canvasRevision: number; modelConfigRevision: number };
 };
+
+export async function confirmAssistantProduction(canvasId: string, turnId: string, proposal: AssistantGenerationProposal) {
+    return http.post<{ taskIds: string[]; continuationId: string }>(`/assistant/turns/${encodeURIComponent(turnId)}/proposals/${encodeURIComponent(proposal.proposalId)}/production`, {
+        canvasId, kind: proposal.kind, nodeIds: proposal.nodeIds, targets: proposal.production?.targets,
+    }, await uiSessionConfig());
+}
 
 export type AssistantPlan = {
     goal: string;
@@ -139,7 +146,8 @@ export type AssistantTurn = {
 };
 
 /** Trusted render receipts in creation order; task/resource access still uses owned APIs. */
-export type AssistantTurnOutput = { taskId: string; kind: "video"; sourceRevision?: number };
+export type AssistantTurnOutput = { taskId: string; kind: "video"; sourceRevision?: number }
+    | { kind: "project"; resourceId: string; fileName: string; sourceRevision?: number };
 
 export type AssistantSessionSummary = {
     sessionId: string;

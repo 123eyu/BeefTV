@@ -6,7 +6,8 @@ import "time"
 // the pre-turn canvas snapshot, settlement, and the undo marker. It is not a
 // model-session transcript; pi owns that history.
 type AssistantTurn struct {
-	ContinuationInvalidated bool `json:"-" gorm:"not null;default:false"`
+	ContinuationInvalidated     bool   `json:"-" gorm:"not null;default:false"`
+	GenerationAuthorizationJSON string `json:"-" gorm:"type:text"`
 
 	DurableNativeSources string    `json:"-" gorm:"type:text"`
 	DurableSessionID     string    `json:"-" gorm:"size:80"`

@@ -202,6 +202,7 @@ type PublicChannelModel struct {
 	Protocol         model.ChannelInterfaceType `json:"protocol"`
 	CapabilityConfig map[string]any             `json:"capabilityConfig,omitempty"`
 	VideoPricing     map[string]any             `json:"videoPricing,omitempty"`
+	AudioOptions     *AudioGenerationOptions    `json:"audioOptions,omitempty"`
 	Available        bool                       `json:"available"`
 }
 

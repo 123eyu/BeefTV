@@ -114,7 +114,8 @@ type HistoryState struct {
 // Record is the in-memory business round. Document is the pre-turn canvas
 // snapshot, not a chat transcript.
 type Record struct {
-	ContinuationInvalidated bool
+	ContinuationInvalidated     bool
+	GenerationAuthorizationJSON string
 
 	DurableNativeSources string
 	DurableSessionID     string
