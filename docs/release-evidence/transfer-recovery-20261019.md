@@ -59,3 +59,5 @@ proxy fault:  58e759a1ee4fa63c75a62286c121518abf59a9b0ab20332629ec115233ca1cd5
 发布顺序为先服务端、后桌面客户端。本次只提交 review，不合并、部署或发版。
 
 关联：[BeefTV PR #200](https://github.com/glanderness/BeefTV/pull/200)、[BeefAPI PR #622](https://github.com/Sunnyender-org/beefapi/pull/622)。
+
+独立 Grok Companion 首轮只读检查客户端 `88de993d..b8e35fdc` 与服务端 `2a63e60657..dc4ef32957`；同一会话在客户端 `db80d8bc` 复核两项下载发现，结论为 Approve：Range 400 断点问题 resolved，失败任务手动恢复的缓存疑点 withdrawn，无剩余发现。新增 generation/app 定向测试通过，race 分别为 2.789s / 33.208s。复核读取了真实 COS 验证记录，没有再次执行生产测试。此独立检查不替代维护者交叉 review；GitHub CI 查询连接失败，尚未确认线上 CI 状态。
