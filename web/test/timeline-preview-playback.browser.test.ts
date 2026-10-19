@@ -1,14 +1,17 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chromium, type Browser, type Page } from "playwright";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
+import { createHash } from "node:crypto";
 
 let browser: Browser, server: ReturnType<typeof Bun.serve>, scratch: string;
 let delayVoice = false;
 let releaseVoice: (() => void) | undefined;
 const sourceRoot = process.env.BEEFTV_PREVIEW_SOURCE_ROOT || resolve(import.meta.dir, "..");
+const hookRef = process.env.BEEFTV_PREVIEW_HOOK_REF;
+let hookSha256 = "";
 const snapshot = (page: Page) => page.evaluate(() => (window as any).timelinePlaybackFixture.snapshot());
 
 function wave(frequency: number) {
@@ -22,10 +25,14 @@ beforeAll(async () => {
     scratch = mkdtempSync(tmpdir() + "/beeftv-timeline-preview-");
     execFileSync("ffmpeg", ["-v", "error", "-f", "lavfi", "-i", "color=orange:s=320x180:r=24:d=4", "-f", "lavfi", "-i", "sine=frequency=220:sample_rate=44100:duration=4", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", scratch + "/video.mp4"]);
     const voices = { "/voice.wav": wave(440), "/music.wav": wave(660) };
+    const hookPath = "web/src/hooks/use-timeline-preview-playback.ts";
+    const hookSource = hookRef ? execFileSync("git", ["show", `${hookRef}:${hookPath}`], { cwd: resolve(sourceRoot, ".."), encoding: "utf8" }) : readFileSync(resolve(sourceRoot, "src/hooks/use-timeline-preview-playback.ts"), "utf8");
+    hookSha256 = createHash("sha256").update(hookSource).digest("hex");
     const build = await Bun.build({ entrypoints: [import.meta.dir + "/fixtures/timeline-preview-playback-harness.tsx"], target: "browser", define: { "import.meta.env": "{}", "process.env.NODE_ENV": '"production"' }, plugins: [{ name: "timeline-preview-source", setup(builder) {
+        builder.onResolve({ filter: /^@\/hooks\/use-timeline-preview-playback$/ }, () => ({ path: "timeline-preview-hook-snapshot", namespace: "timeline-hook-snapshot" }));
+        builder.onLoad({ filter: /.*/, namespace: "timeline-hook-snapshot" }, () => ({ contents: hookSource, loader: "ts", resolveDir: sourceRoot }));
         builder.onResolve({ filter: /^@\// }, args => {
-            const root = args.path === "@/hooks/use-timeline-preview-playback" ? resolve(import.meta.dir, "..") : sourceRoot;
-            return { path: Bun.resolveSync(resolve(root, "src", args.path.slice(2)), import.meta.dir) };
+            return { path: Bun.resolveSync(resolve(sourceRoot, "src", args.path.slice(2)), import.meta.dir) };
         });
     } }] });
     if (!build.success) throw Error(build.logs.join("\n"));
@@ -77,6 +84,50 @@ test("two overlapping real audio clips seek their own source offsets and advance
         await page.waitForTimeout(180);
         expect((await snapshot(page)).playhead).toBe(stopped.playhead);
         expect((await snapshot(page)).audio.every((audio: any) => audio.paused)).toBe(true);
+    } finally { await page.close(); }
+}, 45_000);
+
+test("240ms frames cross the 600ms voice cue and naturally stop without rewinding audio", async () => {
+    const page = await open("?slowRaf");
+    try {
+        await page.waitForFunction(() => { const fixture = (window as any).timelinePlaybackFixture; const video = document.querySelector("video"); return fixture?.snapshot().audio.every((audio: any) => audio.readyState >= 2) && video && video.readyState >= 2; });
+        await page.getByRole("button", { name: "Play", exact: true }).click();
+        const samples = await page.evaluate(async () => {
+            const rows: any[] = [], start = performance.now();
+            while (performance.now() - start < 6500) {
+                const state = (window as any).timelinePlaybackFixture.snapshot();
+                const video = document.querySelector("video") as HTMLVideoElement | null;
+                rows.push({ elapsedMs: Math.round(performance.now() - start), ...state, video: video ? { currentTime: video.currentTime, paused: video.paused, readyState: video.readyState } : null });
+                if (state.playhead === 2400 && !state.playing) break;
+                await new Promise(resolve => setTimeout(resolve, 40));
+            }
+            return rows;
+        });
+        const rewinds = samples.slice(1).flatMap((sample, index) => sample.audio.flatMap((audio: any, track: number) => {
+            const prior = samples[index].audio[track];
+            return prior && !prior.paused && !audio.paused && prior.currentTime - audio.currentTime > 0.12 ? [{ elapsedMs: sample.elapsedMs, track, from: prior.currentTime, to: audio.currentTime }] : [];
+        }));
+        const last = samples.at(-1)!;
+        const receipt: Record<string, unknown> = { hookRef: hookRef || "working-tree", hookSha256, frameMs: 240, voiceCueMs: 600, expectedDurationMs: 2400, sourceOffsetsMs: { video: 1600, voice: 2400 }, naturalStop: last.playhead === 2400 && !last.playing, rewinds, samples };
+        if (process.env.BEEFTV_PREVIEW_RECEIPT) writeFileSync(process.env.BEEFTV_PREVIEW_RECEIPT, JSON.stringify(receipt, null, 2));
+        console.log(JSON.stringify({ hookRef: receipt.hookRef, hookSha256, naturalStop: receipt.naturalStop, finalPlayhead: last.playhead, rewindCount: rewinds.length }));
+        expect(samples.some(sample => sample.playhead > 600)).toBe(true);
+        expect(receipt.naturalStop).toBe(true);
+        expect(rewinds).toEqual([]);
+        expect(last.audio.every((audio: any) => audio.paused)).toBe(true);
+        expect(last.video?.paused).toBe(true);
+        await page.getByRole("button", { name: "Play", exact: true }).click();
+        await page.waitForFunction(() => { const state = (window as any).timelinePlaybackFixture.snapshot(); return state.playhead > 600 && state.playhead < 1400 && !state.audio[0].paused && state.audio[0].currentTime > 2.4 && state.audio[0].currentTime < 3.3; });
+        const restarted = await snapshot(page);
+        receipt.restarted = restarted;
+        if (process.env.BEEFTV_PREVIEW_RECEIPT) writeFileSync(process.env.BEEFTV_PREVIEW_RECEIPT, JSON.stringify(receipt, null, 2));
+        expect(restarted.playing).toBe(true);
+        expect(restarted.audio[0].currentTime).toBeLessThan(3.3);
+        const video = await page.locator("[data-playback-video]").evaluate((element: HTMLVideoElement) => ({ paused: element.paused, ended: element.ended, currentTime: element.currentTime }));
+        expect(video.paused).toBe(false);
+        expect(video.ended).toBe(false);
+        expect(video.currentTime).toBeLessThan(4);
+        await page.getByRole("button", { name: "Pause", exact: true }).click();
     } finally { await page.close(); }
 }, 45_000);
 
@@ -148,6 +199,29 @@ test("a failed audio load exits buffering and pauses every player", async () => 
         expect((await snapshot(page)).playing).toBe(false);
         expect((await snapshot(page)).audio.every((audio: any) => audio.paused)).toBe(true);
     } finally { await page.close(); }
+}, 45_000);
+
+test("a muted track failing after playback starts does not stop other media", async () => {
+    const page = await browser.newPage();
+    let releaseFailure: (() => void) | undefined;
+    try {
+        await page.route("**/voice.wav", async route => {
+            await new Promise<void>(resolve => { releaseFailure = resolve; });
+            await route.fulfill({ status: 404, body: "fixture missing muted audio" });
+        });
+        await page.goto(server.url.href);
+        await page.waitForFunction(() => Boolean((window as any).timelinePlaybackFixture));
+        await page.evaluate(() => (window as any).timelinePlaybackFixture.mute(true));
+        await page.getByRole("button", { name: "Play", exact: true }).click();
+        await page.waitForFunction(() => { const state = (window as any).timelinePlaybackFixture.snapshot(); return state.playhead > 1200 && !state.audio[1].paused; });
+        releaseFailure?.();
+        await page.waitForFunction(() => Boolean((window as any).timelinePlaybackFixture.snapshot().audio[0].error));
+        expect((await snapshot(page)).playing).toBe(true);
+        expect((await snapshot(page)).error).toBe("");
+        await page.evaluate(() => { (window as any).timelinePlaybackFixture.seek(1000); (window as any).timelinePlaybackFixture.mute(false); });
+        await page.getByRole("alert").waitFor();
+        expect((await snapshot(page)).playing).toBe(false);
+    } finally { releaseFailure?.(); await page.close(); }
 }, 45_000);
 
 test("portrait output uses the real export caption PNG with one bottom line, even for a landscape source", async () => {

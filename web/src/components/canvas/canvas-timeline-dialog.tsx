@@ -886,8 +886,8 @@ export function CanvasTimelineDialog({
                             <span className="font-semibold" style={{ color: theme.accent.primary }}>
                                 字幕编辑
                             </span>
-                            <span className="opacity-45">修改后保存将同步写回对应视频节点的字幕数据</span>
-                            {onOpenSubtitleDialog ? (
+                            <span className="opacity-45">保存后更新工程字幕</span>
+                            {onOpenSubtitleDialog && selectedSubtitleClip.nodeId ? (
                                 <Button size="small" className="ml-auto" icon={<Captions className="size-3.5" />} onClick={() => onOpenSubtitleDialog(selectedSubtitleClip.nodeId)}>
                                     精细编辑（SRT/高亮/样式）
                                 </Button>

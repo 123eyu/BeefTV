@@ -5,6 +5,12 @@ import { CanvasTimelinePreview } from "@/components/canvas/canvas-timeline-previ
 import { canvasThemes } from "@/lib/canvas-theme";
 import type { TimelineClip, TimelineTrack } from "@/types/timeline";
 
+const slowRaf = new URLSearchParams(location.search).has("slowRaf");
+if (slowRaf) {
+    window.requestAnimationFrame = callback => window.setTimeout(() => callback(performance.now()), 240);
+    window.cancelAnimationFrame = handle => window.clearTimeout(handle);
+}
+
 const audioElements: HTMLAudioElement[] = [];
 const NativeAudio = window.Audio;
 window.Audio = function (...args: ConstructorParameters<typeof Audio>) { const audio = new NativeAudio(...args); audioElements.push(audio); return audio; } as typeof Audio;
@@ -17,9 +23,9 @@ const clips: TimelineClip[] = [
 ];
 
 function Harness() {
-    const [projectClips, setClips] = useState(clips);
+    const [projectClips, setClips] = useState(() => slowRaf ? clips.map(clip => clip.id === "voice" ? { ...clip, startMs: 600, sourceStartMs: 2400 } : clip.id === "video" ? { ...clip, sourceStartMs: 1600 } : clip) : clips);
     const [projectTracks, setTracks] = useState(tracks);
-    const [playhead, setPlayhead] = useState(1000);
+    const [playhead, setPlayhead] = useState(slowRaf ? 0 : 1000);
     const [playing, setPlaying] = useState(false);
     const [burn, setBurn] = useState(true);
     const [error, setError] = useState("");
@@ -35,7 +41,7 @@ function Harness() {
         muteVideo: (value: boolean) => setTracks(previous => previous.map(track => track.id === "video" ? { ...track, muted: value } : track)),
         hide: (value: boolean) => setTracks(previous => previous.map(track => track.id === "music" ? { ...track, visible: !value } : track)),
         removeVoice: () => setClips(previous => previous.filter(clip => clip.id !== "voice")),
-        snapshot: () => ({ playing, playhead, error, audio: audioElements.map(audio => ({ src: audio.getAttribute("src"), currentTime: audio.currentTime, paused: audio.paused, muted: audio.muted, volume: audio.volume, readyState: audio.readyState })) }),
+        snapshot: () => ({ playing, playhead, error, audio: audioElements.map(audio => ({ src: audio.getAttribute("src"), currentTime: audio.currentTime, paused: audio.paused, muted: audio.muted, volume: audio.volume, readyState: audio.readyState, error: audio.error?.code || null })) }),
     } });
     return <main><button onClick={() => { setError(""); setPlaying(value => !value); }}>{playing ? "Pause" : "Play"}</button><output>{Math.round(playhead)}</output>{error ? <div role="alert">{error}</div> : null}
         {previewMode ? <CanvasTimelinePreview clips={projectClips} tracks={projectTracks} nodes={[]} output={{ width: 480, height: 854, fps: 24, burnSubtitles: burn }} playheadMs={playhead} playing={false} theme={Object.values(canvasThemes)[0]} onTogglePlay={() => {}} onPlayheadChange={setPlayhead} onRequestPause={() => setPlaying(false)} /> : <video data-playback-video ref={videoRef} src="/video.mp4" preload="auto" onLoadedMetadata={syncVideoMetadata} />}

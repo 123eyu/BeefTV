@@ -66,21 +66,23 @@ class TimelinePreviewPlayback {
     private active(clip: TimelineClip) { return this.position >= clip.startMs && this.position < clip.startMs + clip.durationMs && this.track(clip)?.visible !== false; }
 
     update(options: TimelinePreviewPlaybackOptions) {
+        const videoChanged = this.options.activeVideoClipId !== options.activeVideoClipId;
         this.options = options;
         const requested = clamp(options.playheadMs, 0, this.duration());
-        const externalSeek = this.lastPublished === null || Math.abs(requested - this.lastPublished) > 1;
+        let externalSeek = this.lastPublished === null || Math.abs(requested - this.lastPublished) > 1;
         if (externalSeek && Math.abs(requested - this.position) > 1) { this.position = requested; this.lastTick = null; }
         this.reconcileAudio();
         if (options.playing !== this.requestedPlaying) {
             this.requestedPlaying = options.playing;
             if (options.playing) {
-                if (this.position >= this.duration()) { this.position = 0; this.publish(); }
+                if (this.position >= this.duration()) { this.position = 0; externalSeek = true; this.publish(); }
                 this.running = this.duration() > 0;
                 this.lastTick = null;
                 if (this.running && this.frame === null) this.frame = requestAnimationFrame(this.tick);
             } else this.pause();
         }
         this.sync(externalSeek);
+        if (videoChanged && !externalSeek) this.syncVideoMetadata();
     }
 
     private publish() {
@@ -91,9 +93,14 @@ class TimelinePreviewPlayback {
     private tick = (now: number) => {
         this.frame = null;
         if (!this.running || this.disposed) return;
-        this.sync(false);
-        if (!this.running) return;
-        if (!this.ready()) { this.lastTick = now; this.frame = requestAnimationFrame(this.tick); return; }
+        // Advance a running clock before correcting drift. A throttled frame
+        // must not seek playing media back to the previous frame's position.
+        if (!this.ready()) {
+            this.sync(false);
+            this.lastTick = now;
+            if (this.running) this.frame = requestAnimationFrame(this.tick);
+            return;
+        }
         let next = this.lastTick === null ? this.position : Math.min(this.duration(), this.position + Math.max(0, now - this.lastTick));
         const boundary = this.options.clips.filter(clip => clip.kind === "audio" || clip.kind === "video").flatMap(clip => [clip.startMs, clip.startMs + clip.durationMs]).filter(time => time > this.position && time <= next).sort((a, b) => a - b)[0];
         if (boundary !== undefined) next = boundary;
@@ -109,7 +116,8 @@ class TimelinePreviewPlayback {
     };
 
     private ready() {
-        const ready = (element: HTMLMediaElement | null) => Boolean(element?.src && element.readyState >= 2 && !element.paused && !this.pendingElements.has(element));
+        const ready = (element: HTMLMediaElement | null) => Boolean(element?.src && element.readyState >= 2 &&
+            (element.ended || (!element.paused && !this.pendingElements.has(element))));
         for (const record of this.audios.values()) if (this.active(record.clip) && !this.track(record.clip)?.muted && !ready(record.element)) return false;
         const activeVideo = this.options.clips.find(clip => clip.kind === "video" && this.active(clip));
         return !activeVideo || (activeVideo.id === this.options.activeVideoClipId && ready(this.options.videoRef.current));
@@ -151,7 +159,7 @@ class TimelinePreviewPlayback {
             if (previous) this.release(previous);
             const element = new Audio();
             element.preload = "auto";
-            const record: AudioRecord = { clip, element, identity, disposed: false, error: false, loaded: () => this.syncAudio(record, true), failed: () => { record.error = true; if (this.active(record.clip)) this.fail("音轨预览未能播放，请重新打开剪辑后重试。"); } };
+            const record: AudioRecord = { clip, element, identity, disposed: false, error: false, loaded: () => this.syncAudio(record, true), failed: () => { record.error = true; if (this.active(record.clip) && !this.track(record.clip)?.muted) this.fail("音轨预览未能播放，请重新打开剪辑后重试。"); } };
             element.addEventListener("loadedmetadata", record.loaded);
             element.addEventListener("error", record.failed);
             this.audios.set(clip.id, record);
@@ -174,6 +182,9 @@ class TimelinePreviewPlayback {
         const gain = timelinePreviewGain(clip, this.position);
         if ((clip.volume ?? 1) > 1 && shouldPlay) { this.fail("当前音量超过预览范围，请将片段音量调至 100% 以内后试听。"); return; }
         element.volume = clamp(gain, 0, 1);
+        // A source can finish between throttled animation frames. Let the
+        // clock reach its clip boundary without seeking and replaying the tail.
+        if (element.ended && !forceSeek) return;
         if (element.readyState >= 1 && (active || forceSeek)) {
             const sourceMs = (clip.sourceStartMs || 0) + clamp(this.position - clip.startMs, 0, clip.durationMs);
             const maxTime = Number.isFinite(element.duration) ? Math.max(0, element.duration - 0.001) : sourceMs / 1000;
