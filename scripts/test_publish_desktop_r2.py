@@ -278,6 +278,33 @@ class PublicationTests(unittest.TestCase):
 
 
 class S3AdapterTests(unittest.TestCase):
+    def test_cos_credentials_are_restricted_to_matching_regional_service_and_public_bucket(self):
+        bucket, region = "beeftv-components-1481187348", "ap-guangzhou"
+        endpoint = f"https://cos.{region}.myqcloud.com"
+        public = f"https://{bucket}.cos.{region}.myqcloud.com/beeftv"
+        for changes in [{"endpoint": "https://cos.ap-guangzhou.myqcloud.com.evil.example"},
+                        {"endpoint": endpoint + "/path"}, {"region": "auto"},
+                        {"bucket": "without-appid"}, {"public_base": "https://evil.example/beeftv"}]:
+            with self.subTest(changes=changes), self.assertRaises(release.PublishError), patch.object(release, "run") as runner:
+                values = dict(provider="cos", endpoint=endpoint, region=region, bucket=bucket, public_base=public)
+                values.update(changes)
+                release.storage_config(**values)
+                runner.assert_not_called()
+        store = release.storage_config("cos", endpoint, region, bucket, public)
+        with patch.object(release, "run", return_value=subprocess.CompletedProcess([], 0, "{}", "")) as runner:
+            store.put("beeftv/example", "/tmp/input", release.IMMUTABLE)
+            command = runner.call_args.args[0]
+            self.assertEqual(command[:5], ["aws", "--endpoint-url", endpoint, "--region", region])
+            self.assertIn("AWS_CONFIG_FILE", runner.call_args.kwargs["env"])
+
+    def test_legacy_r2_configuration_still_requires_account_endpoint_and_auto_region(self):
+        store = release.storage_config("r2", "https://" + "a" * 32 + ".r2.cloudflarestorage.com",
+                                       "auto", "beeftv-releases", "https://updates.beefapi.com/beeftv")
+        self.assertEqual(store.provider, "r2")
+        with self.assertRaises(release.PublishError):
+            release.storage_config("r2", "https://" + "a" * 32 + ".r2.cloudflarestorage.com",
+                                   "ap-guangzhou", "beeftv-releases", "https://updates.beefapi.com/beeftv")
+
     def test_cli_rejects_credential_destination_before_any_command(self):
         for endpoint in ["https://attacker.example", "https://" + "a" * 32 + ".r2.cloudflarestorage.com.evil.example", "https://user@" + "a" * 32 + ".r2.cloudflarestorage.com"]:
             with patch.object(release.sys, "argv", ["publish", "stage", "--manifest", "/tmp/not-read", "--verifier", "/tmp/not-called", "--endpoint-url", endpoint]), patch.object(release, "run") as runner, redirect_stderr(io.StringIO()):
@@ -296,6 +323,55 @@ class S3AdapterTests(unittest.TestCase):
         with patch.object(release, "run", return_value=subprocess.CompletedProcess([], 1, "", "(AccessDenied) credential")):
             with self.assertRaisesRegex(release.PublishError, "Cannot inspect"):
                 release.S3("https://r2.example", "beeftv-releases").get(release.LATEST, "/tmp/unused")
+
+
+class ConditionalCapabilityTests(unittest.TestCase):
+    def store(self, ignore_create=False, ignore_replace=False, ignore_stale=False):
+        store = release.S3("https://cos.ap-guangzhou.myqcloud.com", "beeftv-components-1481187348", "ap-guangzhou", "cos")
+        fake = FakeS3()
+        normal_put = fake.put
+        writes = 0
+
+        def put(key, source, cache_control, etag=None):
+            nonlocal writes
+            writes += 1
+            if ((ignore_create and etag is None) or (ignore_replace and etag is not None)
+                    or (ignore_stale and writes == 5)):
+                fake.objects[key] = Path(source).read_bytes()
+                return True
+            return normal_put(key, source, cache_control, etag)
+
+        store.put = put
+        store.get = fake.get
+        store.delete_probe = lambda key: fake.objects.pop(key, None)
+        return store, fake
+
+    def test_real_conditional_semantics_pass_and_probe_is_removed(self):
+        store, fake = self.store()
+        store.check_conditions()
+        self.assertEqual(fake.objects, {})
+        self.assertTrue(all(key.startswith("beeftv/.publication-probes/") for key, _ in fake.writes))
+
+    def test_ignored_create_and_replacement_conditions_block_and_cleanup(self):
+        for flags, error in [(dict(ignore_create=True), "If-None-Match"),
+                             (dict(ignore_replace=True), "If-Match"),
+                             (dict(ignore_stale=True), "stale")]:
+            with self.subTest(flags=flags):
+                store, fake = self.store(**flags)
+                with self.assertRaisesRegex(release.PublishError, error):
+                    store.check_conditions()
+                self.assertEqual(fake.objects, {})
+
+    def test_probe_cleanup_cannot_delete_release_assets(self):
+        with patch.object(release, "run") as runner, self.assertRaises(release.PublishError):
+            release.S3("https://unused", "unused").delete_probe(release.LATEST)
+        runner.assert_not_called()
+
+    def test_cleanup_failure_preserves_original_condition_failure(self):
+        store, _ = self.store(ignore_create=True)
+        store.delete_probe = lambda _: (_ for _ in ()).throw(release.PublishError("cleanup"))
+        with self.assertRaisesRegex(release.PublishError, "If-None-Match.*cleanup also failed"):
+            store.check_conditions()
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish signed desktop releases with AWS CLI v2 and the existing verifier.
+"""Publish signed desktop releases to COS or legacy R2 with AWS CLI v2.
 
 stage uploads immutable version objects; activate requires a published GitHub
 release and atomically changes latest after public verification. Credentials stay
@@ -18,6 +18,7 @@ import sys
 import tempfile
 import urllib.request
 from urllib.parse import urlsplit
+import uuid
 
 PLATFORMS = {"darwin-arm64", "darwin-amd64", "windows-amd64", "linux-amd64"}
 PREFIX = "beeftv"
@@ -26,6 +27,7 @@ IMMUTABLE = "public, max-age=31536000, immutable"
 REVALIDATE = "no-store, max-age=0"
 MAX_MANIFEST = 2 * 1024 * 1024
 GITHUB_LATEST_FEED = "https://github.com/glanderness/BeefTV/releases/latest/download/desktop-update.json"
+COS_PUBLIC_BASE = "https://beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com/beeftv"
 
 
 class PublishError(Exception):
@@ -38,10 +40,12 @@ def version_tuple(version):
     return tuple(map(int, version[1:].split(".")))
 
 
-def run(command):
+def run(command, env=None):
     try:
         return subprocess.run(command, capture_output=True, text=True, timeout=600,
-                              env={**os.environ, "AWS_PAGER": "", "AWS_EC2_METADATA_DISABLED": "true"})
+                              env={**os.environ, "AWS_PAGER": "", "AWS_EC2_METADATA_DISABLED": "true",
+                                   "AWS_REQUEST_CHECKSUM_CALCULATION": "when_required",
+                                   "AWS_RESPONSE_CHECKSUM_VALIDATION": "when_required", **(env or {})})
     except (OSError, subprocess.TimeoutExpired):
         raise PublishError("Required release command unavailable or timed out") from None
 
@@ -73,33 +77,89 @@ def signed_payload(path, verifier):
 
 
 class S3:
-    def __init__(self, endpoint, bucket):
-        self.base = ["aws", "--endpoint-url", endpoint, "--region", "auto", "s3api"]
+    def __init__(self, endpoint, bucket, region="auto", provider="r2"):
+        self.base = ["aws", "--endpoint-url", endpoint, "--region", region, "s3api"]
         self.bucket = bucket
+        self.provider = provider
+
+    def command(self, arguments):
+        if self.provider != "cos":
+            return run(self.base + arguments)
+        # New COS buckets require virtual-hosted addressing. Keep credentials
+        # in environment variables; this file contains no credential values.
+        with tempfile.TemporaryDirectory(prefix="beeftv-cos-cli-") as directory:
+            config = Path(directory) / "config"
+            config.write_text("[default]\ns3 =\n    addressing_style = virtual\n")
+            config.chmod(0o600)
+            return run(self.base + arguments, env={"AWS_CONFIG_FILE": str(config),
+                                                  "AWS_PROFILE": "default", "AWS_DEFAULT_PROFILE": "default"})
 
     def get(self, key, destination):
-        head = run(self.base + ["head-object", "--bucket", self.bucket, "--key", key])
+        head = self.command(["head-object", "--bucket", self.bucket, "--key", key])
         if head.returncode:
             if re.search(r"\((404|NoSuchKey|NotFound)\)", head.stderr):
                 return None
-            raise PublishError(f"Cannot inspect R2 object: {key}")
+            raise PublishError(f"Cannot inspect release object: {key}")
         etag = json.loads(head.stdout)["ETag"]
-        result = run(self.base + ["get-object", "--bucket", self.bucket, "--key", key,
+        result = self.command(["get-object", "--bucket", self.bucket, "--key", key,
                                   "--if-match", etag, str(destination)])
         if result.returncode:
-            raise PublishError(f"Cannot read stable R2 object: {key}")
+            raise PublishError(f"Cannot read stable release object: {key}")
         return etag
 
     def put(self, key, source, cache_control, etag=None):
         condition = ["--if-match", etag] if etag else ["--if-none-match", "*"]
-        result = run(self.base + ["put-object", "--bucket", self.bucket, "--key", key,
+        result = self.command(["put-object", "--bucket", self.bucket, "--key", key,
                                   "--body", str(source), "--cache-control", cache_control,
                                   "--content-type", {".json": "application/json", ".zip": "application/zip", ".dmg": "application/x-apple-diskimage", ".exe": "application/vnd.microsoft.portable-executable", ".deb": "application/vnd.debian.binary-package"}.get(Path(key).suffix, "application/octet-stream")] + condition)
         if result.returncode:
             if re.search(r"\((412|PreconditionFailed|ConditionalRequestConflict)\)", result.stderr):
                 return False
-            raise PublishError(f"R2 conditional upload failed: {key}")
+            raise PublishError(f"Conditional release upload failed: {key}")
         return True
+
+    def delete_probe(self, key):
+        if not key.startswith(f"{PREFIX}/.publication-probes/"):
+            raise PublishError("Refusing to delete a release object")
+        if self.command(["delete-object", "--bucket", self.bucket, "--key", key]).returncode:
+            raise PublishError("Conditional-write probe cleanup failed")
+
+    def check_conditions(self):
+        """Detect S3 implementations that ignore conditional PUT headers."""
+        key = f"{PREFIX}/.publication-probes/{uuid.uuid4().hex}"
+        with tempfile.TemporaryDirectory(prefix="beeftv-store-probe-") as directory:
+            first, second, readback = (Path(directory) / name for name in ("first", "second", "readback"))
+            first.write_bytes(b"BeefTV conditional-write probe A")
+            second.write_bytes(b"BeefTV conditional-write probe B")
+            try:
+                if not self.put(key, first, REVALIDATE):
+                    raise PublishError("Cannot create conditional-write probe")
+                etag = self.get(key, readback)
+                if etag is None or fingerprint(readback) != fingerprint(first):
+                    raise PublishError("Conditional-write probe readback failed")
+                if self.put(key, second, REVALIDATE):
+                    raise PublishError("Storage ignores If-None-Match; publication is blocked")
+                if self.put(key, second, REVALIDATE, etag='"beeftv-invalid-etag"'):
+                    raise PublishError("Storage ignores If-Match; activation is blocked")
+                if self.get(key, readback) != etag or fingerprint(readback) != fingerprint(first):
+                    raise PublishError("Rejected conditional writes changed stored bytes")
+                if not self.put(key, second, REVALIDATE, etag=etag):
+                    raise PublishError("Storage rejects valid If-Match; activation is blocked")
+                if self.get(key, readback) is None or fingerprint(readback) != fingerprint(second):
+                    raise PublishError("Conditional replacement readback failed")
+                # A stale ETag must still be rejected after a successful replace.
+                if self.put(key, first, REVALIDATE, etag=etag):
+                    raise PublishError("Storage accepts stale If-Match; activation is blocked")
+                if self.get(key, readback) is None or fingerprint(readback) != fingerprint(second):
+                    raise PublishError("Rejected stale write changed stored bytes")
+            finally:
+                failure = sys.exc_info()[1]
+                try:
+                    self.delete_probe(key)
+                except PublishError:
+                    if failure is not None:
+                        raise PublishError(f"{failure}; conditional-write probe cleanup also failed") from None
+                    raise
 
 
 class PublicHTTP:
@@ -168,7 +228,7 @@ class Publisher:
 
     def immutable_put(self, key, source):
         expected = fingerprint(source)
-        with tempfile.TemporaryDirectory(prefix="beeftv-r2-check-") as directory:
+        with tempfile.TemporaryDirectory(prefix="beeftv-release-check-") as directory:
             previous = Path(directory) / "object"
             etag = self.store.get(key, previous)
             if etag is None:
@@ -224,7 +284,7 @@ class Publisher:
             self.check_installers(payload, self.installer_sources(payload, installer_dir))
         self.release_check(payload, manifest, self.public)
         self.public_check(payload, manifest)
-        with tempfile.TemporaryDirectory(prefix="beeftv-r2-latest-") as directory:
+        with tempfile.TemporaryDirectory(prefix="beeftv-release-latest-") as directory:
             previous = Path(directory) / "previous.json"
             etag = self.store.get(LATEST, previous)
             if etag is not None:
@@ -248,27 +308,53 @@ class Publisher:
         return payload["version"]
 
 
+def storage_config(provider, endpoint, region, bucket, public_base):
+    for url in (endpoint, public_base):
+        parsed = urlsplit(url)
+        if (parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password
+                or parsed.query or parsed.fragment or parsed.port is not None):
+            raise PublishError("Release endpoint and public base must be plain HTTPS URLs")
+    if provider == "r2":
+        if not re.fullmatch(r"https://[a-f0-9]{32}\.r2\.cloudflarestorage\.com/?", endpoint) or region != "auto":
+            raise PublishError("R2 credentials require an account R2 endpoint and auto region")
+    elif provider == "cos":
+        if (not re.fullmatch(r"ap-[a-z]+(?:-[a-z]+)?", region)
+                or endpoint.rstrip("/") != f"https://cos.{region}.myqcloud.com"
+                or not re.fullmatch(r"[a-z0-9][a-z0-9-]*-[0-9]+", bucket)):
+            raise PublishError("COS credentials require a matching regional COS endpoint and bucket with APPID")
+        if public_base.rstrip("/") != f"https://{bucket}.cos.{region}.myqcloud.com/{PREFIX}":
+            raise PublishError("COS releases require their direct bucket public base")
+    else:
+        raise PublishError("Unsupported release storage provider")
+    return S3(endpoint, bucket, region, provider)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["stage", "activate"])
-    parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("command", choices=["check-store", "stage", "activate"])
+    parser.add_argument("--manifest", type=Path)
     parser.add_argument("--assets-dir", type=Path)
     parser.add_argument("--with-installers", action="store_true")
-    parser.add_argument("--verifier", type=Path, required=True, help="Binary built from backend/cmd/update-release")
+    parser.add_argument("--verifier", type=Path, help="Binary built from backend/cmd/update-release")
+    parser.add_argument("--provider", choices=["cos", "r2"], default="cos")
     parser.add_argument("--endpoint-url", required=True)
-    parser.add_argument("--bucket", default="beeftv-releases")
-    parser.add_argument("--public-base", default="https://updates.beefapi.com/beeftv")
+    parser.add_argument("--region", default="ap-guangzhou")
+    parser.add_argument("--bucket", default="beeftv-components-1481187348")
+    parser.add_argument("--public-base", default=COS_PUBLIC_BASE)
     args = parser.parse_args()
     try:
-        if not re.fullmatch(r"https://[a-f0-9]{32}\.r2\.cloudflarestorage\.com/?", args.endpoint_url):
-            raise PublishError("S3 credentials may only be used with an account R2 endpoint")
-        for url in (args.endpoint_url, args.public_base):
-            parsed = urlsplit(url)
-            if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
-                raise PublishError("Release endpoint and public base must be plain HTTPS URLs")
-        publisher = Publisher(S3(args.endpoint_url, args.bucket), PublicHTTP(), args.verifier.resolve(), args.public_base)
+        store = storage_config(args.provider, args.endpoint_url, args.region, args.bucket, args.public_base)
+        if args.command != "check-store" and (args.manifest is None or args.verifier is None):
+            raise PublishError("Publication requires --manifest and --verifier")
+        # Never assume S3 compatibility includes CAS. This writes only a random
+        # disposable probe and refuses publication if either condition is ignored.
+        store.check_conditions()
+        if args.command == "check-store":
+            print("Release storage conditional writes verified")
+            return 0
+        publisher = Publisher(store, PublicHTTP(), args.verifier.resolve(), args.public_base)
         # Snapshot the verified envelope so a changed local file cannot be activated.
-        with tempfile.TemporaryDirectory(prefix="beeftv-r2-manifest-") as directory:
+        with tempfile.TemporaryDirectory(prefix="beeftv-release-manifest-") as directory:
             manifest = Path(directory) / "desktop-update.json"
             if args.manifest.stat().st_size > MAX_MANIFEST:
                 raise PublishError("Manifest is too large")
@@ -278,11 +364,11 @@ def main():
                        if args.command == "stage" else publisher.activate(manifest, assets_dir if args.with_installers else None))
         print(f"{args.command} verified: {version}")
     except PublishError as error:
-        print(f"Desktop R2 publication failed: {error}", file=sys.stderr)
+        print(f"Desktop publication failed: {error}", file=sys.stderr)
         return 1
     except (OSError, ValueError, KeyError, TypeError):
         # Never include subprocess stderr, request headers or credential-bearing URLs.
-        print("Desktop R2 publication failed; latest was not verified. Inspect release inputs and storage state before retrying.", file=sys.stderr)
+        print("Desktop publication failed; latest was not verified. Inspect release inputs and storage state before retrying.", file=sys.stderr)
         return 1
     return 0
 
