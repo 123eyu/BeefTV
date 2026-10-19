@@ -226,4 +226,6 @@ NewAPI Channel 2 与 BeefAPI 视频的暂时下载断连会保留原任务 ID �
 
 内置 BeefAPI 的 Seedance 视频任务由本机后端上传参考素材后再向上游提交链接；浏览器不直接访问该上传接口，也不把整份参考文件放进本地 `/tasks` 请求。本机已保存的参考文件即使工作区已有公开访问地址，也仍由本机后端上传后再提交链接。失败时不会自动重提生成。
 
-本地素材分片上传以 `X-Idempotency-Key` 复用当前用户的上传会话。`POST /api/resources/uploads` 返回 `uploadId`、`chunkSize`、`chunkCount` 和 `received`（已完整保存的分片索引）；客户端重试时查询同一会话并跳过这些分片，最后仍须调用 `complete` 确认资源保存成功。此恢复只适用于仍有效的会话，不保证应用重启或会话过期后继续上传；Seedance 参考素材的整文件 PUT 不属于这套分片协议。
+本地素材分片上传以 `X-Idempotency-Key` 复用当前用户的上传会话。`POST /api/resources/uploads` 返回 `uploadId`、`chunkSize`、`chunkCount` 和 `received`（已完整保存的分片索引）；客户端重试时查询同一会话并跳过这些分片，最后仍须调用 `complete` 确认资源保存成功。此恢复只适用于仍有效的会话，不保证应用重启或会话过期后继续上传。
+
+Seedance 参考素材使用独立的企业接口协议：客户端申请时传 `resumable: true`，支持的网关对大于 8MiB 的素材返回 COS/R2 原生分片计划。单片断流后查询 `/video-references/uploads/resume`，跳过已收完整的片段；确认丢失时复用原 ticket 调用 `/complete`，最终仍核验整文件大小、SHA-256 和类型。一次上传内最多进行 4 轮传输恢复，取消或最终失败会尽力 `/abort` 清理。沿用系统和环境代理；不强制直连。15 分钟有效期和应用重启后继续的能力不扩展，旧网关及小文件仍使用原整文件 PUT。所有重试均发生在模型提交前，不重复发生成请求；轨迹增加 `reference_resume`、`reference_abort`。
