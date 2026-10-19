@@ -6,7 +6,7 @@ import { Tooltip } from "@/components/ui/base/tooltip";
 // 数据源是项目级 TimelineProject：视频/音频节点自动入轨，字幕条目转字幕片段。
 // 交互：拖拽移动片段（吸附播放头/片段边缘）、左右边缘裁剪、删除、播放头跳转。
 
-import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MutableRefObject } from "react";
 
 import { Captions, Clapperboard, FolderOpen, Library, Lock, LockOpen, Maximize2, MoreHorizontal, Music2, Plus, Scissors, Trash2, Upload, Video, Wand2, ZoomIn, ZoomOut } from "lucide-react";
 import { saveOwnedOrBrowserVideoBlob } from "@/services/desktop-media-save";
@@ -689,6 +689,16 @@ export function CanvasTimelineDialog({
     return (
         <AppModal
             className="canvas-timeline-dialog"
+            style={{
+                "--editor-bg": theme.node.panel,
+                "--editor-panel": theme.node.fill,
+                "--editor-line": theme.toolbar.border,
+                "--editor-text": theme.node.text,
+                "--editor-muted": theme.node.muted,
+                "--editor-button-bg": theme.node.fill,
+                "--editor-button-line": theme.toolbar.border,
+                "--editor-clip-text": canvasThemes.dark.node.text,
+            } as CSSProperties}
             title={title}
             open={open}
             centered
