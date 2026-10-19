@@ -1,7 +1,7 @@
 // Deterministic composition inside one official Durable tool. Every side effect
 // remains an existing Go operation, with its own receipt and nested task key.
 export function timelineDeliveryTool(tools) {
-  const required = ['canvas.timeline.update', 'canvas.timeline.render', 'canvas.nodes.create', 'canvas.task.bind', 'canvas.project.export'];
+  const required = ['canvas.get', 'canvas.timeline.update', 'canvas.timeline.render', 'canvas.nodes.create', 'canvas.task.bind', 'canvas.project.export'];
   const byOperation = new Map(tools.map(tool => [tool.label, tool]));
   if (!required.every(name => byOperation.has(name))) return null;
   const render = byOperation.get('canvas.timeline.render');
@@ -67,10 +67,30 @@ export function timelineDeliveryTool(tools) {
         if (rendered.status !== 'succeeded') {
           return response({ ...rendered, failedStep: 'canvas.timeline.render', note: '保留原任务；查询该任务，不重新渲染。' }, ['failed', 'cancelled'].includes(rendered.status));
         }
-        // Do not reread/rebase over a concurrent edit while rendering. The node
+        // Reading names does not rebase over an edit made while rendering:
         // creation still checks the exact saved revision this render used.
+        const names = new Set();
+        let offset = 0, namesRevision;
+        do {
+          const key = `names:${offset}`;
+          const current = await call('canvas.get', { readView: { section: 'nodes', offset,
+            ...(namesRevision === undefined ? {} : { expectedRevision: namesRevision }) } }, key);
+          delete receipts[key]; // Do not expose source prompts in the delivery receipt.
+          if (!Array.isArray(current.canvas?.nodeIndex)) throw new Error('delivery_canvas_missing');
+          namesRevision = current.canvas.revision;
+          for (const node of current.canvas.nodeIndex) {
+            if (node.titleComplete !== false) names.add(String(node.title || '').trim());
+          }
+          offset = current.readView.nodeIndexPage.nextOffset;
+        } while (Number.isSafeInteger(offset));
+        const requestedTitle = String(args.title || '').trim() || '成片';
+        let title = requestedTitle;
+        for (let index = 2; names.has(title); index++) {
+          const suffix = ` · ${index}`;
+          title = requestedTitle.slice(0, 120 - suffix.length) + suffix;
+        }
         const created = await call('canvas.nodes.create', { expectedRevision: revision,
-          nodes: [{ type: 'video', title: args.title || '成片' }] }, 'node');
+          nodes: [{ type: 'video', title }] }, 'node');
         const nodeId = created.created?.[0]?.id;
         if (!nodeId) throw new Error('delivery_node_missing');
         const bound = await call('canvas.task.bind', { taskId: rendered.taskId, nodeId, outputIndex: 0 }, 'bind');

@@ -84,6 +84,7 @@ func realTimelineDelivery(t *testing.T, crash, refresh bool) {
 			t.Fatal(err)
 		}
 		document["revision"] = summary.Revision
+		document["nodes"] = append(document["nodes"].([]any), map[string]any{"id": "prior-film", "type": "video", "title": "Delivered film", "metadata": map[string]any{}})
 		document["timeline"] = map[string]any{
 			"version": 2, "durationMs": 1000, "output": map[string]any{"width": 320, "height": 240, "fps": 24},
 			"tracks": []any{map[string]any{"id": "visual", "kind": "video"}, map[string]any{"id": "captions", "kind": "subtitle"}},
@@ -197,6 +198,7 @@ func realTimelineDelivery(t *testing.T, crash, refresh bool) {
 		Timeline editing.Project `json:"timeline"`
 		Nodes    []struct {
 			ID       string `json:"id"`
+			Title    string `json:"title"`
 			Metadata struct {
 				TaskID     string `json:"taskId"`
 				StorageKey string `json:"storageKey"`
@@ -216,6 +218,9 @@ func realTimelineDelivery(t *testing.T, crash, refresh bool) {
 	for _, node := range saved.Nodes {
 		if node.ID == result.NodeID {
 			bound = node.Metadata.TaskID == result.TaskID && strings.HasPrefix(node.Metadata.StorageKey, "resource:")
+			if refresh && node.Title != "Delivered film · 2" {
+				t.Fatalf("revision title collision not resolved: %q", node.Title)
+			}
 		}
 	}
 	if !bound {
