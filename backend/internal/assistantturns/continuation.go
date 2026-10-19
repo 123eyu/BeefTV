@@ -30,7 +30,7 @@ type ContinuationView struct {
 	Message         string   `json:"message"`
 }
 
-const ContinuationMessage = "【自动继续】这次已确认的生成任务已结束。先核对本次任务的成功或失败状态和实际结果，不把节点保留的旧媒体当成本次产物。若用户已确认整片制作方案，使用 canvas_generation_submit 执行其中尚缺的素材，它会等待原任务保存绑定后返回，然后继续声音、字幕、剪辑、渲染和工程导出。没有整片授权或素材已修改时，仍须提出新方案等待确认。保留成功结果；失败和结果未知时先查原任务，不重复购买。不要改动或发送我的未发送草稿。"
+const ContinuationMessage = "【自动继续】本次生成状态已更新。先读取画布核对原任务与实际结果，不把旧媒体当成本次产物。整片授权内的素材已由任务调度按就绪依赖推进；素材齐后直接完成声音、字幕、剪辑、成片和可编辑工程。成功绑定节点的durationMs是实际时长，顺序剪辑无需逐份审片，集中检查最终成片。失败或结果未知时检查并恢复原任务，不重复购买。新增或修改已确认的付费内容才重新确认。不要改动或发送我的未发送草稿。"
 
 type ContinuationInput struct {
 	CanvasID     string   `json:"canvasId"`
@@ -384,8 +384,9 @@ func (s *Service) ListContinuations(userID, canvasID, sessionID string) ([]Conti
 
 // Claim allocates the business turn once, in the same transaction as the receipt.
 // Retries forward this exact turn/request pair into the existing Durable owner.
-func (s *Service) ClaimContinuation(userID, id string) (*ContinuationView, error) {
+func (s *Service) ClaimContinuation(userID, id string, prepare func(*gorm.DB, *model.AssistantContinuation) (bool, error)) (*ContinuationView, error) {
 	var row model.AssistantContinuation
+	waiting := false
 	err := s.store.DB().Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&row, "id = ? AND user_id = ?", id, userID).Error; err != nil {
 			return err
@@ -395,6 +396,18 @@ func (s *Service) ClaimContinuation(userID, id string) (*ContinuationView, error
 		}
 		if row.State == "claimed" || row.State == "running" || row.State == "done" {
 			return nil
+		}
+		if prepare != nil {
+			ready, err := prepare(tx, &row)
+			if err != nil {
+				return err
+			}
+			if !ready {
+				// Commit newly admitted, already authorized business tasks without
+				// allocating a model turn. The same receipt is scanned again.
+				waiting = true
+				return nil
+			}
 		}
 		ids, selected, err := s.continuationResults(tx, &row)
 		if err != nil {
@@ -435,6 +448,9 @@ func (s *Service) ClaimContinuation(userID, id string) (*ContinuationView, error
 	})
 	if err != nil {
 		return nil, err
+	}
+	if waiting {
+		return nil, continuationError("waiting")
 	}
 	view := continuationView(row)
 	return &view, nil

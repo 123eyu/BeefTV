@@ -174,13 +174,8 @@ func (s *operationSession) admitProductionTargets(userID, canvasID string, plan 
 			// Validate the original admitted request against its hash before
 			// repairing a missing node receipt. Never re-resolve credentials or
 			// references merely to recover an already accepted task.
-			var original map[string]any
-			if err = json.Unmarshal([]byte(existing.InputJSON), &original); err != nil {
+			if err := validateProductionTask(existing, canvasID, target); err != nil {
 				return nil, err
-			}
-			originalMeta, _ := original["metadata"].(map[string]any)
-			if existing.ProjectID != canvasID || existing.Type != "canvas_"+target.Kind || existing.Prompt != target.Prompt || originalMeta["assistantProductionTargetHash"] != productionTargetHash(target) {
-				return nil, operations.Conflict("production_task_changed", "原制作任务与确认记录不一致，请先检查原任务", nil)
 			}
 			meta, _ := nodes[target.NodeID]["metadata"].(map[string]any)
 			if meta == nil {
@@ -251,6 +246,19 @@ func (s *operationSession) admitProductionTargets(userID, canvasID string, plan 
 func productionTargetHash(target operations.GenerationTarget) string {
 	encoded, _ := json.Marshal(target)
 	return fmt.Sprintf("%x", sha256.Sum256(encoded))
+}
+
+func validateProductionTask(task *model.Task, canvasID string, target operations.GenerationTarget) error {
+	var original struct {
+		Metadata map[string]any `json:"metadata"`
+	}
+	if err := json.Unmarshal([]byte(task.InputJSON), &original); err != nil {
+		return err
+	}
+	if task.ProjectID != canvasID || task.Type != "canvas_"+target.Kind || task.Prompt != target.Prompt || original.Metadata["assistantProductionTargetHash"] != productionTargetHash(target) {
+		return operations.Conflict("production_task_changed", "原制作任务与确认记录不一致，请先检查原任务", nil)
+	}
+	return nil
 }
 
 func (s *operationSession) productionTaskInput(userID string, target operations.GenerationTarget, nodes map[string]map[string]any) (map[string]any, error) {

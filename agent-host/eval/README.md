@@ -2,6 +2,10 @@
 
 本目录提供内置创作助手评测台（Evaluation Harness）。通过内存版 Go 业务权威模拟器（`sim-go.mjs`）与 7 个固定创作场景（`scenarios.mjs`），驱动真实的 `agent-host/server.mjs`（Durable SQLite 会话、操作桥、画布 CAS 与技能加载）执行回归评测。`fake` 模式使用写好工具调用的本地模型桩，零外部扣费；通过只证明宿主和模拟业务链路可运行，不能证明真实模型的创作质量或实际 Go 后端、桌面交互已验收。
 
+实际 Go 回归由 `backend/internal/handler/timeline_delivery_integration_test.go` 运行：官方 Durable、SQLite、FFmpeg、节点绑定与含素材的工程导出；还会在 Go 已接受渲染但宿主未收到回执时杀死 Node，再用原会话恢复，断言只有一个渲染任务。模型为本地脚本，不购买媒体。
+
+真实制作的阶段报告可用 `python3 agent-host/eval/report-production.py --profile <隔离桌面数据目录> --run <证据目录>` 生成；已有素材改稿加 `--existing-media`。证据目录须有 `full-lifecycle.json` 或 `receipt.json`，提供 `startedAt/canvasId/sessionId`。脚本只读实际数据库，输出 `performance.json`，区分主模型、压缩等辅助响应、素材等待、渲染、文件可用和最后说明；并发区间取并集。视频传输的开始/结束沿用任务日志记录，旧记录和内联媒体无法细拆的阶段保持未知。费用只读已核账回执的 `actualCNY`，不采用 SDK 的默认零单价；它不替代账单核对。
+
 ---
 
 ## 1. 目录结构

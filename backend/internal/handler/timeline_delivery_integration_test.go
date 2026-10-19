@@ -6,11 +6,13 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,6 +20,16 @@ import (
 )
 
 func TestDurableTimelineDeliveryUsesRealGoWorkerAndCanonicalSubtitleLines(t *testing.T) {
+	for _, crash := range []bool{false, true} {
+		name := "normal"
+		if crash {
+			name = "host_crash_after_render_admission"
+		}
+		t.Run(name, func(t *testing.T) { realTimelineDelivery(t, crash) })
+	}
+}
+
+func realTimelineDelivery(t *testing.T, crash bool) {
 	env := newAssistantTestEnv(t, nil)
 	owner, err := env.service.LocalWorkspaceOwner()
 	if err != nil {
@@ -73,14 +85,33 @@ func TestDurableTimelineDeliveryUsesRealGoWorkerAndCanonicalSubtitleLines(t *tes
 		defer cancel()
 		_ = env.service.StopWorker(ctx)
 	})
-	backend := httptest.NewServer(env.router)
+	renderAdmitted, release := make(chan struct{}), make(chan struct{})
+	var interrupted atomic.Bool
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if crash && r.Method == http.MethodPost && r.URL.Path == "/api/ops/canvas.timeline.render" && interrupted.CompareAndSwap(false, true) {
+			reply := httptest.NewRecorder()
+			env.router.ServeHTTP(reply, r)
+			if reply.Code == http.StatusOK {
+				close(renderAdmitted)
+				<-release // Host loses the accepted receipt, not the Go task.
+			}
+			for k, values := range reply.Header() {
+				w.Header()[k] = values
+			}
+			w.WriteHeader(reply.Code)
+			_, _ = w.Write(reply.Body.Bytes())
+			return
+		}
+		env.router.ServeHTTP(w, r)
+	}))
 	defer backend.Close()
 	root, err := filepath.Abs("../../..")
 	if err != nil {
 		t.Fatal(err)
 	}
-	config, _ := json.Marshal(map[string]any{"root": root, "directory": directory, "backend": backend.URL + "/api", "canvasId": env.canvasID,
-		"turnId": turnID, "hostToken": assistantTestHostToken, "revision": summary.Revision})
+	settings := map[string]any{"root": root, "directory": directory, "backend": backend.URL + "/api", "canvasId": env.canvasID,
+		"turnId": turnID, "hostToken": assistantTestHostToken, "revision": summary.Revision}
+	config, _ := json.Marshal(settings)
 	configPath := filepath.Join(directory, "config.json")
 	if err := os.WriteFile(configPath, config, 0600); err != nil {
 		t.Fatal(err)
@@ -88,6 +119,30 @@ func TestDurableTimelineDeliveryUsesRealGoWorkerAndCanonicalSubtitleLines(t *tes
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, "node", filepath.Join(root, "agent-host/test-support/timeline-delivery-go-probe.mjs"), configPath)
+	if crash {
+		var output bytes.Buffer
+		command.Stdout, command.Stderr = &output, &output
+		if err := command.Start(); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-renderAdmitted:
+		case <-ctx.Done():
+			_ = command.Process.Kill()
+			_ = command.Wait()
+			close(release)
+			t.Fatalf("render not admitted before restart: %s", output.String())
+		}
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		close(release)
+		settings["resume"] = true
+		config, _ = json.Marshal(settings)
+		if err := os.WriteFile(configPath, config, 0600); err != nil {
+			t.Fatal(err)
+		}
+		command = exec.CommandContext(ctx, "node", filepath.Join(root, "agent-host/test-support/timeline-delivery-go-probe.mjs"), configPath)
+	}
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("real delivery: %v\n%s", err, output)
 	}
@@ -119,12 +174,28 @@ func TestDurableTimelineDeliveryUsesRealGoWorkerAndCanonicalSubtitleLines(t *tes
 	}
 	var saved struct {
 		Timeline editing.Project `json:"timeline"`
+		Nodes    []struct {
+			ID       string `json:"id"`
+			Metadata struct {
+				TaskID     string `json:"taskId"`
+				StorageKey string `json:"storageKey"`
+			} `json:"metadata"`
+		} `json:"nodes"`
 	}
 	if err := json.Unmarshal(canvas, &saved); err != nil {
 		t.Fatal(err)
 	}
 	if saved.Timeline.Clips[1].Text != "First line\nSecond line" {
 		t.Fatalf("subtitle lines not canonical: %q", saved.Timeline.Clips[1].Text)
+	}
+	bound := false
+	for _, node := range saved.Nodes {
+		if node.ID == result.NodeID {
+			bound = node.Metadata.TaskID == result.TaskID && strings.HasPrefix(node.Metadata.StorageKey, "resource:")
+		}
+	}
+	if !bound {
+		t.Fatal("delivered node is not bound to the original render")
 	}
 	plan, err := editing.Compile(saved.Timeline, nil, editing.Options{})
 	if err != nil || !strings.Contains(plan.SubtitleSRT, "First line\nSecond line") {
@@ -144,19 +215,42 @@ func TestDurableTimelineDeliveryUsesRealGoWorkerAndCanonicalSubtitleLines(t *tes
 		t.Fatal(err)
 	}
 	projectJSON := false
+	mediaFiles := 0
 	for _, item := range z.File {
 		stream, err := item.Open()
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = io.Copy(io.Discard, stream)
+		var size int64
+		if item.Name == "projects.json" {
+			var document struct {
+				Projects []struct {
+					Project struct {
+						Timeline editing.Project `json:"timeline"`
+					} `json:"project"`
+				} `json:"projects"`
+			}
+			err = json.NewDecoder(stream).Decode(&document)
+			if err == nil && (len(document.Projects) != 1 || len(document.Projects[0].Project.Timeline.Clips) != 2 || document.Projects[0].Project.Timeline.Clips[1].Text != "First line\nSecond line") {
+				t.Fatal("export lost canonical editable subtitles")
+			}
+			if err == nil {
+				_, err = io.Copy(io.Discard, stream)
+			} // Read through ZIP CRC.
+		} else {
+			size, err = io.Copy(io.Discard, stream)
+			if size == 0 {
+				t.Fatal("empty embedded media", item.Name)
+			}
+			mediaFiles++
+		}
 		stream.Close()
 		if err != nil {
 			t.Fatal(err)
 		}
 		projectJSON = projectJSON || item.Name == "projects.json"
 	}
-	if !projectJSON || len(z.File) < 3 {
+	if !projectJSON || mediaFiles < 2 {
 		t.Fatal("editable project or embedded media missing")
 	}
 }

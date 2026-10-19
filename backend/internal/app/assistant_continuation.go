@@ -12,7 +12,7 @@ func (s *Service) ListAssistantContinuations(userID, canvasID, sessionID string)
 	return s.assistantTurnsOrInit().ListContinuations(userID, canvasID, sessionID)
 }
 func (s *Service) ClaimAssistantContinuation(userID, id string) (*assistantturns.ContinuationView, error) {
-	return s.assistantTurnsOrInit().ClaimContinuation(userID, id)
+	return s.assistantTurnsOrInit().ClaimContinuation(userID, id, s.prepareAssistantProduction)
 }
 func (s *Service) VerifyAssistantContinuation(userID, id, turnID, sessionID string) error {
 	return s.assistantTurnsOrInit().VerifyContinuation(userID, id, turnID, sessionID)

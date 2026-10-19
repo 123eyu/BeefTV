@@ -105,15 +105,15 @@ func TestContinuationStableClaimUsesRealOutputsAndSurvivesReopen(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			fx, row := continuationFixture(t, kind)
 			manifest := continuationManifest(t, fx, row, true, "source")
-			_, err := fx.turns.ClaimContinuation(fx.userID, row.ID)
+			_, err := fx.turns.ClaimContinuation(fx.userID, row.ID, nil)
 			contextReason(t, err, "continuation_waiting")
 			continuationTask(t, fx, row, manifest.Submissions[0], "task-one", "succeeded", true)
-			first, err := fx.turns.ClaimContinuation(fx.userID, row.ID)
+			first, err := fx.turns.ClaimContinuation(fx.userID, row.ID, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			reopened := fx.reopen(t)
-			second, err := reopened.turns.ClaimContinuation(fx.userID, row.ID)
+			second, err := reopened.turns.ClaimContinuation(fx.userID, row.ID, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -224,7 +224,7 @@ func TestContinuationNativeAndSplitWaitForCompleteImmutableSet(t *testing.T) {
 			} else {
 				continuationTask(t, fx, row, manifest.Submissions[0], "split-a", "succeeded", true)
 				continuationTask(t, fx, row, manifest.Submissions[1], "split-b", "running", false)
-				_, err := fx.turns.ClaimContinuation(fx.userID, row.ID)
+				_, err := fx.turns.ClaimContinuation(fx.userID, row.ID, nil)
 				contextReason(t, err, "continuation_waiting")
 				rows, err := fx.turns.ListContinuations(fx.userID, fx.canvasID, contextSession)
 				if err != nil || len(rows) != 1 || len(rows[0].TaskIDs) != 2 {
@@ -243,7 +243,7 @@ func TestContinuationNativeAndSplitWaitForCompleteImmutableSet(t *testing.T) {
 			if !native {
 				fx.db.Model(&model.Task{}).Where("id = ?", "split-b").Update("status", "failed")
 			}
-			_, err := fx.turns.ClaimContinuation(fx.userID, row.ID)
+			_, err := fx.turns.ClaimContinuation(fx.userID, row.ID, nil)
 			contextReason(t, err, "continuation_target_changed")
 		})
 	}
@@ -253,11 +253,11 @@ func TestContinuationDoesNotConfuseSuccessWithDeliveryOrUnrelatedMedia(t *testin
 	fx, row := continuationFixture(t, "image")
 	manifest := continuationManifest(t, fx, row, true, "source")
 	continuationTask(t, fx, row, manifest.Submissions[0], "task", "succeeded", false)
-	_, err := fx.turns.ClaimContinuation(fx.userID, row.ID)
+	_, err := fx.turns.ClaimContinuation(fx.userID, row.ID, nil)
 	contextReason(t, err, "continuation_waiting")
 	payload, _ := json.Marshal(localtask.CanonicalOutput{OutputIndex: 0, MediaType: "image", ResourceID: "actual", TargetBinding: &localtask.TargetBinding{NodeID: "source"}})
 	fx.db.Create(&model.Result{ID: "result", UserID: fx.userID, TaskID: "task", Kind: localtask.ResultKindGenerationOutput, Payload: string(payload)})
-	_, err = fx.turns.ClaimContinuation(fx.userID, row.ID)
+	_, err = fx.turns.ClaimContinuation(fx.userID, row.ID, nil)
 	contextReason(t, err, "continuation_target_changed")
 }
 
@@ -266,7 +266,7 @@ func TestContinuationPartialFailureAllowsOneDiagnosisWithoutResubmission(t *test
 	manifest := continuationManifest(t, fx, row, false, "out-a", "out-b")
 	continuationTask(t, fx, row, manifest.Submissions[0], "a", "succeeded", true)
 	continuationTask(t, fx, row, manifest.Submissions[1], "b", "failed", false)
-	claim, err := fx.turns.ClaimContinuation(fx.userID, row.ID)
+	claim, err := fx.turns.ClaimContinuation(fx.userID, row.ID, nil)
 	if err != nil || len(claim.SelectedNodeIDs) != 2 {
 		t.Fatalf("claim %+v %v", claim, err)
 	}
@@ -281,7 +281,7 @@ func TestContinuationNativeMultiOutputUsesActualDeliveryPrimaryBindingAndIndexed
 	fx, row := continuationFixture(t, "image")
 	manifest := continuationManifest(t, fx, row, true, "out-a", "out-b", "out-c")
 	continuationTask(t, fx, row, manifest.Submissions[0], "native", "succeeded", true)
-	claim, err := fx.turns.ClaimContinuation(fx.userID, row.ID)
+	claim, err := fx.turns.ClaimContinuation(fx.userID, row.ID, nil)
 	if err != nil || !reflect.DeepEqual(claim.SelectedNodeIDs, []string{"out-a", "out-b", "out-c"}) || !reflect.DeepEqual(claim.TaskIDs, []string{"native"}) {
 		t.Fatalf("native result %+v %v", claim, err)
 	}
@@ -294,7 +294,7 @@ func TestContinuationCancellationScopeAndOwnershipRemainDurable(t *testing.T) {
 			if action == "stop-claimed" {
 				manifest := continuationManifest(t, fx, row, true, "source")
 				continuationTask(t, fx, row, manifest.Submissions[0], "task", "failed", false)
-				if _, err := fx.turns.ClaimContinuation(fx.userID, row.ID); err != nil {
+				if _, err := fx.turns.ClaimContinuation(fx.userID, row.ID, nil); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -321,7 +321,7 @@ func TestContinuationCancellationScopeAndOwnershipRemainDurable(t *testing.T) {
 				t.Fatal("not cancelled", stored.State)
 			}
 			reopened := fx.reopen(t)
-			if _, err := reopened.turns.ClaimContinuation(fx.userID, row.ID); err == nil {
+			if _, err := reopened.turns.ClaimContinuation(fx.userID, row.ID, nil); err == nil {
 				t.Fatal("revived cancelled authorization")
 			}
 			if action == "stop-claimed" {
@@ -339,7 +339,7 @@ func TestContinuationCancellationScopeAndOwnershipRemainDurable(t *testing.T) {
 		})
 	}
 	fx, row := continuationFixture(t, "video")
-	if _, err := fx.turns.ClaimContinuation("foreign", row.ID); err == nil {
+	if _, err := fx.turns.ClaimContinuation("foreign", row.ID, nil); err == nil {
 		t.Fatal("foreign claim")
 	}
 	rows, err := fx.turns.ListContinuations(fx.userID, fx.canvasID, "another-session")

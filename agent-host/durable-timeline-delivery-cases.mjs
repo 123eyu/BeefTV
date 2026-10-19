@@ -13,7 +13,7 @@ const timeline = { version: 2, durationMs: 12000, tracks: [{ id: 'video', kind: 
   clips: [{ id: 'shot', kind: 'video', trackId: 'video', nodeId: 'source', startMs: 0, durationMs: 12000 }],
   output: { width: 480, height: 854, fps: 24 } };
 
-for (const scenario of ['delivery', 'lines', 'large-bind', 'foreign-edit', 'export-failure']) {
+for (const scenario of ['delivery', 'lines', 'large-bind', 'foreign-edit', 'export-failure', 'export-recovery']) {
   test(`one official tool performs delivery: ${scenario}`, { timeout: 30000 }, async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'beeftv-delivery-'));
     let revision = 5;
@@ -36,7 +36,7 @@ for (const scenario of ['delivery', 'lines', 'large-bind', 'foreign-edit', 'expo
         if (scenario === 'foreign-edit') revision++;
         return wrap({ result: { id: p.taskId, status: 'succeeded', outputs: [{ resourceId: 'film', materializedAssetId: 'film-asset' }] } });
       }
-      if (scenario === 'export-failure' && op === 'canvas.project.export') {
+      if (op === 'canvas.project.export' && (scenario === 'export-failure' || scenario === 'export-recovery' && posts.filter(post => post.op === op).length === 1)) {
         res.writeHead(503); return res.end(JSON.stringify({ code: 1, reason: 'disk_unavailable', msg: 'export unavailable' }));
       }
       if (p.expectedRevision !== undefined && p.expectedRevision !== revision) {
@@ -76,6 +76,9 @@ for (const scenario of ['delivery', 'lines', 'large-bind', 'foreign-edit', 'expo
           assert.ok(body.tools.some(tool => tool.function.name === 'canvas_timeline_deliver'));
           return { toolCalls: [{ id: 'deliver', name: 'canvas_timeline_deliver', args: { expectedRevision: 5, timeline: requestTimeline, title: '新成片' } }] };
         }
+        if (scenario === 'export-recovery' && responses === 2) {
+          return { toolCalls: [{ id: 'resume-export', name: 'canvas_project_export', args: { expectedRevision: 8 } }] };
+        }
         return { reply: '交付回执已读取。' };
       }, { buildTools: bridge.buildTools });
       const entry = await fixture.store.createSession('canvas');
@@ -83,9 +86,14 @@ for (const scenario of ['delivery', 'lines', 'large-bind', 'foreign-edit', 'expo
       const submission = await fixture.store.submit(entry, input);
       const result = await fixture.store.wait(entry, submission);
       assert.equal(result.error, null);
-      assert.equal(fixture.requests.length, 2, 'mechanical stages must not call the model');
+      const responseCount = scenario === 'export-recovery' ? 3 : 2;
+      assert.equal(fixture.requests.length, responseCount, 'only a failed business step may need a recovery response');
       const reply = fixture.payloads[1].messages.find(message => message.role === 'tool');
       const delivered = JSON.parse(typeof reply.content === 'string' ? reply.content : reply.content.map(part => part.text || '').join(''));
+      if (scenario === 'large-bind') {
+        assert.equal(delivered.receipts.bind.canvas, undefined);
+        assert.ok(JSON.stringify(delivered).length < 10000, 'nested delivery must not expose source prompts');
+      }
       if (scenario === 'delivery' || scenario === 'large-bind' || scenario === 'lines') {
         assert.equal(delivered.result.status, 'delivered');
         assert.equal(delivered.result.project.resourceId, 'project-zip');
@@ -101,11 +109,17 @@ for (const scenario of ['delivery', 'lines', 'large-bind', 'foreign-edit', 'expo
         if (scenario === 'foreign-edit') assert.equal(revision, 7, 'foreign edit must survive');
       }
       assert.equal(posts.filter(post => post.op === 'canvas.timeline.render').length, 1);
+      assert.equal(posts.filter(post => post.op === 'canvas.nodes.create').length, 1);
+      if (scenario === 'export-recovery') {
+        assert.equal(posts.filter(post => post.op === 'canvas.project.export').length, 2);
+        const resumed = fixture.payloads[2].messages.filter(message => message.role === 'tool').at(-1);
+        assert.equal(JSON.parse(typeof resumed.content === 'string' ? resumed.content : resumed.content.map(part => part.text || '').join('')).result.resourceId, 'project-zip');
+      }
       const before = posts.length;
       assert.equal((await fixture.store.submit(entry, input)).id, submission.id);
       await fixture.store.wait(entry, submission);
       assert.equal(posts.length, before, 'repeat observation must not rerun nested effects');
-      assert.equal(fixture.requests.length, 2);
+      assert.equal(fixture.requests.length, responseCount);
       if (scenario === 'lines') assert.deepEqual(requestTimeline.clips.at(-1).lines, ['第一行', '第二行'], 'composition must not mutate journaled arguments');
     } finally {
       await fixture?.close();

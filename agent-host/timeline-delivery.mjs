@@ -12,7 +12,7 @@ export function timelineDeliveryTool(tools) {
   };
   return {
     name: 'canvas_timeline_deliver', label: 'canvas.timeline.deliver', readOnly: false, replay: 'safe',
-    description: '免费完成时间线交付：可先保存timeline，再渲染、等待文件、创建空成片节点并绑定、导出可编辑工程，一次返回视频与工程回执。仅处理已有素材，不生成付费素材。expectedRevision必须是当前画布版本；省略timeline则使用已保存时间线。成功后用返回nodeId实际检查成片。失败保留已完成步骤，按failedStep和原任务继续，不重复渲染。',
+    description: '免费完成时间线交付：可先保存timeline，再渲染、等待文件、创建空成片节点并绑定、导出可编辑工程，一次返回视频与工程回执。仅处理已有素材，不生成付费素材。expectedRevision必须是当前画布版本；省略timeline则使用已保存时间线。成功后用返回nodeId实际检查成片。失败保留已完成步骤；不要再次调用本工具，使用failedStep对应原生工具及原任务/节点继续。',
     parameters: {
       type: 'object', additionalProperties: false,
       properties: {
