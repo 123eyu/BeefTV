@@ -3,6 +3,7 @@ package generation
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -163,6 +164,19 @@ func openVideoDownloadResponse(req *http.Request, limit int64) (*http.Response, 
 		var resultErr error = HTTPError{StatusCode: response.StatusCode, Status: response.Status, Body: string(raw), RequestID: observation.RequestID, RetryAfter: ParseRetryAfter(response.Header.Get("Retry-After"), time.Now())}
 		if !SameProviderOrigin(req.URL.String(), response.Request.URL.String()) && (response.StatusCode == 401 || response.StatusCode == 403) {
 			resultErr = videoBackupLinkExpiredError{cause: resultErr}
+		}
+		// OpenResponse returns before the shared downloader can classify HTTP
+		// errors. A rejected Range must not pin every later attempt to the same
+		// invalid offset. Keep bytes for authentication and temporary failures.
+		retry, _ := RetryableVideoPollError(context.WithoutCancel(req.Context()), resultErr)
+		if response.StatusCode != http.StatusUnauthorized && response.StatusCode != http.StatusForbidden && !retry {
+			if partial, _ := req.Context().Value(videoDownloadPartialContext{}).(string); partial != "" {
+				_ = os.Remove(partial)
+				_ = os.Remove(partial + ".json")
+			}
+			if response.StatusCode == http.StatusBadRequest && req.Header.Get("Range") != "" {
+				resultErr = fmt.Errorf("%w: %w", outbound.ErrResumeRestart, resultErr)
+			}
 		}
 		body.observation.Err = resultErr
 		_ = body.Close()

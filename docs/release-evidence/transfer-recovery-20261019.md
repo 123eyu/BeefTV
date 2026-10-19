@@ -34,6 +34,10 @@ proxy fault:  58e759a1ee4fa63c75a62286c121518abf59a9b0ab20332629ec115233ca1cd5
 - 视频下载另已在 Windows 真实代理中注入断流，保留 236927 字节后使用 HTTP 206 取回剩余 7981703 字节，总 8218630 字节，哈希一致。下载不触发重新生成。
 - 本地素材分片另以 51 MiB 合成文件验证：服务端已收到片段但客户端丢失确认后，重试查询 `received=[0,1]`，只补其余片，完整读回哈希一致。
 
+独立审查指出服务端以 HTTP 400 拒绝 Range 时，生成下载的自定义响应入口会绕过公共下载器的断点清理。现已补上清理和有界的完整重试；401/403、408/409/425/429 和 5xx 仍保留已有字节。`TestVideoDownloadRestartsAfterRangeRejected` 覆盖先断流、再拒绝 Range、最后完整下载成功的三次请求；`TestVideoDownloadKeepsPartialAfterAuthenticationAndTemporaryErrors` 覆盖鉴权与临时错误。
+
+`TestFailedVideoManualRecoveryResumesProviderDownloadCache` 使用真实失败任务详情的查询入口：先在上游下载缓存保留 1024 字节，手动查询原任务后以 `Range: bytes=1024-` 和同一强 ETag 取回余下内容，最终素材字节完全一致，生成请求为 0。上游取回和成功后的逐输出交付分属不同阶段；两者各自复用对应缓存，API 文档已明确。
+
 ## 来源按钮
 
 隔离 React 产品页面与本地 Go 后端、模拟视频供应商完成验证：第一条结果仍在下载时，来源可继续创建独立结果；取消重复生成确认不增加请求，确认后两条均取回并保存。此流程没有使用付费生成。
@@ -53,3 +57,5 @@ proxy fault:  58e759a1ee4fa63c75a62286c121518abf59a9b0ab20332629ec115233ca1cd5
 2026-10-19 经使用者明确授权并完成腾讯云身份验证后，管理控制台已保存这两条规则。使用当前服务凭据 GetBucketLifecycle 读回确认：仅有两个上述前缀，各为 Enabled 和 AbortIncompleteMultipartUpload.DaysAfterInitiation=1，无任何 Expiration/Transition。服务凭据本身仍无 PutBucketLifecycle 权限，未扩大权限。此记录确认配置保存，不声称已经观察到次日自动任务执行。
 
 发布顺序为先服务端、后桌面客户端。本次只提交 review，不合并、部署或发版。
+
+关联：[BeefTV PR #200](https://github.com/glanderness/BeefTV/pull/200)、[BeefAPI PR #622](https://github.com/Sunnyender-org/beefapi/pull/622)。
