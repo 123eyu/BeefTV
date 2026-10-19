@@ -19,14 +19,20 @@ export async function awaitBusinessTasks(data, { opsRequest, turnId, signal, can
     if (failed) return { ...data, result: { ...result, status: failed.status, tasks, taskError: failed.error || '素材任务未成功，保留原任务，不重复生成' } };
     const ready = tasks.every(task => task?.status === 'succeeded' && task.outputs?.length && task.outputs.every(output => output.resourceId && !output.materializationErrorCode));
     if (ready) {
+      let boundRevision;
       if (result.nodeIds?.length) {
         const response = await opsRequest('POST', '/ops/canvas.get', { params: { canvasId } }, signal, turnId);
-        const nodes = response.result?.canvas?.nodes || [];
+        const canvas = response.result?.canvas;
+        const nodes = canvas?.nodes || [];
         if (!result.nodeIds.every(id => nodes.some(n => n.id === id && ids.includes(n.metadata?.taskId) && n.metadata?.status === 'success' && n.metadata?.storageKey?.startsWith('resource:')))) {
           await delay(intervalMs, undefined, { signal }); continue;
         }
+        // Materialization commits after admission. Return the revision read
+        // with the bound nodes so the next edit does not start from admission.
+        if (Number.isSafeInteger(canvas?.revision) && canvas.revision > 0) boundRevision = canvas.revision;
       }
-      return { ...data, result: { ...result, status: 'succeeded', tasks } };
+      const revision = boundRevision === undefined ? {} : { revision: boundRevision };
+      return { ...data, ...revision, result: { ...result, ...revision, status: 'succeeded', tasks } };
     }
     await delay(intervalMs, undefined, { signal });
   } } catch (error) {
