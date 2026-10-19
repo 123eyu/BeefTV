@@ -5,9 +5,11 @@ import type { Asset } from "@/stores/use-asset-store";
 
 const blobs = new Map<string, Blob>();
 const unreadable = new Set<string>();
+const blockedReads = new Map<string, Promise<Blob | undefined>>();
 const restored = new Map<string, Blob>();
 const drawings = new Map<string, { version: 1; drawingId: string; snapshot: object; revision: number; updatedAt: string; shapeCount: number; pageCount: number }>();
 const getBlob = async (key: string) => {
+    if (blockedReads.has(key)) return blockedReads.get(key);
     if (unreadable.has(key)) throw new Error("fixture disk read error");
     return blobs.get(key);
 };
@@ -35,6 +37,7 @@ beforeEach(() => {
     blobs.clear();
     restored.clear();
     unreadable.clear();
+    blockedReads.clear();
     drawings.clear();
     saved.length = 0;
     acceptSave = true;
@@ -58,6 +61,22 @@ function project(keys: string[]): CanvasProject {
         })), edges: [],
     } as unknown as CanvasProject;
 }
+
+test("a stalled media read reports progress and cancellation prevents any later archive save", async () => {
+    let finishRead!: (blob: Blob) => void;
+    blockedReads.set("video:blocked", new Promise<Blob>((resolve) => { finishRead = resolve; }));
+    const controller = new AbortController();
+    const phases: string[] = [];
+    const exporting = exportCanvasProjects([project(["video:blocked"])], "取消测试", { signal: controller.signal, onProgress: (progress) => phases.push(progress.phase) });
+    expect(phases).toEqual(["media"]);
+    controller.abort();
+    await expect(exporting).rejects.toHaveProperty("name", "AbortError");
+    finishRead(new Blob(["late video"]));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(saved).toEqual([]);
+    expect(phases).toEqual(["media"]);
+});
 
 function mediaAsset(key?: string): Asset {
     return {

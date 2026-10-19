@@ -46,14 +46,25 @@ export async function saveOwnedOrBrowserBlob(fileName: string, blob: Blob): Prom
 
 /** Video exports use the resource upload path so large files never cross Wails as base64. */
 export async function saveOwnedOrBrowserVideoBlob(fileName: string, blob: Blob, expectedScope: CapturedUserScope): Promise<OwnedMediaSaveResult> {
+    return saveOwnedResourceBlob(fileName, blob, "video", expectedScope);
+}
+
+/** Large canvas archives use the owned file stream rather than the 32 MiB base64 bridge. */
+export async function saveOwnedOrBrowserArchiveBlob(fileName: string, blob: Blob, expectedScope: CapturedUserScope): Promise<OwnedMediaSaveResult> {
+    assertUserScope(expectedScope);
+    if (!isWailsNativeShell() || blob.size <= MAX_OWNED_ARTIFACT_BYTES) return saveOwnedOrBrowserBlob(fileName, blob);
+    return saveOwnedResourceBlob(fileName, blob, "file", expectedScope);
+}
+
+async function saveOwnedResourceBlob(fileName: string, blob: Blob, kind: "video" | "file", expectedScope: CapturedUserScope): Promise<OwnedMediaSaveResult> {
     assertUserScope(expectedScope);
     if (!isWailsNativeShell()) return saveOwnedOrBrowserBlob(fileName, blob);
     if (!window.go?.main?.DesktopApp?.SaveOwnedMedia) throw new Error("当前应用还不能把文件存到所选位置");
-    const name = sanitizeDownloadFileName(fileName, "未命名导出.mp4");
-    const resource = await uploadResourceFile(blob, "video", {
+    const name = sanitizeDownloadFileName(fileName, kind === "video" ? "未命名导出.mp4" : "未命名导出.zip");
+    const resource = await uploadResourceFile(blob, kind, {
         fileName: name,
         expectedScope,
-        idempotencyKey: `video-export:${nanoid()}`,
+        idempotencyKey: `${kind === "video" ? "video" : "archive"}-export:${nanoid()}`,
     });
     assertUserScope(expectedScope);
     return downloadOwnedOrBrowserMedia({ fileName: name, resourceId: resource.id });

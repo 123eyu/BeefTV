@@ -15,6 +15,7 @@ import { useAssetStore } from "@/stores/use-asset-store";
 import { publishGenerationDeliveryProgress } from "@/stores/use-generation-delivery-progress";
 import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
+import { recordCanvasBindingDiagnostic } from "@/services/diagnostics/canvas-binding-diagnostics";
 
 function throwIfAborted(signal?: AbortSignal) {
     if (signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
@@ -333,6 +334,7 @@ export async function bindBackendCanvasGenerationResult(input: {
     let healedOnBind = false;
     for (;;) {
         try {
+            recordCanvasBindingDiagnostic({ phase: "requested", canvasId: capturedCanvasId, nodeId: input.nodeId, outputIndex, task, project: useCanvasStore.getState().openProject(capturedCanvasId) ?? undefined });
             response = await bindOutput({
                 operationId,
                 canvasId: capturedCanvasId,
@@ -344,6 +346,7 @@ export async function bindBackendCanvasGenerationResult(input: {
             });
             break;
         } catch (error) {
+            if (userScopeMatches(capturedScope, liveScope())) recordCanvasBindingDiagnostic({ phase: "refused", canvasId: capturedCanvasId, nodeId: input.nodeId, outputIndex, task, error, project: useCanvasStore.getState().openProject(capturedCanvasId) ?? undefined });
             const targetProject = useCanvasStore.getState().projects.find((project) => project.id === capturedCanvasId) ?? live;
             if (!healedOnBind && targetProject && isCanvasMediaAssetGuardError(error)) {
                 healedOnBind = true;
@@ -405,6 +408,7 @@ export async function bindBackendCanvasGenerationResult(input: {
         input.nodesRef.current = adopted.nodes;
         input.setNodes(adopted.nodes);
     }
+    recordCanvasBindingDiagnostic({ phase: "confirmed", canvasId: capturedCanvasId, nodeId: input.nodeId, outputIndex, task, project: adopted });
 }
 
 function assertBindDispatchScope(expected: CapturedUserScope, live: () => CapturedUserScope) {

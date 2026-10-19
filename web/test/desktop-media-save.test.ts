@@ -5,7 +5,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import { ownedResourceIdFromMediaRef } from "@/services/api/resources";
 import { apiClient, configureApiRuntime } from "@/services/api/request";
-import { downloadOwnedOrBrowserMedia, isWailsNativeShell, reportOwnedMediaSave, saveOwnedOrBrowserBlob, saveOwnedOrBrowserVideoBlob } from "@/services/desktop-media-save";
+import { downloadOwnedOrBrowserMedia, isWailsNativeShell, reportOwnedMediaSave, saveOwnedOrBrowserArchiveBlob, saveOwnedOrBrowserBlob, saveOwnedOrBrowserVideoBlob } from "@/services/desktop-media-save";
 import { sanitizeDownloadFileName } from "@/lib/canvas/canvas-media-download";
 import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
 import { captureUserScope, UserScopeAbandonedError } from "@/lib/user-scope-guard";
@@ -96,7 +96,7 @@ describe("native media save", () => {
         expect(helper).toContain("bytesToBase64");
         expect(helper).not.toContain("Array.from(bytes)");
         expect(helper).toContain("32 * 1024 * 1024");
-        expect(readFileSync(resolve(import.meta.dir, "../src/lib/canvas/canvas-export.ts"), "utf8")).toContain("saveOwnedOrBrowserBlob");
+        expect(readFileSync(resolve(import.meta.dir, "../src/lib/canvas/canvas-export.ts"), "utf8")).toContain("saveOwnedOrBrowserArchiveBlob");
         expect(readFileSync(resolve(import.meta.dir, "../src/pages/assets/asset-transfer.ts"), "utf8")).toContain("saveOwnedOrBrowserBlob");
         const timeline = readFileSync(resolve(import.meta.dir, "../src/components/canvas/canvas-timeline-dialog.tsx"), "utf8");
         expect(timeline).toContain("saveOwnedOrBrowserVideoBlob");
@@ -179,6 +179,21 @@ function nativeVideoSave(save: (name: string, id: string) => Promise<boolean> = 
 }
 
 describe("native video export resource save", () => {
+    test("33 MiB ZIP saves through an owned file without crossing the base64 bridge", async () => {
+        const saved: Array<[string, string]> = [];
+        const expected = nativeVideoSave(async (name, id) => { saved.push([name, id]); return true; });
+        const blob = new Blob([new Uint8Array(33 * 1024 * 1024)], { type: "application/zip" });
+        apiClient.defaults.adapter = async (config) => {
+            expect(config.url).toBe("/resources");
+            expect(config.data).toBeInstanceOf(FormData);
+            expect(config.data.get("kind")).toBe("file");
+            expect((config.data.get("file") as File).size).toBe(blob.size);
+            expect(config.headers.get("X-Idempotency-Key")).toMatch(/^archive-export:/);
+            return { data: { code: 0, data: { resource: { id: "owned-zip", status: "ready" } } }, status: 200, statusText: "OK", headers: {}, config };
+        };
+        expect(await saveOwnedOrBrowserArchiveBlob("画布.zip", blob, expected)).toBe("saved");
+        expect(saved).toEqual([["画布.zip", "owned-zip"]]);
+    });
     test("33 MiB uploads real multipart Blob and saves the returned owned resource", async () => {
         const saved: Array<[string, string]> = [];
         const expected = nativeVideoSave(async (name, id) => { saved.push([name, id]); return true; });

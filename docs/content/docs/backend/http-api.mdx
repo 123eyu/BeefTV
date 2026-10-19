@@ -182,6 +182,10 @@ Windows 的运行地址描述文件位于用户目录的 `.beeftv/runtime/`，�
 
 诊断包的 `client/events.jsonl` 保留业务错误 `reason`；`backend/tasks.jsonl` 导出经过脱敏的 `failureDiagnostics`，包括已采集的失败阶段、请求 ID、上游任务 ID、执行结果和错误摘要。历史记录缺失的信息不会补造。
 
+诊断包清单版本为 2。任务摘要另含原目标节点及稳定提交编号；`backend/canvas-bindings.jsonl` 按原目标读取当前用户的画布，保留采样时间、版本号、节点是否存在、节点当前任务与提交编号，以及是否已有媒体。画布已删除、无权读取、读取失败和节点缺失分别标明，不把未知状态补为“没有”。这些是导出时的状态，不能当作故障发生时的画布历史。
+
+结果绑定被 `node_task_mismatch` 拒绝时，响应 `details.canvasBinding` 返回同一事务里读取到的节点身份和状态标记。前端在 `generation_bind_requested/refused/confirmed` 事件中保留原任务、目标及该证据；不导出节点标题、提示词、正文、媒体地址或密钥。前端事件仍为当前会话内的有界记录，刷新前未导出的事件无法追溯。
+
 章节分镜替换与角色候选写入可携带 `sourceTaskId`。服务端核对原任务、用户、项目、章节和生成类型，并将结果写入与稳定操作回执放在同一事务中。同一任务和内容重放返回原回执，不覆盖之后的人工编辑；更换内容返回 `409 operation_id_reused_with_different_payload`。分镜仍须提交批准时的 `expectedRevision` 与 `expectedShotIds`；冲突为 `409 project_revision_conflict` 或 `project_unit_shots_changed`。
 
 `GET /projects/:id/chapter-apply-receipts?taskIds=` 查询最多 100 个任务的已提交回执。页面不以更新时间猜测是否写入；没有回执的分镜结果保留待核对，确认后可直接写入，不重新生成。
