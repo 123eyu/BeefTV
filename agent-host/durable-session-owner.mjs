@@ -443,7 +443,8 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
         try {
           const proposalCount = entry.turn.proposals.length;
           // Bridge tools return {content}; Durable's ToolExecutionResult names it output.
-          const { content, ...result } = await runWithBudget(entry, () => tool.execute(String(api.taskId), args, context.abortSignal));
+          const { content, ...result } = await runWithBudget(entry, () => tool.execute(String(api.taskId), args, context.abortSignal,
+            { executeTool: (name, params, options) => api.executeTool(name, params, context, options) }));
           entry.generation.toolCalledSinceYield = true;
           if (!tool.readOnly && typeof readCanvas === 'function') {
             await refreshStudioDigest(entry, entry.turn.turnId, { selectedNodeIds: entry.input?.selectedNodeIds || [], computeDiff: false, signal: context.abortSignal });

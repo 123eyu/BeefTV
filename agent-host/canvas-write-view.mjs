@@ -4,6 +4,18 @@ const MEDIA_KINDS = new Set(['image', 'video', 'audio']);
 // Only the model-facing receipt is reduced. Business receipts and turn effects
 // retain the original node; omitted fields remain accessible through canvas_get.
 export function canvasWriteView(data, operation, params = {}) {
+  if (operation === 'canvas.task.bind' && typeof data?.result?.bindingStatus === 'string') {
+    // Go retains the full document for replay and undo. Model/nested callers
+    // only need this binding receipt, not every source prompt on the canvas.
+    const result = {};
+    for (const key of ['canvasId', 'revision', 'nodeId', 'taskId', 'outputIndex', 'effectKey', 'mediaType',
+      'bindingStatus', 'applied', 'alreadyBound', 'assetId', 'resourceId', 'storageKey']) {
+      if (data.result[key] !== undefined) result[key] = data.result[key];
+    }
+    result.writeView = { complete: false, omittedNodeFields: true,
+      readView: { nodeId: result.nodeId, expectedRevision: result.revision } };
+    return { ...data, result };
+  }
   if (!NODE_WRITES.has(operation)) return data;
   const result = data?.result, source = result?.node;
   if (!source || typeof source !== 'object' || Array.isArray(source)) return data;
@@ -29,7 +41,7 @@ export function canvasWriteView(data, operation, params = {}) {
 }
 
 export function canvasWriteViewDescription(operation) {
-  return NODE_WRITES.has(operation)
+  return NODE_WRITES.has(operation) || operation === 'canvas.task.bind'
     ? '。写入回执只含节点身份及本次修改字段的实际值；writeView 标明省略的节点数据。长字段的 preview 不是完整原文，需要时把 readView 传给 canvas_get 读取。'
     : '';
 }

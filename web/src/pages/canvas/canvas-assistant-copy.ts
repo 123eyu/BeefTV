@@ -227,6 +227,7 @@ const ASSISTANT_TOOL_ACTIVITY: Record<string, [string, string]> = {
     canvas_script_row_update: ["正在更新分镜。", "已更新分镜"],
     canvas_timeline_update: ["正在安排剪辑时间线。", "已保存剪辑时间线"],
     canvas_timeline_render: ["正在提交成片合成。", "已提交成片合成"],
+    canvas_timeline_deliver: ["正在合成视频并保存可编辑工程。", "已完成交付操作"],
     canvas_generation_propose: ["正在准备生成方案。", "已准备生成方案"],
 };
 

@@ -10,6 +10,7 @@ import { mediaToolResult, mediaFacts, mediaEvidence } from './media-content.mjs'
 import { canvasReadView, CANVAS_READ_VIEW_SCHEMA } from './canvas-read-view.mjs';
 import { canvasWriteView, canvasWriteViewDescription } from './canvas-write-view.mjs';
 import { awaitBusinessTasks } from './await-business-tasks.mjs';
+import { timelineDeliveryTool } from './timeline-delivery.mjs';
 
 const CANVAS_NODE_UPDATE = 'canvas.node.update';
 
@@ -92,7 +93,7 @@ export function createOperationBridge({
 
   function buildTools(canvasId, log, generation, turn, identityPrefix) {
     const mode = generation.permissionMode || 'canvas';
-    return [...descriptors.entries()].filter(([,d]) => Array.isArray(d.assistantModes) && d.assistantModes.includes(mode)).map(([toolName, descriptor]) => ({
+    const tools = [...descriptors.entries()].filter(([,d]) => Array.isArray(d.assistantModes) && d.assistantModes.includes(mode)).map(([toolName, descriptor]) => ({
       name: toolName,
       label: descriptor.id,
       readOnly: descriptor.readOnly === true,
@@ -208,6 +209,8 @@ export function createOperationBridge({
         }
       },
     }));
+    const delivery = timelineDeliveryTool(tools);
+    return delivery ? [...tools, delivery] : tools;
   }
 
   return { descriptors, opsRequest, loadDescriptors, buildTools };
