@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"infinite-canvas/backend/internal/canvas"
 	"infinite-canvas/backend/internal/model"
 
 	"gorm.io/gorm"
@@ -142,13 +143,7 @@ func (s *Service) collectCanvasBindings(userID string, tasks []model.Task, colle
 					record.NodeTaskID = sanitizeIdentifier(text(metadata, "taskId"))
 					record.NodeClientOperationID = sanitizeOperationID(text(metadata, "taskClientOperationId"))
 					record.NodeStatus = sanitizeIdentifier(text(metadata, "status"))
-					for _, fields := range []map[string]any{node, metadata} {
-						for _, key := range []string{"content", "storageKey", "assetId", "resourceId", "url", "dataUrl"} {
-							if value := fields[key]; value != nil && value != "" {
-								media = true
-							}
-						}
-					}
+					media = canvas.NodeHasMedia(node)
 					record.NodeHasMedia = &media
 					break
 				}

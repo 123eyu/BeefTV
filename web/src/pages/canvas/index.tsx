@@ -323,9 +323,9 @@ export default function CanvasPage() {
             />
 
             <div className="collection-content">
-                {selectedIds.length ? (
+                {selectedIds.length || exportProgress ? (
                     <div className="collection-selection-bar">
-                        <strong className="mr-auto font-medium">已选 {selectedIds.length} 个项目</strong>
+                        <strong className="mr-auto font-medium">{exportProgress ? "正在导出画布" : `已选 ${selectedIds.length} 个项目`}</strong>
                         {remoteMode ? <>
                             <Button
                                 size="small"
@@ -357,7 +357,7 @@ export default function CanvasPage() {
                             <span className="text-sm text-foreground/65" role="status" aria-live="polite">{canvasExportProgressLabel(exportProgress)}</span>
                             <Button size="small" disabled={exportProgress.phase === "saving"} onClick={() => exportController.current?.abort()}>取消导出</Button>
                         </> : null}
-                        <Button size="small" danger disabled={!hydrated} onClick={deleteSelectedProjects}>
+                        <Button size="small" danger disabled={!hydrated || Boolean(exportProgress)} onClick={deleteSelectedProjects}>
                             删除
                         </Button>
                     </div>

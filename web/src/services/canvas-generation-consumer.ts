@@ -332,9 +332,9 @@ export async function bindBackendCanvasGenerationResult(input: {
     const operationId = attachNodeEffectKey(task.id, input.nodeId, outputIndex);
     let response: Awaited<ReturnType<typeof bindCanvasTaskOutput>>;
     let healedOnBind = false;
+    recordCanvasBindingDiagnostic({ phase: "requested", canvasId: capturedCanvasId, nodeId: input.nodeId, outputIndex, task, project: useCanvasStore.getState().openProject(capturedCanvasId) ?? undefined });
     for (;;) {
         try {
-            recordCanvasBindingDiagnostic({ phase: "requested", canvasId: capturedCanvasId, nodeId: input.nodeId, outputIndex, task, project: useCanvasStore.getState().openProject(capturedCanvasId) ?? undefined });
             response = await bindOutput({
                 operationId,
                 canvasId: capturedCanvasId,
@@ -346,7 +346,6 @@ export async function bindBackendCanvasGenerationResult(input: {
             });
             break;
         } catch (error) {
-            if (userScopeMatches(capturedScope, liveScope())) recordCanvasBindingDiagnostic({ phase: "refused", canvasId: capturedCanvasId, nodeId: input.nodeId, outputIndex, task, error, project: useCanvasStore.getState().openProject(capturedCanvasId) ?? undefined });
             const targetProject = useCanvasStore.getState().projects.find((project) => project.id === capturedCanvasId) ?? live;
             if (!healedOnBind && targetProject && isCanvasMediaAssetGuardError(error)) {
                 healedOnBind = true;
@@ -391,7 +390,10 @@ export async function bindBackendCanvasGenerationResult(input: {
             }
             // 交付仍在进行时 bind 会以 output_not_ready/resource_not_ready 拒绝；
             // 同一个 operationId 幂等，回到等待再重试，不把在途状态报成画布冲突。
-            if (!isOutputNotReadyError(error)) throw error;
+            if (!isOutputNotReadyError(error)) {
+                if (userScopeMatches(capturedScope, liveScope()) && !(error instanceof Error && error.name === "AbortError")) recordCanvasBindingDiagnostic({ phase: "refused", canvasId: capturedCanvasId, nodeId: input.nodeId, outputIndex, task, error, project: useCanvasStore.getState().openProject(capturedCanvasId) ?? undefined });
+                throw error;
+            }
             assertBindDispatchScope(capturedScope, liveScope);
             task = await waitForMaterialization(task, true);
             assertBindDispatchScope(capturedScope, liveScope);

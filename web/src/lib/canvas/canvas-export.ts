@@ -1,5 +1,5 @@
 import { confinedArchivePath, createZip, readZip } from "@/lib/zip";
-import { saveOwnedOrBrowserArchiveBlob, type OwnedMediaSaveResult } from "@/services/desktop-media-save";
+import { saveOwnedNativeArchiveFiles, saveOwnedOrBrowserBlob, type OwnedMediaSaveResult } from "@/services/desktop-media-save";
 import { getMediaBlob } from "@/services/file-storage";
 import { getImageBlob } from "@/services/image-storage";
 import type { CanvasExportAsset, CanvasExportFile, CanvasProjectExportItem } from "@/types/canvas-export";
@@ -12,6 +12,7 @@ import { archiveFileExtension, assertUniqueArchiveNames, ExportIntegrityError, t
 import { assertUserScope, captureUserScope } from "@/lib/user-scope-guard";
 import { http } from "@/services/api/request";
 import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
+import { resourceIdFromStorageKey } from "@/services/api/resources";
 
 export const ARCHIVE_STORAGE_KEY_PATTERN = /^(image|video|audio|file|resource|model|video-reference|audio-reference):/;
 
@@ -35,17 +36,21 @@ export function canvasExportProgressLabel(progress: CanvasExportProgress) {
 
 export async function exportCanvasProjects(projects: CanvasProject[], fileName = "画布", options: { includeLocalDrawings?: boolean; folders?: CanvasFolder[]; signal?: AbortSignal; onProgress?: (progress: CanvasExportProgress) => void } = {}): Promise<OwnedMediaSaveResult> {
     const scope = captureUserScope();
+    const recordedPhases = new Set<CanvasExportProgress["phase"]>();
     const check = () => { options.signal?.throwIfAborted(); assertUserScope(scope); };
     const step = <T,>(promise: Promise<T>) => awaitCanvasExportStep(promise, options.signal);
     const progress = (value: CanvasExportProgress) => {
         check();
         options.onProgress?.(value);
-        recordDiagnosticEvent({ category: "action", level: "info", code: "canvas_export_" + value.phase, message: `画布导出 ${value.phase} ${value.completed ?? 0}/${value.total ?? 0}`, canvasId: projects.length === 1 ? projects[0]?.id : undefined });
+        if (!recordedPhases.has(value.phase)) {
+            recordedPhases.add(value.phase);
+            recordDiagnosticEvent({ category: "action", level: "info", code: "canvas_export_" + value.phase, message: `画布导出 ${value.phase}`, canvasId: projects.length === 1 ? projects[0]?.id : undefined });
+        }
     };
     let completed = 0;
     const total = projects.reduce((count, project) => count + collectStorageKeys(project).length, 0);
     progress({ phase: "media", completed, total });
-    const zipFiles: { name: string; data: BlobPart }[] = [];
+    const zipFiles: { name: string; data: BlobPart; resourceId?: string }[] = [];
     const missingFiles: MissingExportFile[] = [];
     const exportedProjects = await Promise.all(
         projects.map(async (project) => {
@@ -69,7 +74,7 @@ export async function exportCanvasProjects(projects: CanvasProject[], fileName =
                     }
                     const path = `projects/${encodeURIComponent(project.id)}/files/${encodeURIComponent(storageKey)}.${archiveFileExtension(blob.type, storageKey.startsWith("image:") ? "png" : "bin")}`;
                     files.push({ storageKey, path, mimeType: blob.type || "application/octet-stream", bytes: blob.size });
-                    zipFiles.push({ name: path, data: blob });
+                    zipFiles.push({ name: path, data: blob, resourceId: resourceIdFromStorageKey(storageKey) || undefined });
                 }),
             );
             check();
@@ -122,7 +127,7 @@ export async function exportCanvasProjects(projects: CanvasProject[], fileName =
         assertUserScope(scope);
         if (cover && !cover.size) throw new ExportIntegrityError([{ owner: folder.name, reference: "文件夹封面" }]);
         const coverPath = cover ? `folders/${encodeURIComponent(folder.id)}/cover.${archiveFileExtension(cover.type, "png")}` : undefined;
-        if (cover && coverPath) zipFiles.push({ name: coverPath, data: cover });
+        if (cover && coverPath) zipFiles.push({ name: coverPath, data: cover, resourceId: folder.coverResourceId });
         folders.push({ ...folder, coverResourceId: undefined, coverDataUrl: undefined, coverPath, coverMimeType: cover?.type || undefined });
     }
     if (missingFiles.length) throw new ExportIntegrityError(missingFiles);
@@ -138,10 +143,13 @@ export async function exportCanvasProjects(projects: CanvasProject[], fileName =
 
     const data: CanvasExportFile = { app: "infinite-canvas", version: 4, exportedAt: new Date().toISOString(), ...(folders?.length ? { folders } : {}), projects: exportedProjects };
     progress({ phase: "packing" });
-    const zip = await step(createZip([{ name: "projects.json", data: JSON.stringify(data, null, 2) }, ...zipFiles]));
+    const archiveFiles = [{ name: "projects.json", data: JSON.stringify(data, null, 2) }, ...zipFiles];
+    const saved = await saveOwnedNativeArchiveFiles(`${safeFileName(fileName)}.zip`, archiveFiles, scope, { signal: options.signal, onSaving: () => progress({ phase: "saving" }) });
+    if (saved !== undefined) return saved;
+    const zip = await step(createZip(archiveFiles));
     check();
     progress({ phase: "saving" });
-    return saveOwnedOrBrowserArchiveBlob(`${safeFileName(fileName)}.zip`, zip, scope);
+    return saveOwnedOrBrowserBlob(`${safeFileName(fileName)}.zip`, zip);
 }
 
 // A cache/IndexedDB read may never settle. Cancellation stops this export;

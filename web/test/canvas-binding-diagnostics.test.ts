@@ -26,8 +26,12 @@ test("binding refusal retains the actual server task instead of borrowing the la
 
 test("missing node is distinguishable from unobserved node and bindings clear with user scope", () => {
     recordCanvasBindingDiagnostic({ phase: "requested", canvasId: "canvas-1", nodeId: "deleted", outputIndex: 0, task: { id: "paid-video" } as GenerationTask });
-    expect(getClientDiagnosticEvents()[0].canvasBinding).toMatchObject({ source: "client", nodeId: "deleted", nodePresent: false });
+    expect(getClientDiagnosticEvents()[0].canvasBinding?.nodePresent).toBeUndefined();
     expect(getClientDiagnosticEvents()[0].canvasBinding?.nodeHasMedia).toBeUndefined();
+    recordCanvasBindingDiagnostic({ phase: "requested", canvasId: "canvas-1", nodeId: "deleted", outputIndex: 0, task: { id: "paid-video" } as GenerationTask, project: { nodes: [] } as any });
+    expect(getClientDiagnosticEvents()[1].canvasBinding?.nodePresent).toBe(false);
+    recordCanvasBindingDiagnostic({ phase: "requested", canvasId: "canvas-1", nodeId: "text", outputIndex: 0, task: { id: "paid-video" } as GenerationTask, project: { nodes: [{id:"text",type:"text",metadata:{content:"private prompt"}}] } as any });
+    expect(getClientDiagnosticEvents()[2].canvasBinding?.nodeHasMedia).toBe(false);
     setDiagnosticUserScope("other-user");
     expect(getClientDiagnosticEvents()).toEqual([]);
 });

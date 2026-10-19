@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import { unzipSync } from "fflate";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import type { Asset } from "@/stores/use-asset-store";
+import { getClientDiagnosticEvents, recordDiagnosticEvent, setDiagnosticUserScope } from "@/services/diagnostics/client-diagnostics";
 
 const blobs = new Map<string, Blob>();
 const unreadable = new Set<string>();
@@ -76,6 +77,17 @@ test("a stalled media read reports progress and cancellation prevents any later 
     await Promise.resolve();
     expect(saved).toEqual([]);
     expect(phases).toEqual(["media"]);
+});
+
+test("per-file export progress cannot evict a real bind failure", async () => {
+    setDiagnosticUserScope("export-retention");
+    recordDiagnosticEvent({ category: "task", level: "error", code: "retained-bind-failure", message: "绑定失败" });
+    const keys = Array.from({ length: 600 }, (_, index) => `video:retention-${index}`);
+    for (const key of keys) blobs.set(key, new Blob(["x"]));
+    await exportCanvasProjects([project(keys)]);
+    const events = getClientDiagnosticEvents();
+    expect(events.some(event => event.code === "retained-bind-failure")).toBe(true);
+    expect(events.filter(event => event.code?.startsWith("canvas_export_")).length).toBeLessThanOrEqual(4);
 });
 
 function mediaAsset(key?: string): Asset {

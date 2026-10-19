@@ -25,8 +25,13 @@ export function recordCanvasBindingDiagnostic(input: {
             source: "client", nodeId: input.nodeId, outputIndex: input.outputIndex,
             clientOperationId: input.task.clientOperationId, nodeTaskId: metadata?.taskId,
             nodeClientOperationId: metadata?.taskClientOperationId, nodeType: node?.type,
-            nodeStatus: metadata?.status, revision: input.project?.revision, nodePresent: Boolean(node),
-            nodeHasMedia: node ? [node, metadata].some((fields) => fields && ["content", "storageKey", "assetId", "resourceId", "url", "dataUrl"].some((key) => Boolean((fields as Record<string, unknown>)[key]))) : undefined,
+            nodeStatus: metadata?.status, revision: input.project?.revision, nodePresent: input.project ? Boolean(node) : undefined,
+            nodeHasMedia: node ? [node, metadata].some((fields) => {
+                if (!fields) return false;
+                const values = fields as Record<string, unknown>;
+                return ["storageKey", "assetId", "resourceId"].some((key) => Boolean(values[key]))
+                    || ["content", "url", "dataUrl"].some((key) => typeof values[key] === "string" && /^(https?:|data:|blob:|resource:|\/api\/resources\/)/i.test(values[key] as string));
+            }) : undefined,
         },
     });
 }

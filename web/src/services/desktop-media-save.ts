@@ -46,28 +46,45 @@ export async function saveOwnedOrBrowserBlob(fileName: string, blob: Blob): Prom
 
 /** Video exports use the resource upload path so large files never cross Wails as base64. */
 export async function saveOwnedOrBrowserVideoBlob(fileName: string, blob: Blob, expectedScope: CapturedUserScope): Promise<OwnedMediaSaveResult> {
-    return saveOwnedResourceBlob(fileName, blob, "video", expectedScope);
-}
-
-/** Large canvas archives use the owned file stream rather than the 32 MiB base64 bridge. */
-export async function saveOwnedOrBrowserArchiveBlob(fileName: string, blob: Blob, expectedScope: CapturedUserScope): Promise<OwnedMediaSaveResult> {
-    assertUserScope(expectedScope);
-    if (!isWailsNativeShell() || blob.size <= MAX_OWNED_ARTIFACT_BYTES) return saveOwnedOrBrowserBlob(fileName, blob);
-    return saveOwnedResourceBlob(fileName, blob, "file", expectedScope);
-}
-
-async function saveOwnedResourceBlob(fileName: string, blob: Blob, kind: "video" | "file", expectedScope: CapturedUserScope): Promise<OwnedMediaSaveResult> {
     assertUserScope(expectedScope);
     if (!isWailsNativeShell()) return saveOwnedOrBrowserBlob(fileName, blob);
     if (!window.go?.main?.DesktopApp?.SaveOwnedMedia) throw new Error("当前应用还不能把文件存到所选位置");
-    const name = sanitizeDownloadFileName(fileName, kind === "video" ? "未命名导出.mp4" : "未命名导出.zip");
-    const resource = await uploadResourceFile(blob, kind, {
+    const name = sanitizeDownloadFileName(fileName, "未命名导出.mp4");
+    const resource = await uploadResourceFile(blob, "video", {
         fileName: name,
         expectedScope,
-        idempotencyKey: `${kind === "video" ? "video" : "archive"}-export:${nanoid()}`,
+        idempotencyKey: `video-export:${nanoid()}`,
     });
     assertUserScope(expectedScope);
     return downloadOwnedOrBrowserMedia({ fileName: name, resourceId: resource.id });
+}
+
+export async function saveOwnedNativeArchiveFiles(
+    fileName: string,
+    files: Array<{ name: string; data: BlobPart; resourceId?: string }>,
+    expected: CapturedUserScope,
+    options: { signal?: AbortSignal; onSaving?: () => void } = {},
+): Promise<OwnedMediaSaveResult | undefined> {
+    const save = typeof window === "undefined" ? undefined : window.go?.main?.DesktopApp?.SaveOwnedArchive;
+    if (!save) return undefined;
+    const entries: Array<{ name: string; resourceId?: string; data?: string }> = [];
+    let inlineBytes = 0;
+    for (const file of files) {
+        options.signal?.throwIfAborted();
+        assertUserScope(expected);
+        if (file.resourceId) {
+            entries.push({ name: file.name, resourceId: file.resourceId });
+        } else {
+            const blob = new Blob([file.data]);
+            inlineBytes += blob.size;
+            if (inlineBytes > MAX_OWNED_ARTIFACT_BYTES) throw new Error("本地附加文件过大，请先保存素材后再导出");
+            entries.push({ name: file.name, data: bytesToBase64(new Uint8Array(await blob.arrayBuffer())) });
+        }
+    }
+    options.signal?.throwIfAborted();
+    assertUserScope(expected);
+    options.onSaving?.();
+    return await save(sanitizeDownloadFileName(fileName, "画布.zip"), entries) ? "saved" : "cancelled";
 }
 
 function bytesToBase64(bytes: Uint8Array) {

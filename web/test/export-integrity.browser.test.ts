@@ -57,6 +57,8 @@ test("the actual library export shows a stalled file, suppresses duplicate click
         await page.getByRole("status").filter({ hasText: "正在读取文件 0/1" }).waitFor();
         await downloadStarted;
         await page.getByRole("button", { name: "导出", exact: true }).evaluate((button: HTMLButtonElement) => button.click());
+        await page.getByRole("checkbox", { name: "选择 测试 blocked-export" }).uncheck();
+        await page.getByRole("status").filter({ hasText: "正在读取文件 0/1" }).waitFor();
         await page.getByRole("button", { name: "取消导出", exact: true }).click();
         await page.getByRole("button", { name: "取消导出", exact: true }).waitFor({ state: "detached" });
         release();
