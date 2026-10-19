@@ -291,11 +291,8 @@ class S3AdapterTests(unittest.TestCase):
                 release.storage_config(**values)
                 runner.assert_not_called()
         store = release.storage_config("cos", endpoint, region, bucket, public)
-        with patch.object(release, "run", return_value=subprocess.CompletedProcess([], 0, "{}", "")) as runner:
-            store.put("beeftv/example", "/tmp/input", release.IMMUTABLE)
-            command = runner.call_args.args[0]
-            self.assertEqual(command[:5], ["aws", "--endpoint-url", endpoint, "--region", region])
-            self.assertIn("AWS_CONFIG_FILE", runner.call_args.kwargs["env"])
+        self.assertEqual(store.http.host, f"{bucket}.cos.{region}.myqcloud.com")
+        self.assertEqual(store.http.region, region)
 
     def test_legacy_r2_configuration_still_requires_account_endpoint_and_auto_region(self):
         store = release.storage_config("r2", "https://" + "a" * 32 + ".r2.cloudflarestorage.com",
@@ -327,7 +324,7 @@ class S3AdapterTests(unittest.TestCase):
 
 class ConditionalCapabilityTests(unittest.TestCase):
     def store(self, ignore_create=False, ignore_replace=False, ignore_stale=False):
-        store = release.S3("https://cos.ap-guangzhou.myqcloud.com", "beeftv-components-1481187348", "ap-guangzhou", "cos")
+        store = release.S3("https://r2.example", "beeftv-releases")
         fake = FakeS3()
         normal_put = fake.put
         writes = 0

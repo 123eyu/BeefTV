@@ -397,10 +397,8 @@ jobs:
 
       - name: Check release publisher tooling
         run: |
-          command -v aws
-          aws s3api put-object --generate-cli-skeleton input > "$RUNNER_TEMP/put-object.json"
-          python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); assert "IfMatch" in p and "IfNoneMatch" in p' "$RUNNER_TEMP/put-object.json"
           python3 -m unittest discover -s scripts -p 'test_publish_desktop_r2.py'
+          python3 -m unittest discover -s scripts -p 'test_desktop_cos_store.py'
           cd backend
           go build -o "$RUNNER_TEMP/update-release" ./cmd/update-release
 

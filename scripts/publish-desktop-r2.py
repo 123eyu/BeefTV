@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish signed desktop releases to COS or legacy R2 with AWS CLI v2.
+"""Publish signed desktop releases to COS, or legacy R2 with AWS CLI v2.
 
 stage uploads immutable version objects; activate requires a published GitHub
 release and atomically changes latest after public verification. Credentials stay
@@ -19,6 +19,7 @@ import tempfile
 import urllib.request
 from urllib.parse import urlsplit
 import uuid
+from desktop_cos_store import COSStore, PublishError, fingerprint
 
 PLATFORMS = {"darwin-arm64", "darwin-amd64", "windows-amd64", "linux-amd64"}
 PREFIX = "beeftv"
@@ -30,34 +31,20 @@ GITHUB_LATEST_FEED = "https://github.com/glanderness/BeefTV/releases/latest/down
 COS_PUBLIC_BASE = "https://beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com/beeftv"
 
 
-class PublishError(Exception):
-    pass
-
-
 def version_tuple(version):
     if not isinstance(version, str) or not re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version):
         raise PublishError("Expected a stable vMAJOR.MINOR.PATCH version")
     return tuple(map(int, version[1:].split(".")))
 
 
-def run(command, env=None):
+def run(command):
     try:
         return subprocess.run(command, capture_output=True, text=True, timeout=600,
                               env={**os.environ, "AWS_PAGER": "", "AWS_EC2_METADATA_DISABLED": "true",
                                    "AWS_REQUEST_CHECKSUM_CALCULATION": "when_required",
-                                   "AWS_RESPONSE_CHECKSUM_VALIDATION": "when_required", **(env or {})})
+                                   "AWS_RESPONSE_CHECKSUM_VALIDATION": "when_required"})
     except (OSError, subprocess.TimeoutExpired):
         raise PublishError("Required release command unavailable or timed out") from None
-
-
-def fingerprint(path):
-    digest = hashlib.sha256()
-    size = 0
-    with Path(path).open("rb") as source:
-        while chunk := source.read(1024 * 1024):
-            digest.update(chunk)
-            size += len(chunk)
-    return size, digest.hexdigest()
 
 
 def signed_payload(path, verifier):
@@ -77,31 +64,19 @@ def signed_payload(path, verifier):
 
 
 class S3:
-    def __init__(self, endpoint, bucket, region="auto", provider="r2"):
-        self.base = ["aws", "--endpoint-url", endpoint, "--region", region, "s3api"]
+    def __init__(self, endpoint, bucket):
+        self.base = ["aws", "--endpoint-url", endpoint, "--region", "auto", "s3api"]
         self.bucket = bucket
-        self.provider = provider
-
-    def command(self, arguments):
-        if self.provider != "cos":
-            return run(self.base + arguments)
-        # New COS buckets require virtual-hosted addressing. Keep credentials
-        # in environment variables; this file contains no credential values.
-        with tempfile.TemporaryDirectory(prefix="beeftv-cos-cli-") as directory:
-            config = Path(directory) / "config"
-            config.write_text("[default]\ns3 =\n    addressing_style = virtual\n")
-            config.chmod(0o600)
-            return run(self.base + arguments, env={"AWS_CONFIG_FILE": str(config),
-                                                  "AWS_PROFILE": "default", "AWS_DEFAULT_PROFILE": "default"})
+        self.provider = "r2"
 
     def get(self, key, destination):
-        head = self.command(["head-object", "--bucket", self.bucket, "--key", key])
+        head = run(self.base + ["head-object", "--bucket", self.bucket, "--key", key])
         if head.returncode:
             if re.search(r"\((404|NoSuchKey|NotFound)\)", head.stderr):
                 return None
             raise PublishError(f"Cannot inspect release object: {key}")
         etag = json.loads(head.stdout)["ETag"]
-        result = self.command(["get-object", "--bucket", self.bucket, "--key", key,
+        result = run(self.base + ["get-object", "--bucket", self.bucket, "--key", key,
                                   "--if-match", etag, str(destination)])
         if result.returncode:
             raise PublishError(f"Cannot read stable release object: {key}")
@@ -109,7 +84,7 @@ class S3:
 
     def put(self, key, source, cache_control, etag=None):
         condition = ["--if-match", etag] if etag else ["--if-none-match", "*"]
-        result = self.command(["put-object", "--bucket", self.bucket, "--key", key,
+        result = run(self.base + ["put-object", "--bucket", self.bucket, "--key", key,
                                   "--body", str(source), "--cache-control", cache_control,
                                   "--content-type", {".json": "application/json", ".zip": "application/zip", ".dmg": "application/x-apple-diskimage", ".exe": "application/vnd.microsoft.portable-executable", ".deb": "application/vnd.debian.binary-package"}.get(Path(key).suffix, "application/octet-stream")] + condition)
         if result.returncode:
@@ -121,7 +96,7 @@ class S3:
     def delete_probe(self, key):
         if not key.startswith(f"{PREFIX}/.publication-probes/"):
             raise PublishError("Refusing to delete a release object")
-        if self.command(["delete-object", "--bucket", self.bucket, "--key", key]).returncode:
+        if run(self.base + ["delete-object", "--bucket", self.bucket, "--key", key]).returncode:
             raise PublishError("Conditional-write probe cleanup failed")
 
     def check_conditions(self):
@@ -326,7 +301,7 @@ def storage_config(provider, endpoint, region, bucket, public_base):
             raise PublishError("COS releases require their direct bucket public base")
     else:
         raise PublishError("Unsupported release storage provider")
-    return S3(endpoint, bucket, region, provider)
+    return COSStore(bucket, region) if provider == "cos" else S3(endpoint, bucket)
 
 
 def main():
@@ -346,8 +321,9 @@ def main():
         store = storage_config(args.provider, args.endpoint_url, args.region, args.bucket, args.public_base)
         if args.command != "check-store" and (args.manifest is None or args.verifier is None):
             raise PublishError("Publication requires --manifest and --verifier")
-        # Never assume S3 compatibility includes CAS. This writes only a random
-        # disposable probe and refuses publication if either condition is ignored.
+        # COS proves native forbid-overwrite for immutable objects and locks;
+        # legacy R2 proves its native conditional PUT headers. Never assume S3
+        # compatibility supplies either primitive.
         store.check_conditions()
         if args.command == "check-store":
             print("Release storage conditional writes verified")

@@ -234,13 +234,33 @@ v1.5.6 及以前的更新器仍内置 GitHub 清单地址。如果旧客户端�
 
 仓库 Actions 需要以下配置：
 
-- Secret `BEEFTV_COS_ACCESS_KEY_ID`、`BEEFTV_COS_SECRET_ACCESS_KEY`：仅对发行前缀拥有所需对象读写权限的 S3 凭据，不使用账户管理员令牌。随机自检对象位于 `beeftv/.publication-probes/`，需要允许删除这个前缀的测试对象；发行文件不需要删除权限。
+- Secret `BEEFTV_COS_ACCESS_KEY_ID`、`BEEFTV_COS_SECRET_ACCESS_KEY`：仅对发行前缀拥有所需对象读写权限，不使用账户管理员令牌。只允许删除 `beeftv/.publication-probes/` 的测试对象和 `beeftv/.publication-locks/` 的发布锁；发行文件及 `beeftv/.publication-claims/` 不应授予删除权限。锁和 claim 不配置生命周期或自动清理，存储桶版本控制必须保持关闭；开启或暂停版本控制都会使禁止覆盖的保证失效。
 - 工作流固定 endpoint `https://cos.ap-guangzhou.myqcloud.com`、region `ap-guangzhou`、bucket `beeftv-components-1481187348`，使用虚拟主机寻址。
 - 原有 `BEEFTV_UPDATER_PRIVATE_KEY` 和 `BEEFTV_UPDATER_PUBLIC_KEY` 保持不变。
 
-`scripts/publish-desktop-r2.py` 保留历史文件名，支持 `--provider cos|r2`，复用 `update-release verify` 验签并使用 AWS CLI v2 上传。发布机和存储都必须实际支持 `put-object` 的 `IfMatch`、`IfNoneMatch`。每次操作先用随机自检对象验证重复创建、错误/过期 ETag 拒写、有效 ETag 替换和完整字节；COS 的 S3 兼容声明不能替代这些验证。接口忽略任何条件时立即阻止发布，不改成无条件覆盖。自检在 `finally` 清理自己的随机对象，不清理发行文件。
+`scripts/publish-desktop-r2.py` 保留历史文件名，支持 `--provider cos|r2`，复用 `update-release verify` 验签。COS 使用 Python 标准库和 SigV4 签名的单次 HTTP 请求，原子创建依赖 `x-cos-forbid-overwrite: true`；R2 保留 AWS CLI v2 的原生 `IfMatch`、`IfNoneMatch`。COS 的 S3 兼容接口可能忽略这些 S3 条件头，不能用它们保护 COS 最新清单。每次操作先在目标桶的随机对象上验证原生禁止覆盖及原始字节不变；检测到失效立即停发。
 
-`stage` 只准备版本对象；`activate` 确认 GitHub 最新正式版本及公开清单与本次签名清单一致、全部公开对象可校验后，备份上一份清单，再通过 ETag 条件写切换。公网检查使用该版本客户端的请求标识。重复执行同一版本是幂等的，已有对象内容不同或试图降级会失败。历史 R2 操作必须显式指定 `--provider r2 --region auto --bucket beeftv-releases --endpoint-url <原账户端点> --public-base https://updates.beefapi.com/beeftv`。
+COS 发布使用以下对象，公开下载文件与内部发布对象各有固定前缀：
+
+- 不可变版本文件：`beeftv/vX.Y.Z/<文件名>`，使用原生禁止覆盖创建，已有内容逐字节核验。
+- 发布锁：`beeftv/.publication-locks/<SHA256(目标key)>.json`，按目标固定命名，包含随机 nonce、GitHub 仓库/run/attempt/job 和创建时间。时间仅供排障，不是自动接管期限。创建回执丢失时只读回同一 nonce，不盲重发创建。
+- ETag 消费记录：`beeftv/.publication-claims/<SHA256(JSON([目标key,预期ETag]))>.json`，原子创建后永久保留，记录预期 ETag、下一份完整字节的大小/SHA256 和持锁者。同一预期 ETag 只能消费一次。首次清单不存在时使用 JSON `null`，不使用随机值或字符串 `"null"`；另一目标使用不同标识。
+- 测试对象及其 claim：`beeftv/.publication-probes/`，与正式 claim 隔离，成功后清理。真云双客户端探针需要显式运行 `python3 scripts/probe-desktop-cos.py --run`，不在普通本地单测中请求云端。
+
+最新清单在持锁期间读取并核对预期 ETag，再原子创建消费记录，最后上传并完整读回核验。消费记录存在即拒写，避免 COS 源站短暂读到旧 ETag 时重复执行同一替换。消费记录或目标写入的回执不确定、读回失败时保留锁与已写入的 claim，停止后续发布。解锁前只确认自己的 nonce，DELETE 只发送一次；丢失删除回执后只能读状态，不能再删一次，以免删除已经进来的下一位持锁者。
+
+所有写最新清单的工具、初次迁移和人工操作都必须遵守同一锁及 claim 协议。不能用 COSCMD、通用复制脚本或另一套发布器无条件覆盖最新清单。迁移前确认旧发行作业已结束，发布凭据不得修改桶版本控制或生命周期。
+
+`stage` 只准备版本对象；`activate` 确认 GitHub 最新正式版本及公开清单与本次签名清单一致、全部公开对象可校验后，备份上一份清单，再执行上述条件更新。公网检查使用该版本客户端的请求标识。重复执行已成功的同一版本是幂等的，已有对象内容不同或试图降级会失败。历史 R2 操作必须显式指定 `--provider r2 --region auto --bucket beeftv-releases --endpoint-url <原账户端点> --public-base https://updates.beefapi.com/beeftv`。
+
+#### 遗留锁与未完成 claim 的人工恢复
+
+锁不会自动过期，也不能靠删除 claim 重试另一份清单。恢复由操作员执行，先保存锁、claim、作业和目标清单的完整状态：
+
+1. 按锁中的仓库、run、attempt、job 确认原 GitHub Actions 作业已经终态，原发布进程已停止；同时确认不再有未结束的 COS 写入。作业终态本身不能证明一次丢回执的远端 PUT 已结束，必要时按 COS 请求日志核查。未确认时保留锁停发。
+2. 读取目标 key、预期 ETag 和 claim 的下一份大小/SHA256，核验官方原始签名信封、公钥、GitHub 正式版本及 commit。目标已经匹配 claim 的完整字节时，保留该永久 claim，核验后才释放原 nonce 的锁。
+3. 若目标仍为原 ETag 且 claim 已存在，不能删除 claim 换发另一版本；在原锁和原 claim 下完成**同一份已签名清单**，完整读回匹配大小/SHA256 后再释放原锁。若 claim 回执未知，GET 暂时不存在不能单独证明未提交；先查清原请求结果。
+4. 目标既不匹配原状态，也不匹配 claim，或原始信封无法核验时停止，不强制解锁、不覆盖目标。释放锁的 DELETE 仍只发一次，丢回执后按所有权重新读状态，不能盲重删。记录恢复证据，再恢复正常发行。
 
 切换公开入口前，要复制并核验所有保留历史版本的包及原始签名信封，逐项记录大小和完整 SHA256，验证匿名下载、Range 续传，以及已安装旧版读取原 feed 后的真实更新。COS 当前源站若未通过条件写自检，允许准备历史副本与兼容读取，但不能激活新的最新清单。
 
