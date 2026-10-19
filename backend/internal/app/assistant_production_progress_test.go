@@ -184,6 +184,42 @@ func TestProductionProgressFailedTaskWakesPiWithoutRepurchase(t *testing.T) {
 	}
 }
 
+func TestProductionProgressFailureWaitsForAdmittedSibling(t *testing.T) {
+	svc, canvasID, id := productionProgressFixture(t)
+	expectProgressWaiting(t, svc, id, 2)
+	image := progressTask(t, svc, "image")
+	svc.Database().Model(&image).Updates(map[string]any{"status": model.TaskStatusFailed, "error": "upstream failed"})
+	expectProgressWaiting(t, svc, id, 2)
+	completeProgressMaterial(t, svc, canvasID, "speech")
+	claim, err := svc.ClaimAssistantContinuation("local", id)
+	if err != nil || claim.State != "claimed" {
+		t.Fatalf("settled siblings did not wake Pi: %v %v", claim, err)
+	}
+	var count int64
+	svc.Database().Model(&model.Task{}).Count(&count)
+	if count != 2 {
+		t.Fatal("failure purchased a dependent task", count)
+	}
+}
+
+func TestProductionProgressFailedDependentWaitsForVoice(t *testing.T) {
+	svc, canvasID, id := productionProgressFixture(t)
+	expectProgressWaiting(t, svc, id, 2)
+	completeProgressMaterial(t, svc, canvasID, "image")
+	expectProgressWaiting(t, svc, id, 3)
+	video := progressTask(t, svc, "video")
+	svc.Database().Model(&video).Updates(map[string]any{"status": model.TaskStatusFailed, "error": "maximum concurrency"})
+	expectProgressWaiting(t, svc, id, 3)
+	completeProgressMaterial(t, svc, canvasID, "speech")
+	claim, err := svc.ClaimAssistantContinuation("local", id)
+	if err != nil || claim.State != "claimed" {
+		t.Fatalf("original failure did not wake after the sibling settled: %v %v", claim, err)
+	}
+	if progressTask(t, svc, "video").ID != video.ID {
+		t.Fatal("failed dependent was replaced")
+	}
+}
+
 func TestProductionProgressChangedInputsStopFurtherAdmissions(t *testing.T) {
 	svc, canvasID, id := productionProgressFixture(t)
 	raw, _ := svc.UserCanvasProject("local", canvasID)
@@ -196,6 +232,12 @@ func TestProductionProgressChangedInputsStopFurtherAdmissions(t *testing.T) {
 	}
 	if _, err := svc.ClaimAssistantContinuation("local", id); err == nil {
 		t.Fatal("changed paid input was accepted")
+	}
+	if state := backgroundReceiptState(t, svc, id); state != "cancelled" {
+		t.Fatal("changed plan left a waiting receipt", state)
+	}
+	if _, err := svc.ClaimAssistantContinuation("local", id); err == nil {
+		t.Fatal("changed intent was revived")
 	}
 	var count int64
 	svc.Database().Model(&model.Task{}).Count(&count)

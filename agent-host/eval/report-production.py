@@ -5,6 +5,7 @@ The run must contain full-lifecycle.json or receipt.json with canvas/session/sta
 Money comes from the reconciled receipt, never the SDK's provider cost defaults.
 """
 import argparse
+from contextlib import contextmanager
 import datetime
 import json
 import pathlib
@@ -32,10 +33,14 @@ def wall(intervals):
     return round(total / 1000, 3)
 
 
+@contextmanager
 def read_db(path):
     connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
     connection.row_factory = sqlite3.Row
-    return connection
+    try:
+        yield connection
+    finally:
+        connection.close()
 
 
 def report(profile, run, existing=False):
@@ -58,13 +63,15 @@ def report(profile, run, existing=False):
     if not messages:
         raise ValueError("no main model responses for this run")
     with read_db(profile / "open_ai_canvas.db") as db:
-        tasks = [dict(row) for row in db.execute("SELECT id,type,status,started_at,completed_at FROM tasks WHERE project_id=?", (receipt["canvasId"],))]
+        tasks = [dict(row) for row in db.execute("SELECT id,type,status,created_at,started_at,completed_at FROM tasks WHERE project_id=?", (receipt["canvasId"],))]
+        tasks = [task for task in tasks if millis(task["created_at"]) >= start]
         turn_ids = {row[0] for row in db.execute("SELECT turn_id FROM assistant_turns WHERE canvas_id=? AND durable_session_id=?", (receipt["canvasId"], receipt["sessionId"]))}
         operations = [dict(row) for row in db.execute("SELECT op,turn_id,result_json,updated_at FROM agent_op_records WHERE status='succeeded'")]
         operations = [row for row in operations if row["turn_id"] in turn_ids and millis(row["updated_at"]) >= start]
-        logs = [dict(row) for row in db.execute("SELECT task_id,payload,created_at FROM task_logs WHERE message='任务阶段'")]
+        logs = [dict(row) for row in db.execute("SELECT task_id,payload,created_at FROM task_logs WHERE payload LIKE ?", ('{"phase":"result_transfer_%"}',))]
     generations = [task for task in tasks if task["type"] in ("canvas_image", "canvas_video", "canvas_audio")]
-    renders = [task for task in tasks if task["type"] == "timeline_render"]
+    render_ids = {json.loads(row["result_json"]).get("taskId") for row in operations if row["op"] == "canvas.timeline.render"}
+    renders = [task for task in tasks if task["type"] == "timeline_render" and task["id"] in render_ids]
     ready = start if existing else None
     limitations = []
     if not existing and generations and all(task["status"] == "succeeded" and task["completed_at"] for task in generations):

@@ -147,7 +147,11 @@ func (s *Service) logTaskPhase(taskID, phase string) {
 		return
 	}
 	payload, _ := json.Marshal(map[string]string{"phase": phase})
-	_ = s.log(task.UserID, task.ID, "info", "任务阶段", string(payload))
+	message := "开始取回生成结果"
+	if phase == "result_transfer_end" {
+		message = "取回生成结果阶段结束"
+	}
+	_ = s.log(task.UserID, task.ID, "info", message, string(payload))
 }
 
 func (p appReceiptPort) Observe(observation generation.TransportObservation) {

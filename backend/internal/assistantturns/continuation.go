@@ -387,6 +387,7 @@ func (s *Service) ListContinuations(userID, canvasID, sessionID string) ([]Conti
 func (s *Service) ClaimContinuation(userID, id string, prepare func(*gorm.DB, *model.AssistantContinuation) (bool, error)) (*ContinuationView, error) {
 	var row model.AssistantContinuation
 	waiting := false
+	var stopped error
 	err := s.store.DB().Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&row, "id = ? AND user_id = ?", id, userID).Error; err != nil {
 			return err
@@ -400,6 +401,14 @@ func (s *Service) ClaimContinuation(userID, id string, prepare func(*gorm.DB, *m
 		if prepare != nil {
 			ready, err := prepare(tx, &row)
 			if err != nil {
+				var changed *Error
+				if errors.As(err, &changed) && changed.Reason == "continuation_intent_changed" {
+					if err := s.cancelContinuations(tx, row.UserID, row.CanvasID, row.SessionID, row.SourceTurnID, false); err != nil {
+						return err
+					}
+					stopped = changed
+					return nil
+				}
 				return err
 			}
 			if !ready {
@@ -451,6 +460,9 @@ func (s *Service) ClaimContinuation(userID, id string, prepare func(*gorm.DB, *m
 	}
 	if waiting {
 		return nil, continuationError("waiting")
+	}
+	if stopped != nil {
+		return nil, stopped
 	}
 	view := continuationView(row)
 	return &view, nil

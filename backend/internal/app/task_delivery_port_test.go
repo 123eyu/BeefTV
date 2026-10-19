@@ -136,7 +136,7 @@ func TestVideoDeliveryStreamIsVisibleOnWorkspaceTask(t *testing.T) {
 				t.Fatal("progress not cleared")
 			}
 			var phases []model.TaskLog
-			if err := db.Where("task_id = ? AND message = ?", taskID, "任务阶段").Order("created_at").Find(&phases).Error; err != nil {
+			if err := db.Where("task_id = ? AND payload LIKE ?", taskID, `{"phase":"result_transfer_%"}`).Order("created_at").Find(&phases).Error; err != nil {
 				t.Fatal(err)
 			}
 			if len(phases) < 2 || phases[0].Payload != `{"phase":"result_transfer_start"}` || phases[len(phases)-1].Payload != `{"phase":"result_transfer_end"}` {

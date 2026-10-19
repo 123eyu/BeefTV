@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"gorm.io/gorm"
+	"infinite-canvas/backend/internal/assistantturns"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/operations"
 	localtask "infinite-canvas/backend/internal/task"
@@ -52,11 +53,12 @@ func (s *Service) prepareAssistantProduction(tx *gorm.DB, receipt *model.Assista
 		return false, err
 	}
 	if !reflect.DeepEqual(current, plan.Targets) {
-		return false, operations.Conflict("production_changed", "制作方案已变化，请重新确认", nil)
+		return false, &assistantturns.Error{Reason: "continuation_intent_changed", Message: "制作方案已修改，自动制作已停止，请确认新的方案"}
 	}
 	saved, planned := map[string]bool{}, map[string]bool{}
 	pending := []operations.GenerationTarget{}
 	allSaved := true
+	failed, running := false, false
 	for _, target := range plan.Targets {
 		planned[target.NodeID] = true
 		task, err := domain.repo.TaskByClientOperation(receipt.UserID, productionTaskKey(plan, target.NodeID))
@@ -72,14 +74,21 @@ func (s *Service) prepareAssistantProduction(tx *gorm.DB, receipt *model.Assista
 			return false, err
 		}
 		if task.Status == model.TaskStatusFailed || task.Status == model.TaskStatusCancelled {
-			return true, nil // Pi examines the original failure; never repurchase.
+			failed = true
+			continue
 		}
+		running = running || task.Status != model.TaskStatusSucceeded
 		meta, _ := nodes[target.NodeID]["metadata"].(map[string]any)
 		saved[target.NodeID], err = productionTargetSaved(tx, receipt.UserID, target, task, meta)
 		if err != nil {
 			return false, err
 		}
 		allSaved = allSaved && saved[target.NodeID]
+	}
+	if failed {
+		// Keep the single wake until every already-admitted sibling settles.
+		// Do not admit pending dependants or repurchase a failed task.
+		return !running, nil
 	}
 	if allSaved {
 		return true, nil
