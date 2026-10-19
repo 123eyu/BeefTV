@@ -158,9 +158,6 @@ func (s *Service) RegisterContinuationManifest(userID, id string, manifest Conti
 		if err := s.continuationScope(tx, &row); err != nil {
 			return err
 		}
-		if row.State != "waiting" {
-			return continuationError("already_claimed")
-		}
 		var sources []string
 		_ = json.Unmarshal([]byte(row.SourceNodeIDs), &sources)
 		found := false
@@ -198,6 +195,9 @@ func (s *Service) RegisterContinuationManifest(userID, id string, manifest Conti
 				return continuationError("conflict")
 			}
 			return nil
+		}
+		if row.State != "waiting" {
+			return continuationError("already_claimed")
 		}
 		manifests[manifest.SourceNodeID] = manifest
 		raw, _ := json.Marshal(manifests)
