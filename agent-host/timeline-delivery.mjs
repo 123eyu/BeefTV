@@ -12,12 +12,13 @@ export function timelineDeliveryTool(tools) {
   };
   return {
     name: 'canvas_timeline_deliver', label: 'canvas.timeline.deliver', readOnly: false, replay: 'safe',
-    description: '免费完成时间线交付：可先保存timeline，再渲染、等待文件、创建空成片节点并绑定、导出可编辑工程，一次返回视频与工程回执。仅处理已有素材，不生成付费素材。expectedRevision必须是当前画布版本；省略timeline则使用已保存时间线。成功后用返回nodeId实际检查成片。失败保留已完成步骤；不要再次调用本工具，使用failedStep对应原生工具及原任务/节点继续。',
+    description: '免费完成时间线交付：可先保存timeline，再渲染、等待文件、创建空成片节点并绑定、导出可编辑工程。局部重生成且剪辑不变时只传refreshNodeIds，精确更新指定节点的素材引用并保留字幕、时序、裁剪、声音和输出规格；它与timeline二选一。两者均省略则使用已保存时间线。仅处理已有素材，不生成付费素材。expectedRevision必须是当前画布版本。成功后检查成片。失败保留回执，只用failedStep对应原生工具及原任务继续。',
     parameters: {
       type: 'object', additionalProperties: false,
       properties: {
         expectedRevision: render.parameters.properties.expectedRevision,
         timeline: timelineSchema,
+        refreshNodeIds: byOperation.get('canvas.timeline.update').parameters.properties.refreshNodeIds,
         options: render.parameters.properties.options,
         title: { type: 'string', maxLength: 120, description: '新成片节点名称；默认“成片”' },
         ...(render.parameters.properties.canvasId ? { canvasId: render.parameters.properties.canvasId } : {}),
@@ -25,6 +26,7 @@ export function timelineDeliveryTool(tools) {
       required: ['expectedRevision'],
     },
     execute: async (_id, args, signal, api) => {
+      if (args.timeline !== undefined && args.refreshNodeIds !== undefined) throw new Error('invalid_params: timeline 与 refreshNodeIds 二选一');
       const receipts = {};
       const canvas = args.canvasId === undefined ? {} : { canvasId: args.canvasId };
       let step;
@@ -48,6 +50,10 @@ export function timelineDeliveryTool(tools) {
       }
       try {
         let revision = args.expectedRevision;
+        if (args.refreshNodeIds !== undefined) {
+          const updated = await call('canvas.timeline.update', { expectedRevision: revision, refreshNodeIds: args.refreshNodeIds }, 'timeline');
+          revision = updated.revision;
+        }
         if (args.timeline !== undefined) {
           const timeline = { ...args.timeline, clips: args.timeline.clips.map(clip => {
             if (clip.kind !== 'subtitle' || !Array.isArray(clip.lines)) return clip;

@@ -1369,6 +1369,18 @@
     "readOnly": false,
     "scope": "canvas",
     "params": {
+      "oneOf": [
+        {
+          "required": [
+            "timeline"
+          ]
+        },
+        {
+          "required": [
+            "refreshNodeIds"
+          ]
+        }
+      ],
       "properties": {
         "canvasId": {
           "type": "string"
@@ -1380,6 +1392,17 @@
         "operationId": {
           "description": "调用方生成的稳定幂等键；重试同一操作必须复用同一个值，服务端据此回读原结果",
           "type": "string"
+        },
+        "refreshNodeIds": {
+          "description": "仅把已存在媒体片段替换为这些节点当前绑定的素材。保留全部字幕、时序、裁剪、音量、轨道和输出规格；新素材过短则拒绝，不自动改时长。与 timeline 二选一。局部重生成后优先用此参数。",
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
         },
         "timeline": {
           "description": "时间线 v2；时间均为毫秒。所有可见 video/image 片段按 startMs 播放且不可重叠（跨轨也一样）；空隙补黑。音频、字幕可与视觉重叠。仅使用当前画布已关联的素材或已保存时间线中的资源。",
@@ -1577,7 +1600,6 @@
       "required": [
         "canvasId",
         "expectedRevision",
-        "timeline",
         "operationId"
       ],
       "type": "object"

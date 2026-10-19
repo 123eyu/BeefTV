@@ -14,14 +14,14 @@ let responses = fs.existsSync(counterPath) ? JSON.parse(fs.readFileSync(counterP
 const fixture = await modelFixture(config.directory, 'fixture', ['fixture'], () => {
   fs.writeFileSync(counterPath, JSON.stringify(++responses));
   return responses === 1 ? { toolCalls: [{ id: 'deliver', name: 'canvas_timeline_deliver', args: {
-    expectedRevision: config.revision, title: 'Delivered film', timeline: {
+    expectedRevision: config.revision, title: 'Delivered film', ...(config.refresh ? { refreshNodeIds: ['source'] } : { timeline: {
       version: 2, durationMs: 1000, output: { width: 320, height: 240, fps: 24 },
       tracks: [{ id: 'visual', kind: 'video' }, { id: 'captions', kind: 'subtitle' }],
       clips: [
         { id: 'visual', kind: 'video', nodeId: 'source', trackId: 'visual', startMs: 0, durationMs: 1000 },
         { id: 'caption', kind: 'subtitle', trackId: 'captions', startMs: 0, durationMs: 1000, lines: ['First line', 'Second line'] },
       ],
-    },
+    } }),
   } }] }
   : { reply: 'Saved both outputs.' };
 }, {
