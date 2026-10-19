@@ -343,6 +343,46 @@ class COSPublicationTests(unittest.TestCase):
         self.assertEqual(self.wire.objects[self.first.claim_key(self.target, original)], claim)
         self.assertNotIn(self.first.lock_key(self.target), self.wire.objects)
 
+    def test_resume_matching_body_with_original_etag_requires_same_claim_put_before_unlock(self):
+        for outcome in ("verified", "unknown"):
+            with self.subTest(outcome=outcome):
+                self.wire = MemoryCOS()
+                self.first, self.second = self.client(), self.client()
+                self.wire.objects[self.target] = self.b.read_bytes()
+                original = self.etag()
+                lock, claim = self.pending_claim(original)
+                request = self.wire.request
+                stale = [True]
+
+                def inconsistent_get(method, key, *args, **kwargs):
+                    if method == "GET" and key == self.target and stale[0]:
+                        stale[0] = False
+                        Path(kwargs["destination"]).write_bytes(self.a.read_bytes())
+                        return COSResponse(200, original)
+                    return request(method, key, *args, **kwargs)
+
+                self.wire.request = inconsistent_get
+                if outcome == "unknown":
+                    def lost(key, data):
+                        if key == self.target:
+                            raise PublishError("COS PUT outcome is unknown")
+                    self.wire.after_put = lost
+                start = len(self.wire.calls)
+                if outcome == "verified":
+                    self.assertTrue(self.second.resume(self.target, self.a, lock, claim))
+                else:
+                    with self.assertRaisesRegex(PublishError, "Recovery PUT outcome is unknown"):
+                        self.second.resume(self.target, self.a, lock, claim)
+                mutations = [(method, key) for method, key, _ in self.wire.calls[start:] if method in ("PUT", "DELETE")]
+                expected = [("PUT", self.target)]
+                if outcome == "verified":
+                    expected.append(("DELETE", self.first.lock_key(self.target)))
+                    self.assertNotIn(self.first.lock_key(self.target), self.wire.objects)
+                else:
+                    self.assertEqual(self.wire.objects[self.first.lock_key(self.target)], lock)
+                self.assertEqual(mutations, expected)
+                self.assertEqual(self.wire.objects[self.first.claim_key(self.target, original)], claim)
+
     def test_resume_refuses_wrong_bytes_nonce_target_live_lock_or_claim(self):
         for scenario in ("bytes", "nonce", "target", "live-lock", "live-claim", "missing-lock", "missing-claim", "changed-target"):
             with self.subTest(scenario=scenario):

@@ -300,7 +300,7 @@ class COSStore:
         with tempfile.TemporaryDirectory(prefix="beeftv-cos-resume-") as directory:
             current = Path(directory) / "feed"
             actual = self.get(target, current)
-            if actual is not None and fingerprint(current) == expected:
+            if actual is not None and actual != claim["expectedETag"] and fingerprint(current) == expected:
                 self.release(lock)
                 return True
             if actual != claim["expectedETag"]:
