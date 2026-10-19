@@ -13,6 +13,10 @@ func registerStoryboardPreparation(r *Registry) {
 		"canvasId": map[string]any{"type": "string"}, "nodeId": map[string]any{"type": "string", "description": "已有分镜脚本节点"},
 		"expectedRevision": map[string]any{"type": "integer", "minimum": 1},
 		"rowIds":           map[string]any{"type": "array", "minItems": 1, "maxItems": 8, "items": map[string]any{"type": "string"}},
+		"script": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"title", "rows"}, "properties": map[string]any{
+			"title": map[string]any{"type": "string", "minLength": 1},
+			"rows":  map[string]any{"type": "array", "minItems": 1, "maxItems": 8, "items": map[string]any{"type": "object", "additionalProperties": false, "properties": storyboardRowFieldSchemas}},
+		}, "description": "新作品可直接提交分镜正文，一次创建脚本、分镜行与配置好的首帧/视频节点；与 nodeId/rowIds 二选一，失败全部回滚"},
 		"referenceNodeIds": map[string]any{"type": "array", "maxItems": 4, "items": map[string]any{"type": "string"}, "description": "同画布角色或风格图片，仅连接到各首帧图片节点；视频只连接自己的首帧"},
 	}
 	for _, kind := range []string{"image", "video"} {
@@ -34,8 +38,8 @@ func registerStoryboardPreparation(r *Registry) {
 		properties[kind] = map[string]any{"type": "object", "additionalProperties": false, "properties": fields, "required": required, "description": "本批节点共同生成参数；省略则不创建该类型。视频时长采用每行 durationSeconds，提示词直接采用分镜原文；视频必须明确是否生成声音"}
 	}
 	params, _ := json.Marshal(map[string]any{"type": "object", "additionalProperties": false, "properties": properties,
-		"required": []string{"canvasId", "nodeId", "expectedRevision", "rowIds"}})
-	r.Register(Op{ID: "canvas.script.prepare", Summary: "一次为已有分镜创建并配置首帧/视频草稿，绑定分镜、连接参考图并按镜头排布；整批一次保存，不开始生成。已有绑定拒绝覆盖", Scope: ScopeCanvas, ReplaySafe: true, AssistantCanvas: true, Params: params, Handler: opStoryboardPrepare})
+		"required": []string{"canvasId", "expectedRevision"}})
+	r.Register(Op{ID: "canvas.script.prepare", Summary: "一次准备分镜与配置好的首帧/视频草稿；新作品直接传 script 正文，已有分镜传 nodeId/rowIds。绑定分镜、连接参考图并按镜头排布，不开始生成；已有绑定拒绝覆盖", Scope: ScopeCanvas, ReplaySafe: true, AssistantCanvas: true, Params: params, Handler: opStoryboardPrepare})
 }
 
 func opStoryboardPrepare(ctx *Context, raw json.RawMessage) (any, error) {
@@ -47,14 +51,18 @@ func opStoryboardPrepare(ctx *Context, raw json.RawMessage) (any, error) {
 		ReferenceNodeIDs []string                   `json:"referenceNodeIds"`
 		Image            map[string]json.RawMessage `json:"image"`
 		Video            map[string]json.RawMessage `json:"video"`
+		Script           *canvas.StoryboardDraft    `json:"script"`
 	}
 	if err := decodeParams(raw, &args); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(args.CanvasID) == "" || strings.TrimSpace(args.NodeID) == "" || args.ExpectedRevision <= 0 {
+	if strings.TrimSpace(args.CanvasID) == "" || args.ExpectedRevision <= 0 || (args.Script == nil && strings.TrimSpace(args.NodeID) == "") {
 		return nil, InvalidArg("invalid_params", "需要画布、分镜节点和当前版本")
 	}
-	input := canvas.StoryboardPreparation{RowIDs: args.RowIDs, ReferenceNodeIDs: args.ReferenceNodeIDs}
+	if args.Script != nil && (args.NodeID != "" || len(args.RowIDs) > 0 || strings.TrimSpace(args.Script.Title) == "" || len(args.Script.Rows) < 1 || len(args.Script.Rows) > 8) {
+		return nil, InvalidArg("invalid_params", "新分镜需要名称和1至8行正文，不能同时指定已有分镜")
+	}
+	input := canvas.StoryboardPreparation{Script: args.Script, RowIDs: args.RowIDs, ReferenceNodeIDs: args.ReferenceNodeIDs}
 	for _, item := range []struct {
 		kind   string
 		raw    map[string]json.RawMessage
@@ -87,6 +95,9 @@ func opStoryboardPrepare(ctx *Context, raw json.RawMessage) (any, error) {
 	_, prepared, err := ctx.Domain.PrepareUserCanvasStoryboard(ctx.UserID, args.CanvasID, args.NodeID, input, args.ExpectedRevision)
 	if err != nil {
 		return nil, mapDomainError(err)
+	}
+	if prepared.ScriptNodeID != "" {
+		args.NodeID = prepared.ScriptNodeID
 	}
 	return canvasWriteResult(ctx, args.CanvasID, func(map[string]any) map[string]any {
 		return map[string]any{"canvasId": args.CanvasID, "nodeId": args.NodeID, "created": prepared.Created, "createdEdgeIds": prepared.CreatedEdgeIDs, "shots": prepared.Shots}

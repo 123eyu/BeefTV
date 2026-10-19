@@ -30,7 +30,11 @@ func validateGenerationDependencies(doc map[string]any, nodes map[string]map[str
 	seen := map[string]bool{}
 	for _, target := range targets {
 		failed := false
-		for _, id := range graph.references(target, kind) {
+		targetKind := kind
+		if targetKind == "" {
+			targetKind = nodeGenerationKind(nodes[target])
+		}
+		for _, id := range graph.references(target, targetKind) {
 			if !graph.ready(id, map[string]bool{}) || (id != target && batch[id]) {
 				failed = true
 				if !seen[id] {

@@ -32,7 +32,7 @@ type AuthorizedGenerationAdmission interface {
 
 func registerGenerationSubmit(r *Registry) {
 	r.Register(Op{ReplaySafe: true, AssistantCanvas: true, ID: "canvas.generation.submit", Summary: "执行用户已确认的整片制作素材并等待保存绑定；按已确认节点幂等恢复原任务，不重复下单。没有整片授权时先提出生成方案", Scope: ScopeCanvas,
-		Params: json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"nodeIds":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":8},"kind":{"type":"string","enum":["image","video","audio"]}},"required":["canvasId","nodeIds","kind"]}`), Handler: opGenerationSubmit})
+		Params: json.RawMessage(`{"type":"object","properties":{"canvasId":{"type":"string"},"nodeIds":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":8,"description":"同批必须相互独立且参考已就绪；可以同时提交已授权的视频和旁白，避免串行等待"},"kind":{"type":"string","enum":["image","video","audio"],"description":"可省略以按每个已授权节点的实际类型提交混合批次"}},"required":["canvasId","nodeIds"]}`), Handler: opGenerationSubmit})
 }
 
 func opGenerationSubmit(ctx *Context, raw json.RawMessage) (any, error) {
@@ -60,7 +60,7 @@ func opGenerationSubmit(ctx *Context, raw json.RawMessage) (any, error) {
 		return nil, err
 	}
 	for _, target := range targets {
-		if target.Kind != args.Kind {
+		if args.Kind != "" && target.Kind != args.Kind {
 			return nil, InvalidArg("generation_kind_mismatch", "请按素材类型分批生成")
 		}
 	}

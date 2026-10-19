@@ -8,7 +8,7 @@ export async function awaitBusinessTasks(data, { opsRequest, turnId, signal, can
   const ids = result?.taskIds || (result?.taskId ? [result.taskId] : []);
   if (!ids.length) return data;
   const deadline = Date.now() + 20 * 60 * 1000;
-  while (Date.now() < deadline) {
+  try { while (Date.now() < deadline) {
     signal?.throwIfAborted();
     const tasks = [];
     for (const taskId of ids) {
@@ -29,6 +29,11 @@ export async function awaitBusinessTasks(data, { opsRequest, turnId, signal, can
       return { ...data, result: { ...result, status: 'succeeded', tasks } };
     }
     await delay(intervalMs, undefined, { signal });
+  } } catch (error) {
+    if (signal?.aborted) throw error;
+    // Admission already succeeded. A failed observation must not hide the
+    // original identity and induce a new render or paid submission.
+    return { ...data, result: { ...result, status: 'pending', observationFailed: true, note: '原任务已受理，暂时无法读取进度；请按返回的任务ID查询，不要重新提交' } };
   }
   return { ...data, result: { ...result, status: 'pending', note: '原任务仍在处理中，保留任务ID；请查询原任务，不能重复提交' } };
 }

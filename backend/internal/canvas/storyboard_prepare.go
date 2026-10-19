@@ -14,9 +14,15 @@ import (
 // StoryboardPreparation creates the production drafts for existing, authored
 // rows. It does not submit generation or replace any existing output.
 type StoryboardPreparation struct {
+	Script           *StoryboardDraft
 	RowIDs           []string
 	Image, Video     map[string]any
 	ReferenceNodeIDs []string
+}
+
+type StoryboardDraft struct {
+	Title string               `json:"title"`
+	Rows  []StoryboardRowDraft `json:"rows"`
 }
 
 type PreparedStoryboardShot struct {
@@ -26,6 +32,7 @@ type PreparedStoryboardShot struct {
 }
 
 type StoryboardPreparationResult struct {
+	ScriptNodeID   string                   `json:"scriptNodeId,omitempty"`
 	Created        []CreatedNode            `json:"created"`
 	CreatedEdgeIDs []string                 `json:"createdEdgeIds"`
 	Shots          []PreparedStoryboardShot `json:"shots"`
@@ -41,13 +48,40 @@ func (s *Service) PrepareUserCanvasStoryboard(userID, canvasID, nodeID string, i
 	if err := requireExpectedRevision(expectedRevision); err != nil {
 		return UserDataSummary{}, result, err
 	}
-	if len(input.RowIDs) < 1 || len(input.RowIDs) > 8 || len(input.ReferenceNodeIDs) > 4 || (len(input.Image) == 0 && len(input.Video) == 0) {
+	if (input.Script == nil && len(input.RowIDs) < 1) || len(input.RowIDs) > 8 || len(input.ReferenceNodeIDs) > 4 || (len(input.Image) == 0 && len(input.Video) == 0) {
 		return fail("请选择 1..8 个分镜及图片或视频参数，参考图片最多 4 张")
 	}
 	if len(input.Image) == 0 && len(input.ReferenceNodeIDs) > 0 {
 		return fail("角色或风格参考用于首帧图片；视频沿用各分镜自己的首帧")
 	}
-	doc, storyboard, rows, err := s.loadStoryboardRows(userID, canvasID, nodeID)
+	var doc, storyboard map[string]any
+	var rows []any
+	var err error
+	if input.Script == nil {
+		doc, storyboard, rows, err = s.loadStoryboardRows(userID, canvasID, nodeID)
+	} else {
+		if nodeID != "" || len(input.RowIDs) > 0 || len(input.Script.Rows) > 8 {
+			return fail("新分镜与已有分镜请选择一种")
+		}
+		if err := requireStoryboardRows(input.Script.Rows); err != nil {
+			return UserDataSummary{}, result, err
+		}
+		doc, err = s.loadCanvasDoc(userID, canvasID)
+		if err == nil {
+			result.Created, err = createCanvasNodes(doc, []NodeDraft{{Title: input.Script.Title, Type: storyboardNodeType}})
+		}
+		if err == nil {
+			nodeID = result.Created[0].ID
+			result.ScriptNodeID = nodeID
+			metadata := findCanvasNode(doc, nodeID)["metadata"].(map[string]any)
+			storyboard = metadata["storyboard"].(map[string]any)
+			for i, draft := range input.Script.Rows {
+				row := buildStoryboardRow(i+1, draft)
+				rows = append(rows, row)
+				input.RowIDs = append(input.RowIDs, rowIDOf(row))
+			}
+		}
+	}
 	if err != nil {
 		return UserDataSummary{}, result, err
 	}

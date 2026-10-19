@@ -172,7 +172,7 @@ export function createOperationBridge({
           if (chainWrite && generation.persistEffects) await generation.persistEffects();
           assertToolGeneration(generation, descriptor, signal);
           let data = await opsRequest('POST', `/ops/${descriptor.id}`, { opId, params }, signal, turn.turnId);
-          if (descriptor.id === 'canvas.generation.submit') {
+          if (descriptor.id === 'canvas.generation.submit' || descriptor.id === 'canvas.timeline.render') {
             data = await awaitBusinessTasks(data, { opsRequest, turnId: turn.turnId, signal, canvasId: params.canvasId });
           }
           // A replay can recover the receipt lost between business commit and

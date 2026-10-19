@@ -12,7 +12,7 @@ import { createDurableSessionStore, durableLifecycleState, durableStreamEvents, 
 import { createDurableTextProjection } from './durable-stream-text.mjs';
 import { createDurableTurnBudget } from './durable-turn-budget.mjs';
 import { providerRegistration, providerUnavailableReason,
-  turnContextPrefix, unflushedSessionHistory } from './canvas-turn.mjs';
+  turnContextPrefix, unflushedSessionHistory, toolCallCapabilityContext } from './canvas-turn.mjs';
 import { budgetError, spendModelRequest } from './request-budget.mjs';
 import { createDurableRequestBudget } from './durable-request-budget.mjs';
 import { createOperationBridge } from './operation-bridge.mjs';
@@ -574,7 +574,7 @@ const server = http.createServer(async (req, res) => {
         : chosen ? await durable.handoffSession(canvasId, legacy.readHandoffNote(canvasId,chosen), chosen)
           : await durable.ensureSession(canvasId);
       const content = await attachmentContent(body,turnId);
-      content[0].text = `${turnContextPrefix(body)}\n${mediaCapabilityContext({ api: MODEL_API, modelId: MODEL_ID })}\n${content[0].text}`;
+      content[0].text = `${turnContextPrefix(body)}\n${mediaCapabilityContext({ api: MODEL_API, modelId: MODEL_ID })}\n${toolCallCapabilityContext({ api: MODEL_API, modelId: MODEL_ID })}\n${content[0].text}`;
       const submission = await durable.submit(entry,{...body,content,userText,revisionBefore,requestId});
       res.durableTurn = true;
       res.writeHead(200,{'Content-Type':'application/x-ndjson'});

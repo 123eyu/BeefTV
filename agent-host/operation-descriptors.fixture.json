@@ -237,6 +237,7 @@
           "type": "string"
         },
         "kind": {
+          "description": "可省略以按每个已授权节点的实际类型提交混合批次",
           "enum": [
             "image",
             "video",
@@ -245,6 +246,7 @@
           "type": "string"
         },
         "nodeIds": {
+          "description": "同批必须相互独立且参考已就绪；可以同时提交已授权的视频和旁白，避免串行等待",
           "items": {
             "type": "string"
           },
@@ -260,7 +262,6 @@
       "required": [
         "canvasId",
         "nodeIds",
-        "kind",
         "operationId"
       ],
       "type": "object"
@@ -695,7 +696,7 @@
   },
   {
     "id": "canvas.script.prepare",
-    "summary": "一次为已有分镜创建并配置首帧/视频草稿，绑定分镜、连接参考图并按镜头排布；整批一次保存，不开始生成。已有绑定拒绝覆盖",
+    "summary": "一次准备分镜与配置好的首帧/视频草稿；新作品直接传 script 正文，已有分镜传 nodeId/rowIds。绑定分镜、连接参考图并按镜头排布，不开始生成；已有绑定拒绝覆盖",
     "readOnly": false,
     "scope": "canvas",
     "params": {
@@ -758,6 +759,116 @@
           "minItems": 1,
           "type": "array"
         },
+        "script": {
+          "additionalProperties": false,
+          "description": "新作品可直接提交分镜正文，一次创建脚本、分镜行与配置好的首帧/视频节点；与 nodeId/rowIds 二选一，失败全部回滚",
+          "properties": {
+            "rows": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "audioEffects": {
+                    "description": "音效要求",
+                    "type": "string"
+                  },
+                  "camera": {
+                    "description": "机位与焦段",
+                    "type": "string"
+                  },
+                  "continuityOut": {
+                    "description": "本镜结束时保留到下一镜的连续性要素",
+                    "type": "string"
+                  },
+                  "dialogue": {
+                    "description": "本镜台词",
+                    "type": "string"
+                  },
+                  "durationSeconds": {
+                    "description": "镜头时长（秒），缺省 6",
+                    "maximum": 60,
+                    "minimum": 1,
+                    "type": "number"
+                  },
+                  "emotion": {
+                    "description": "情绪基调",
+                    "type": "string"
+                  },
+                  "imageGenerationPrompt": {
+                    "description": "首帧图片生成提示词",
+                    "type": "string"
+                  },
+                  "lightingAndAtmosphere": {
+                    "description": "灯光与氛围",
+                    "type": "string"
+                  },
+                  "motion": {
+                    "description": "镜头运动",
+                    "type": "string"
+                  },
+                  "mustHave": {
+                    "description": "画面必须出现的要素",
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "narrativeIntent": {
+                    "description": "叙事意图",
+                    "type": "string"
+                  },
+                  "negativePrompt": {
+                    "description": "反向提示词",
+                    "type": "string"
+                  },
+                  "optionalDetails": {
+                    "description": "可选细节",
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "performanceBlocking": {
+                    "description": "表演与走位",
+                    "type": "string"
+                  },
+                  "plotDescription": {
+                    "description": "本镜剧情描述",
+                    "type": "string"
+                  },
+                  "shotSize": {
+                    "description": "景别（远景/全景/中景/近景/特写等）",
+                    "type": "string"
+                  },
+                  "timeBeats": {
+                    "description": "时间节拍",
+                    "type": "string"
+                  },
+                  "videoMotionPrompt": {
+                    "description": "视频运动提示词",
+                    "type": "string"
+                  },
+                  "viewerPOV": {
+                    "description": "观众视角",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "type": "array"
+            },
+            "title": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "title",
+            "rows"
+          ],
+          "type": "object"
+        },
         "video": {
           "additionalProperties": false,
           "description": "本批节点共同生成参数；省略则不创建该类型。视频时长采用每行 durationSeconds，提示词直接采用分镜原文；视频必须明确是否生成声音",
@@ -796,9 +907,7 @@
       },
       "required": [
         "canvasId",
-        "nodeId",
         "expectedRevision",
-        "rowIds",
         "operationId"
       ],
       "type": "object"
@@ -1693,8 +1802,23 @@
             "image",
             "video",
             "audio"
-          ],
-          "description": "只读取本次需要的模型类型，减少无关目录"
+          ]
+        },
+        "capabilities": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "text",
+              "image",
+              "video",
+              "audio"
+            ]
+          },
+          "description": "一次读取本次需要的多种类型；整片制作用 image、video、audio，不必逐类型往返"
         }
       },
       "additionalProperties": false

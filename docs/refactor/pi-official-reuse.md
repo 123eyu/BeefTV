@@ -139,6 +139,10 @@ Node fetch 的 bypass 规则与 Go 不完全相同。对固定模型 `BaseURL`�
 
 `await-business-tasks.mjs` 只在官方 Durable 工具内部观察 Go 已受理的任务，等待任务成功、输出资源保存及目标节点实际绑定；它不请求模型、不提交替代任务、不创建队列。提交操作标记可重放的依据是 Go 原子操作回执及稳定 `proposal:<proposalId>:<nodeId>` 任务键，而非供应商生成可任意重试。Stop 沿官方工具 signal 结束观察，未知状态仍保留原身份。后台首批接续继续使用既有 worker。工程交付采用原生 v4 ZIP 与已有资源下载，不引入第二种工程格式或渲染器。测试见 `assistant_production_test.go`、`await-business-tasks.test.mjs`、既有后台接续及 Durable 测试；真实整片与 GUI 改稿另记验收回执。
 
+减少机械模型往返：`model.catalog` 可用 `capabilities` 一次读取所需类型；`canvas.script.prepare` 可直接传 `script:{title,rows}` 创建新分镜及生成草稿，复用节点默认值和分镜行构造，在一次 revision 保存，回执、回放、撤销仍属于原操作。`canvas.generation.submit` 省略 `kind` 时按节点实际类型执行已确认、相互独立且参考已就绪的混合批次；确认的输入与稳定任务键不变。内置 `canvas.timeline.render` 在事务提交后复用同一工具等待器，成功与文件保存后才返回模型；观察失败返回原任务及 pending，Stop 继续中断。公开渲染操作仍返回受理回执，不在数据库事务中等待 FFmpeg。
+
+当前 `gemini-3.8-flash` 的 OpenAI 兼容通路曾在原始响应中将多个函数参数拼接为一个字符串，`parallel_tool_calls=false` 也未阻止该错误。宿主给此模型增加每次响应只调用一个工具的说明，业务工具内部批量不受影响，不猜测恢复已经丢失的调用名与编号。其他模型保留多工具建议。需在该通路多工具原始响应与完整工具结果回传验证通过后再移除此限制；这是一条兼容提示，不是对任意供应商响应正确性的保证。
+
 制作技能也按当前业务工具执行：系统提示不再要求每个技能步骤都等待确认；内置技能 `14811816970252` 改用 BeefTV 分镜、节点、生成提案、媒体检查与时间线工具，去掉外部 CLI、固定模型和虚构文件操作。技能包仍按内容版本保存，既有安装版本与活动任务 pin 不自动改写；只有加载新版技能的任务才使用新版方法。
 
 - 未接官方 web-ui / TUI / 实验服务器。

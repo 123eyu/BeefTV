@@ -6,6 +6,15 @@
 
 export const SUPPORTED_APIS = ['openai-completions', 'openai-responses', 'anthropic-messages'];
 
+// This compatibility route has returned concatenated arguments for distinct
+// calls, including when parallel_tool_calls=false. Never guess missing names
+// or IDs from that payload. Business tools retain their own batch parameters.
+export function toolCallCapabilityContext({ api, modelId }) {
+  return api === 'openai-completions' && modelId === 'gemini-3.8-flash'
+    ? '[本轮工具通路限制，优先于多工具合并建议：每条模型响应只调用一个工具，等结果再决定下一步；不能同一响应发出多个不同工具调用。优先用单个业务工具的批量参数：model_catalog capabilities、canvas_script_prepare script、混合 canvas_generation_submit、批量时间线更新。计划更新与其他工具也分开。这是兼容通路限制，不需要用户逐步确认或人工续做。]'
+    : '';
+}
+
 export function newTurnAccumulator() {
   return { turnId: '', seq: 0, toolSeq: 0, revisionBefore: 0, revisionAfter: 0,
     createdNodeIds: [], updatedNodeIds: [], createdEdgeIds: [], operationIds: [], proposals: [],
