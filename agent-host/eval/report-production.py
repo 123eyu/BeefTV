@@ -49,6 +49,13 @@ def report(profile, run, existing=False):
         receipt_path = run / "receipt.json"
     receipt = json.loads(receipt_path.read_text())
     start = millis(receipt["startedAt"])
+    # The same Durable session can later receive edits or a read-only review.
+    # Re-reading its database must not change an already completed run's score.
+    finish = millis(receipt["finishedAt"]) if receipt.get("finishedAt") else None
+    elapsed = receipt.get("seconds", receipt.get("elapsedSeconds"))
+    if finish is None and isinstance(elapsed, (int, float)):
+        finish = start + elapsed * 1000
+    in_run = lambda timestamp: timestamp is not None and timestamp >= start and (finish is None or timestamp <= finish)
     session = receipt["sessionId"].removeprefix("durable:")
     databases = list((profile / "sessions").rglob(session + ".sqlite"))
     if len(databases) != 1:
@@ -57,17 +64,17 @@ def report(profile, run, existing=False):
         entries = [json.loads(row["record"]) for row in db.execute("SELECT record FROM entries")]
     root = next(entry["conversationId"] for entry in entries if entry["kind"] == "pi.user")
     messages = [message for entry in entries if entry.get("conversationId") == root and entry["kind"] == "pi.assistant"
-                for message in entry.get("model", []) if message.get("role") == "assistant" and message["timestamp"] >= start]
+                for message in entry.get("model", []) if message.get("role") == "assistant" and in_run(message["timestamp"])]
     auxiliary = [message for entry in entries if entry.get("conversationId") != root
-                 for message in entry.get("model", []) if message.get("role") == "assistant" and message["timestamp"] >= start]
+                 for message in entry.get("model", []) if message.get("role") == "assistant" and in_run(message["timestamp"])]
     if not messages:
         raise ValueError("no main model responses for this run")
     with read_db(profile / "open_ai_canvas.db") as db:
         tasks = [dict(row) for row in db.execute("SELECT id,type,status,created_at,started_at,completed_at FROM tasks WHERE project_id=?", (receipt["canvasId"],))]
-        tasks = [task for task in tasks if millis(task["created_at"]) >= start]
+        tasks = [task for task in tasks if in_run(millis(task["created_at"]))]
         turn_ids = {row[0] for row in db.execute("SELECT turn_id FROM assistant_turns WHERE canvas_id=? AND durable_session_id=?", (receipt["canvasId"], receipt["sessionId"]))}
         operations = [dict(row) for row in db.execute("SELECT op,turn_id,result_json,updated_at FROM agent_op_records WHERE status='succeeded'")]
-        operations = [row for row in operations if row["turn_id"] in turn_ids and millis(row["updated_at"]) >= start]
+        operations = [row for row in operations if row["turn_id"] in turn_ids and in_run(millis(row["updated_at"]))]
         logs = [dict(row) for row in db.execute("SELECT task_id,payload,created_at FROM task_logs WHERE payload LIKE ?", ('{"phase":"result_transfer_%"}',))]
     generations = [task for task in tasks if task["type"] in ("canvas_image", "canvas_video", "canvas_audio")]
     render_ids = {json.loads(row["result_json"]).get("taskId") for row in operations if row["op"] == "canvas.timeline.render"}
