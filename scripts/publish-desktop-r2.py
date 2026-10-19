@@ -181,6 +181,37 @@ def require_github_release(payload, manifest, public):
     public.check(GITHUB_LATEST_FEED, *fingerprint(manifest), version=payload["version"])
 
 
+def require_terminal_publisher(original_lock):
+    try:
+        document = json.loads(original_lock)
+        owner = document["owner"]
+        repository, run_id, attempt = (owner[name] for name in ("GITHUB_REPOSITORY", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT"))
+        if (repository != "glanderness/BeefTV" or not re.fullmatch(r"[1-9][0-9]*", run_id)
+                or not re.fullmatch(r"[1-9][0-9]*", attempt)
+                or not re.fullmatch(r"[a-zA-Z0-9_-]+", owner.get("GITHUB_JOB", ""))):
+            raise PublishError("Recovery requires the original official GitHub publisher identity")
+    except (ValueError, KeyError, TypeError):
+        raise PublishError("Recovery requires the original GitHub publisher document") from None
+    result = run(["gh", "api", f"repos/{repository}/actions/runs/{run_id}/attempts/{attempt}"])
+    if result.returncode:
+        raise PublishError("Cannot confirm the original GitHub publisher has ended")
+    try:
+        metadata = json.loads(result.stdout)
+        if (not isinstance(metadata, dict) or metadata.get("status") != "completed"
+                or metadata.get("id") != int(run_id) or metadata.get("run_attempt") != int(attempt)
+                or not isinstance(metadata.get("repository"), dict)
+                or metadata["repository"].get("full_name") != repository):
+            raise PublishError("Original GitHub publisher is not confirmed terminal")
+    except (ValueError, TypeError):
+        raise PublishError("Invalid original GitHub publisher status") from None
+
+
+def recovery_document(path):
+    if path.stat().st_size > 8192:
+        raise PublishError("Recovery document is too large")
+    return path.read_bytes()
+
+
 class Publisher:
     def __init__(self, store, public, verifier, public_base, release_check=require_github_release):
         self.store, self.public, self.verifier = store, public, verifier
@@ -282,6 +313,23 @@ class Publisher:
             self.public.check(f"{self.public_base}/desktop-update.json", *fingerprint(manifest), version=payload["version"])
         return payload["version"]
 
+    def resume(self, manifest, original_lock, original_claim, *, confirm_no_inflight=False,
+               confirm_writers_frozen=False, confirm_no_unlock_attempt=False, installer_dir=None):
+        if (getattr(self.store, "provider", None) != "cos" or not confirm_no_inflight
+                or not confirm_writers_frozen or not confirm_no_unlock_attempt):
+            raise PublishError("COS recovery requires explicit confirmation: all writers frozen, no in-flight PUT and no prior unlock attempt")
+        payload = self.load(manifest)
+        require_terminal_publisher(original_lock)
+        if installer_dir is not None:
+            self.check_installers(payload, self.installer_sources(payload, installer_dir))
+        self.release_check(payload, manifest, self.public)
+        self.public_check(payload, manifest)
+        # The store validates live lock/claim bytes after external checks, then
+        # completes only this already claimed signed envelope under its old nonce.
+        self.store.resume(LATEST, manifest, original_lock, original_claim)
+        self.public.check(f"{self.public_base}/desktop-update.json", *fingerprint(manifest), version=payload["version"])
+        return payload["version"]
+
 
 def storage_config(provider, endpoint, region, bucket, public_base):
     for url in (endpoint, public_base):
@@ -306,10 +354,15 @@ def storage_config(provider, endpoint, region, bucket, public_base):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["check-store", "stage", "activate"])
+    parser.add_argument("command", choices=["check-store", "stage", "activate", "resume"])
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--assets-dir", type=Path)
     parser.add_argument("--with-installers", action="store_true")
+    parser.add_argument("--lock-document", type=Path, help="Exact original COS publisher lock document for resume")
+    parser.add_argument("--claim-document", type=Path, help="Exact original COS ETag claim document for resume")
+    parser.add_argument("--confirm-no-inflight-put", action="store_true", help="Operator confirmed original remote PUT requests have ended; required for resume")
+    parser.add_argument("--confirm-writers-frozen", action="store_true", help="Operator froze every feed writer and confirmed no successor publication; required for resume")
+    parser.add_argument("--confirm-no-unlock-attempt", action="store_true", help="Original publisher logs prove no lock DELETE was ever sent; required for resume")
     parser.add_argument("--verifier", type=Path, help="Binary built from backend/cmd/update-release")
     parser.add_argument("--provider", choices=["cos", "r2"], default="cos")
     parser.add_argument("--endpoint-url", required=True)
@@ -321,6 +374,10 @@ def main():
         store = storage_config(args.provider, args.endpoint_url, args.region, args.bucket, args.public_base)
         if args.command != "check-store" and (args.manifest is None or args.verifier is None):
             raise PublishError("Publication requires --manifest and --verifier")
+        if args.command == "resume" and (args.provider != "cos" or args.lock_document is None
+                or args.claim_document is None or not args.confirm_no_inflight_put
+                or not args.confirm_writers_frozen or not args.confirm_no_unlock_attempt):
+            raise PublishError("Resume requires COS, original lock/claim documents and all three recovery confirmations")
         # COS proves native forbid-overwrite for immutable objects and locks;
         # legacy R2 proves its native conditional PUT headers. Never assume S3
         # compatibility supplies either primitive.
@@ -336,8 +393,16 @@ def main():
                 raise PublishError("Manifest is too large")
             manifest.write_bytes(args.manifest.read_bytes())
             assets_dir = args.assets_dir or args.manifest.parent
-            version = (publisher.stage(manifest, assets_dir, args.with_installers)
-                       if args.command == "stage" else publisher.activate(manifest, assets_dir if args.with_installers else None))
+            if args.command == "stage":
+                version = publisher.stage(manifest, assets_dir, args.with_installers)
+            elif args.command == "resume":
+                version = publisher.resume(manifest, recovery_document(args.lock_document), recovery_document(args.claim_document),
+                                           confirm_no_inflight=args.confirm_no_inflight_put,
+                                           confirm_writers_frozen=args.confirm_writers_frozen,
+                                           confirm_no_unlock_attempt=args.confirm_no_unlock_attempt,
+                                           installer_dir=assets_dir if args.with_installers else None)
+            else:
+                version = publisher.activate(manifest, assets_dir if args.with_installers else None)
         print(f"{args.command} verified: {version}")
     except PublishError as error:
         print(f"Desktop publication failed: {error}", file=sys.stderr)

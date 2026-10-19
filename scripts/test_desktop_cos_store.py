@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import patch
 import urllib.parse
 
-from desktop_cos_store import COSHTTP, COSResponse, COSStore, PublishError
+from desktop_cos_store import COSHTTP, COSResponse, COSStore, PublishError, fingerprint
 
 
 class MemoryCOS:
@@ -170,6 +170,24 @@ class COSPublicationTests(unittest.TestCase):
         self.assertFalse(self.second.put(self.target, self.b, "no-store"))
         self.assertEqual(self.wire.objects[self.target], self.a.read_bytes())
 
+    def test_first_stale_404_cannot_overwrite_an_existing_feed_without_a_null_claim(self):
+        self.wire.objects[self.target] = self.b.read_bytes()
+        request = self.wire.request
+        stale = [True]
+
+        def stale_absent(method, key, *args, **kwargs):
+            if method == "GET" and key == self.target and stale[0]:
+                stale[0] = False
+                return COSResponse(404)
+            return request(method, key, *args, **kwargs)
+
+        self.wire.request = stale_absent
+        self.assertFalse(self.first.put(self.target, self.a, "no-store"))
+        self.assertEqual(self.wire.objects[self.target], self.b.read_bytes())
+        self.assertIn(self.first.claim_key(self.target, None), self.wire.objects)
+        self.assertNotIn(self.first.lock_key(self.target), self.wire.objects)
+        self.assertEqual([forbid for method, key, forbid in self.wire.calls if method == "PUT" and key == self.target], ["true"])
+
     def test_lost_claim_create_receipt_reconciles_exact_content(self):
         claims = []
 
@@ -240,8 +258,20 @@ class COSPublicationTests(unittest.TestCase):
             raise PublishError("COS DELETE outcome is unknown")
 
         self.wire.after_delete = lost
-        self.assertTrue(self.first.put(self.target, self.a, "no-store"))
+        with self.assertRaisesRegex(PublishError, "release is unconfirmed"):
+            self.first.put(self.target, self.a, "no-store")
         self.assertEqual(self.wire.objects[self.first.lock_key(self.target)], successor)
+        self.assertEqual(sum(method == "DELETE" for method, _, _ in self.wire.calls), 1)
+
+    def test_lost_delete_receipt_is_unconfirmed_even_when_lock_is_now_absent(self):
+        def lost(key):
+            raise PublishError("COS DELETE outcome is unknown")
+
+        self.wire.after_delete = lost
+        with self.assertRaisesRegex(PublishError, "release is unconfirmed"):
+            self.first.put(self.target, self.a, "no-store")
+        self.assertNotIn(self.first.lock_key(self.target), self.wire.objects)
+        self.assertEqual(self.wire.calls[-1][0], "DELETE")
         self.assertEqual(sum(method == "DELETE" for method, _, _ in self.wire.calls), 1)
 
     def test_unknown_delete_without_commit_retains_lock_and_never_retries(self):
@@ -260,12 +290,135 @@ class COSPublicationTests(unittest.TestCase):
         self.assertEqual(self.wire.objects[lock[0]], lock[1])
         self.assertEqual(sum(method == "DELETE" for method, _, _ in self.wire.calls), 1)
 
+    def test_unexpected_delete_status_is_not_confirmed_by_later_absence(self):
+        lock = self.first.acquire(self.target)
+        request = self.wire.request
+
+        def unconfirmed(method, key, *args, **kwargs):
+            result = request(method, key, *args, **kwargs)
+            return COSResponse(202) if method == "DELETE" else result
+
+        self.wire.request = unconfirmed
+        with self.assertRaisesRegex(PublishError, "release is unconfirmed"):
+            self.first.release(lock)
+        self.assertNotIn(lock[0], self.wire.objects)
+        self.assertEqual(self.wire.calls[-1][0], "DELETE")
+        self.assertEqual(sum(method == "DELETE" for method, _, _ in self.wire.calls), 1)
+
     def test_releasing_foreign_lock_is_refused_without_delete(self):
         lock = self.first.acquire(self.target)
         self.wire.objects[lock[0]] = b"other owner"
         with self.assertRaisesRegex(PublishError, "ownership changed"):
             self.first.release(lock)
         self.assertFalse(any(method == "DELETE" for method, _, _ in self.wire.calls))
+
+    def pending_claim(self, etag=None):
+        lock = self.first.acquire(self.target)
+        self.assertTrue(self.first.consume_etag(self.target, etag, fingerprint(self.a), lock))
+        return lock[1], self.wire.objects[self.first.claim_key(self.target, etag)]
+
+    def test_explicit_resume_completes_original_bytes_without_new_nonce_or_claim(self):
+        lock, claim = self.pending_claim()
+        start = len(self.wire.calls)
+        self.assertTrue(self.second.resume(self.target, self.a, lock, claim))
+        self.assertEqual(self.wire.objects[self.target], self.a.read_bytes())
+        self.assertEqual(self.wire.objects[self.first.claim_key(self.target, None)], claim)
+        self.assertNotIn(self.first.lock_key(self.target), self.wire.objects)
+        self.assertEqual([(key, forbid) for method, key, forbid in self.wire.calls[start:] if method == "PUT"], [(self.target, "true")])
+
+    def test_explicit_resume_of_already_committed_bytes_only_releases_original_lock(self):
+        lock, claim = self.pending_claim()
+        self.wire.objects[self.target] = self.a.read_bytes()
+        start = len(self.wire.calls)
+        self.assertTrue(self.second.resume(self.target, self.a, lock, claim))
+        self.assertFalse(any(method == "PUT" for method, _, _ in self.wire.calls[start:]))
+        self.assertEqual(self.wire.objects[self.first.claim_key(self.target, None)], claim)
+
+    def test_explicit_resume_replaces_only_original_nonnull_etag_state(self):
+        self.wire.objects[self.target] = self.b.read_bytes()
+        original = self.etag()
+        lock, claim = self.pending_claim(original)
+        self.assertTrue(self.second.resume(self.target, self.a, lock, claim))
+        self.assertEqual(self.wire.objects[self.target], self.a.read_bytes())
+        self.assertEqual(self.wire.objects[self.first.claim_key(self.target, original)], claim)
+        self.assertNotIn(self.first.lock_key(self.target), self.wire.objects)
+
+    def test_resume_refuses_wrong_bytes_nonce_target_live_lock_or_claim(self):
+        for scenario in ("bytes", "nonce", "target", "live-lock", "live-claim", "missing-lock", "missing-claim", "changed-target"):
+            with self.subTest(scenario=scenario):
+                self.wire.objects.clear()
+                lock, claim = self.pending_claim()
+                source, target = self.a, self.target
+                if scenario == "bytes":
+                    source = self.b
+                if scenario == "nonce":
+                    document = json.loads(lock)
+                    document["nonce"] = "f" * 32
+                    lock = json.dumps(document).encode()
+                if scenario == "target":
+                    target = "beeftv/other-feed.json"
+                if scenario == "live-lock":
+                    self.wire.objects[self.first.lock_key(self.target)] = b"different owner"
+                if scenario == "live-claim":
+                    self.wire.objects[self.first.claim_key(self.target, None)] = b"different claim"
+                if scenario == "missing-lock":
+                    del self.wire.objects[self.first.lock_key(self.target)]
+                if scenario == "missing-claim":
+                    del self.wire.objects[self.first.claim_key(self.target, None)]
+                if scenario == "changed-target":
+                    self.wire.objects[self.target] = self.b.read_bytes()
+                start = len(self.wire.calls)
+                with self.assertRaises(PublishError):
+                    self.second.resume(target, source, lock, claim)
+                self.assertFalse(any(method in ("PUT", "DELETE") for method, _, _ in self.wire.calls[start:]))
+
+    def test_resume_target_unknown_put_retains_original_lock_and_claim(self):
+        lock, claim = self.pending_claim()
+
+        def lost(key, data):
+            if key == self.target:
+                raise PublishError("COS PUT outcome is unknown")
+
+        self.wire.after_put = lost
+        with self.assertRaisesRegex(PublishError, "Recovery PUT outcome is unknown"):
+            self.second.resume(self.target, self.a, lock, claim)
+        self.assertEqual(self.wire.objects[self.first.lock_key(self.target)], lock)
+        self.assertEqual(self.wire.objects[self.first.claim_key(self.target, None)], claim)
+
+    def test_resume_first_create_forbid_rejects_a_stale_absence_and_other_existing_bytes(self):
+        lock, claim = self.pending_claim()
+        self.wire.objects[self.target] = self.b.read_bytes()
+        request = self.wire.request
+        stale = [True]
+
+        def stale_absent(method, key, *args, **kwargs):
+            if method == "GET" and key == self.target and stale[0]:
+                stale[0] = False
+                return COSResponse(404)
+            return request(method, key, *args, **kwargs)
+
+        self.wire.request = stale_absent
+        with self.assertRaisesRegex(PublishError, "readback failed"):
+            self.second.resume(self.target, self.a, lock, claim)
+        self.assertEqual(self.wire.objects[self.target], self.b.read_bytes())
+        self.assertEqual(self.wire.objects[self.first.lock_key(self.target)], lock)
+
+    def test_resume_first_create_stale_absence_reconciles_identical_committed_bytes(self):
+        lock, claim = self.pending_claim()
+        self.wire.objects[self.target] = self.a.read_bytes()
+        request = self.wire.request
+        stale = [True]
+
+        def stale_absent(method, key, *args, **kwargs):
+            if method == "GET" and key == self.target and stale[0]:
+                stale[0] = False
+                return COSResponse(404)
+            return request(method, key, *args, **kwargs)
+
+        self.wire.request = stale_absent
+        self.assertTrue(self.second.resume(self.target, self.a, lock, claim))
+        self.assertEqual(self.wire.objects[self.target], self.a.read_bytes())
+        self.assertNotIn(self.first.lock_key(self.target), self.wire.objects)
 
 
 class COSHTTPTests(unittest.TestCase):

@@ -206,10 +206,9 @@ class COSStore:
                 return
         except PublishError:
             pass
-        # A lost DELETE receipt may already have admitted a new writer. Only
-        # read the key now; never send another DELETE for this release attempt.
-        if self._lock_content(key) == content:
-            raise PublishError("COS publisher lock release is unconfirmed; operator recovery is required")
+        # Eventual GET/404 cannot confirm this DELETE. Another writer may already
+        # own the key, so never retry or report success from a diagnostic read.
+        raise PublishError("COS publisher lock release is unconfirmed; operator recovery is required")
 
     def consume_etag(self, target, etag, expected, lock):
         key = self.claim_key(target, etag)
@@ -250,11 +249,18 @@ class COSStore:
                     return False
                 # A claim/target transport failure or incomplete readback keeps
                 # the lock. A later writer cannot overtake an unknown mutation.
+                headers = {"Cache-Control": cache_control, "Content-Type": self.content_type(key)}
+                if etag is None:
+                    # The first observed 404 may be stale even before null has
+                    # ever been claimed. Native create still protects old feeds.
+                    headers["x-cos-forbid-overwrite"] = "true"
                 try:
-                    result = self.http.request("PUT", key, source, {"Cache-Control": cache_control,
-                                                                   "Content-Type": self.content_type(key)})
+                    result = self.http.request("PUT", key, source, headers)
                 except PublishError:
                     raise PublishError("COS feed PUT outcome is unknown; publisher lock and ETag claim retained") from None
+                if etag is None and result.status == 409 and result.code == "FileAlreadyExists":
+                    may_release = True
+                    return False
                 if result.status != 200 or self.get(key, current) is None or fingerprint(current) != expected:
                     raise PublishError("COS feed write is unverified; publisher lock retained for operator recovery")
                 may_release = True
@@ -262,6 +268,59 @@ class COSStore:
         finally:
             if may_release:
                 self.release(lock)
+
+    def resume(self, target, source, original_lock, original_claim):
+        """Complete one externally approved, already claimed desktop feed write.
+
+        The CLI first verifies the signed manifest, published release, original
+        GitHub run terminal state, and explicit attestations of frozen writers,
+        no in-flight PUT and no original unlock attempt. An eventual GET cannot
+        by itself prove an old nonce still owns a lock that was once released.
+        This method neither acquires a new nonce nor creates/deletes a claim.
+        """
+        try:
+            lock_doc, claim = json.loads(original_lock), json.loads(original_claim)
+            if (target != self.latest_key or not isinstance(lock_doc, dict) or not isinstance(claim, dict)
+                    or lock_doc.get("schema") != 1 or claim.get("schema") != 1
+                    or lock_doc.get("target") != target or claim.get("target") != target
+                    or not isinstance(lock_doc.get("nonce"), str) or not re.fullmatch("[a-f0-9]{32}", lock_doc["nonce"])
+                    or claim.get("publisher") != lock_doc or "expectedETag" not in claim
+                    or (claim["expectedETag"] is not None and not isinstance(claim["expectedETag"], str))):
+                raise PublishError("Original COS recovery documents do not match the desktop feed and publisher")
+            expected = fingerprint(source)
+            if type(claim.get("nextSize")) is not int or (claim["nextSize"], claim.get("nextSHA256")) != expected:
+                raise PublishError("Recovery bytes differ from the original COS claim")
+        except (ValueError, KeyError, TypeError):
+            raise PublishError("Invalid original COS recovery documents") from None
+        lock = self.lock_key(target), original_lock
+        if self._lock_content(lock[0]) != original_lock:
+            raise PublishError("Recovery refuses a missing or different publisher lock")
+        if self._lock_content(self.claim_key(target, claim["expectedETag"])) != original_claim:
+            raise PublishError("Recovery refuses a missing or different ETag claim")
+        with tempfile.TemporaryDirectory(prefix="beeftv-cos-resume-") as directory:
+            current = Path(directory) / "feed"
+            actual = self.get(target, current)
+            if actual is not None and fingerprint(current) == expected:
+                self.release(lock)
+                return True
+            if actual != claim["expectedETag"]:
+                raise PublishError("Recovery target matches neither the original state nor the claimed feed")
+            if self._lock_content(lock[0]) != original_lock:
+                raise PublishError("Publisher lock changed before recovery write")
+            headers = {"Cache-Control": "no-store, max-age=0", "Content-Type": "application/json"}
+            if claim["expectedETag"] is None:
+                headers["x-cos-forbid-overwrite"] = "true"
+            try:
+                result = self.http.request("PUT", target, source, headers)
+            except PublishError:
+                raise PublishError("Recovery PUT outcome is unknown; original lock and claim retained") from None
+            collision = claim["expectedETag"] is None and result.status == 409 and result.code == "FileAlreadyExists"
+            if result.status != 200 and not collision:
+                raise PublishError("Recovery PUT was not confirmed; original lock and claim retained")
+            if self.get(target, current) is None or fingerprint(current) != expected:
+                raise PublishError("Recovery feed readback failed; original lock and claim retained")
+        self.release(lock)
+        return True
 
     def delete_probe(self, key):
         if not key.startswith(self.probe_prefix):
@@ -272,8 +331,7 @@ class COSStore:
                 return
         except PublishError:
             pass
-        if self._lock_content(key) is not None:
-            raise PublishError("COS probe cleanup is unconfirmed")
+        raise PublishError("COS probe cleanup is unconfirmed")
 
     def check_conditions(self):
         key = self.probe_prefix + uuid.uuid4().hex + "/object"

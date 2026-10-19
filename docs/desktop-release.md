@@ -247,7 +247,7 @@ COS 发布使用以下对象，公开下载文件与内部发布对象各有固�
 - ETag 消费记录：`beeftv/.publication-claims/<SHA256(JSON([目标key,预期ETag]))>.json`，原子创建后永久保留，记录预期 ETag、下一份完整字节的大小/SHA256 和持锁者。同一预期 ETag 只能消费一次。首次清单不存在时使用 JSON `null`，不使用随机值或字符串 `"null"`；另一目标使用不同标识。
 - 测试对象及其 claim：`beeftv/.publication-probes/`，与正式 claim 隔离，成功后清理。真云双客户端探针需要显式运行 `python3 scripts/probe-desktop-cos.py --run`，不在普通本地单测中请求云端。
 
-最新清单在持锁期间读取并核对预期 ETag，再原子创建消费记录，最后上传并完整读回核验。消费记录存在即拒写，避免 COS 源站短暂读到旧 ETag 时重复执行同一替换。消费记录或目标写入的回执不确定、读回失败时保留锁与已写入的 claim，停止后续发布。解锁前只确认自己的 nonce，DELETE 只发送一次；丢失删除回执后只能读状态，不能再删一次，以免删除已经进来的下一位持锁者。
+最新清单在持锁期间读取并核对预期 ETag，再原子创建消费记录，最后上传并完整读回核验。消费记录存在即拒写，避免 COS 源站短暂读到旧 ETag 时重复执行同一替换。预期不存在时，目标 PUT 同时带原生禁止覆盖，防止历史清单的短暂 404 在尚无 null claim 时被误当成首次发布；目标已存在返回 409 时拒写并保留 claim。消费记录或目标写入的回执不确定、读回失败时保留锁与已写入的 claim，停止后续发布。解锁前只确认自己的 nonce，DELETE 只发送一次；只有 HTTP 200/204 算释放确认。非成功状态或丢失回执始终报“解锁未确认”，后续 GET 404 不能证明删除成功，也不能据此重删，以免删除下一位持锁者的锁。
 
 所有写最新清单的工具、初次迁移和人工操作都必须遵守同一锁及 claim 协议。不能用 COSCMD、通用复制脚本或另一套发布器无条件覆盖最新清单。迁移前确认旧发行作业已结束，发布凭据不得修改桶版本控制或生命周期。
 
@@ -255,16 +255,34 @@ COS 发布使用以下对象，公开下载文件与内部发布对象各有固�
 
 #### 遗留锁与未完成 claim 的人工恢复
 
-锁不会自动过期，也不能靠删除 claim 重试另一份清单。恢复由操作员执行，先保存锁、claim、作业和目标清单的完整状态：
+锁不会自动过期，也不能靠删除 claim 重试另一份清单。`resume` 只处理未解锁的同一次故障写入，执行前必须取得以下现场证据：
 
-1. 按锁中的仓库、run、attempt、job 确认原 GitHub Actions 作业已经终态，原发布进程已停止；同时确认不再有未结束的 COS 写入。作业终态本身不能证明一次丢回执的远端 PUT 已结束，必要时按 COS 请求日志核查。未确认时保留锁停发。
-2. 读取目标 key、预期 ETag 和 claim 的下一份大小/SHA256，核验官方原始签名信封、公钥、GitHub 正式版本及 commit。目标已经匹配 claim 的完整字节时，保留该永久 claim，核验后才释放原 nonce 的锁。
-3. 若目标仍为原 ETag 且 claim 已存在，不能删除 claim 换发另一版本；在原锁和原 claim 下完成**同一份已签名清单**，完整读回匹配大小/SHA256 后再释放原锁。若 claim 回执未知，GET 暂时不存在不能单独证明未提交；先查清原请求结果。
-4. 目标既不匹配原状态，也不匹配 claim，或原始信封无法核验时停止，不强制解锁、不覆盖目标。释放锁的 DELETE 仍只发一次，丢回执后按所有权重新读状态，不能盲重删。记录恢复证据，再恢复正常发行。
+1. 人工冻结全部最新清单 writer，包括 Actions、初次迁移和人工发布；查明没有后继发布。按原锁的仓库、run、attempt、job 保存 GitHub Actions 状态及原日志，确认整个原 attempt 已终态、进程已停止。
+2. 确认所有在途 COS PUT 已结束。作业终态本身不能证明一次丢回执的远端 PUT 已结束，必要时用 COS 请求日志核查。原发布日志还必须证明**从未发送释放锁的 DELETE**。如果 DELETE 已发送、回执未知、日志不完整或无法确认，禁止使用 `resume`；旧锁 GET 可能是陈旧值，不能代替这些证据。
+3. 从 COS 读取并保存原锁和对应 claim 的完整原始字节，不重新排版 JSON。核对固定目标 `beeftv/desktop-update.json`、原 nonce、claim 的 publisher、预期 ETag 和下一份大小/SHA256，并取回原始签名信封。claim 不存在或其回执未知时，不能根据一次 GET 404 生成另一份 claim；先查清原请求结果。
+
+在已配置发行 COS 凭据、官方更新公钥 `BEEFTV_UPDATER_PUBLIC_KEY` 和 `gh` 认证的受控环境中，从仓库根目录执行：
+
+```bash
+go -C backend build -o /tmp/beeftv-update-release ./cmd/update-release
+python3 scripts/publish-desktop-r2.py resume \
+  --provider cos --endpoint-url https://cos.ap-guangzhou.myqcloud.com \
+  --region ap-guangzhou --bucket beeftv-components-1481187348 \
+  --public-base https://beeftv-components-1481187348.cos.ap-guangzhou.myqcloud.com/beeftv \
+  --manifest /path/to/original-desktop-update.json \
+  --verifier /tmp/beeftv-update-release \
+  --lock-document /path/to/original-lock.json \
+  --claim-document /path/to/original-claim.json \
+  --confirm-writers-frozen --confirm-no-inflight-put --confirm-no-unlock-attempt
+```
+
+三个确认参数分别表示操作员已取得上述冻结、在途 PUT 结束、从未解锁的证据；不能取得时不执行。入口会自行检查官方 `glanderness/BeefTV` 原 run/attempt 的 GitHub API 状态，重新验签、检查四平台公开文件及 GitHub 最新正式版本的精确清单字节，再逐字节匹配当前锁/claim。它只接受原 claim 大小/SHA256 对应的同一信封，不新建 nonce 或 claim，也不删除 claim。目标已经是这份清单时只核验并释放原锁；目标仍为原 ETag 时才续写同一份清单，首次不存在仍使用原生禁止覆盖。其他状态、不同 nonce/目标/字节一律停发。仅在完整读回匹配后发送一次解锁 DELETE，非 HTTP 200/204 仍报未确认。
+
+已尝试 DELETE 的故障不属于这个恢复入口。先保持全部 writer 冻结，核验最终公开 feed 和原请求日志，再由操作员单独处置遗留锁；不得借恢复重发 PUT 或盲重删。记录恢复证据后才恢复正常发行。
 
 切换公开入口前，要复制并核验所有保留历史版本的包及原始签名信封，逐项记录大小和完整 SHA256，验证匿名下载、Range 续传，以及已安装旧版读取原 feed 后的真实更新。COS 当前源站若未通过条件写自检，允许准备历史副本与兼容读取，但不能激活新的最新清单。
 
-如果 GitHub 发布成功而 COS 激活失败，保留正式版本及所有不可变对象。核对失败原因后，用同一版本的原始清单重跑 `activate`；不要删除正式 tag 或重建不同内容的同版本包。切换前失败不会改变旧清单；条件写成功但最终回读失败时，新清单可能已经生效，必须先核对存储与公开入口，不能把它当作未发布。已经安装新版本的客户端不自动降级。
+如果 GitHub 发布成功而 COS 激活失败，保留正式版本及所有不可变对象。先核查存储与公开入口；没有遗留锁和未完成 claim 时才用同一版本原始清单重跑 `activate`，否则遵守上述恢复条件。不要删除正式 tag 或重建不同内容的同版本包。条件写成功但最终回读失败时，新清单可能已经生效，不能把它当作未发布。已经安装新版本的客户端不自动降级。
 
 在 `glanderness/BeefTV` 的 `main` 上手动运行 `.github/workflows/release-desktop.yml`。输入的 `confirm_version` 必须和 `VERSION` 一致。`CHANGELOG.md` 必须有对应的 `## vX.Y.Z` 段落，这段文字会同时成为 GitHub Release 说明和清单里的 `notes`。
 
