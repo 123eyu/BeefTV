@@ -7,6 +7,9 @@ test('media policy chooses minimum evidence and never presents frames as watched
   }
   expect(SYSTEM_PROMPT).toContain('不必读取原生视频或音频');
   expect(SYSTEM_PROMPT).toContain('用户明确要求看视频并听音频');
+  expect(SYSTEM_PROMPT).toContain('evidence:{startMs,endMs,modes,checks:true}');
+  expect(SYSTEM_PROMPT).toContain('单个 media.overview evidence');
+  expect(SYSTEM_PROMPT).toContain('媒体检查不能证明 ZIP 已生成');
 });
 
 test('skills preserve ordered work without imposing a confirmation after every step', () => {

@@ -18,15 +18,16 @@ function wholeIntervalSilent(facts: AssistantMediaFacts) {
 export function CanvasAssistantMediaFacts({ calls, nodes = [] }: { calls: AgentToolCall[]; nodes?: CanvasNodeData[] }) {
     const groups = new Map<string, AssistantMediaFacts[]>();
     for (const call of calls) {
-        const facts = call.mediaFacts;
-        if (call.isError !== false || !["media.overview", "media.inspect", "media.check"].includes(call.tool) || !facts) continue;
-        const key = JSON.stringify([facts.source.resourceId, facts.source.version]);
-        let group = groups.get(key);
-        if (!group) {
-            group = [];
-            groups.set(key, group);
+        if (call.isError !== false || !["media.overview", "media.inspect", "media.check"].includes(call.tool)) continue;
+        for (const facts of call.mediaEvidence ?? (call.mediaFacts ? [call.mediaFacts] : [])) {
+            const key = JSON.stringify([facts.source.resourceId, facts.source.version]);
+            let group = groups.get(key);
+            if (!group) {
+                group = [];
+                groups.set(key, group);
+            }
+            if (!group.some(item => JSON.stringify(item) === JSON.stringify(facts))) group.push(facts);
         }
-        if (!group.some(item => JSON.stringify(item) === JSON.stringify(facts))) group.push(facts);
     }
     if (!groups.size) return null;
     return <div className="canvas-assistant-card" aria-label="媒体检查记录">

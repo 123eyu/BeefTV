@@ -1735,7 +1735,7 @@
   },
   {
     "id": "media.overview",
-    "summary": "获取已关联媒体的版本、时长与静态预览；用于选择检查区间，不能替代连续视频或声音内容审查。",
+    "summary": "获取已关联媒体的版本、时长与静态预览；概要不能替代连续视频或声音内容审查。已知15秒以内区间可用 evidence 一次读取真实 frames/video/audio 及客观检测。",
     "readOnly": true,
     "scope": "canvas",
     "params": {
@@ -1774,6 +1774,44 @@
             "video",
             "audio"
           ]
+        },
+        "evidence": {
+          "type": "object",
+          "description": "从同一份媒体字节一次读取明确区间的实际证据；每次最多15秒，不代表质量通过。静态帧不能替代连续视频或声音。",
+          "properties": {
+            "startMs": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "endMs": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "modes": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 3,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "frames",
+                  "video",
+                  "audio"
+                ]
+              }
+            },
+            "checks": {
+              "type": "boolean",
+              "description": "同时检测该区间的黑场、音量与静音；不能判断声音内容。"
+            }
+          },
+          "required": [
+            "startMs",
+            "endMs",
+            "modes"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [

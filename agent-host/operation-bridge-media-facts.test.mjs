@@ -76,3 +76,33 @@ test('malformed facts are omitted and static previews cannot become native video
     expect(log[2].mediaFacts).toBeUndefined();
   });
 });
+
+test('one overview bundle records every actual mode without relying on request claims', async () => {
+  await withBridge(async ({ log, execute, set }) => {
+    const bundle = result('check', { evidence: ['frames', 'video', 'audio', 'check'],
+      content: ['frames', 'video', 'audio'].flatMap(mode => result(mode).content), meanDb: -20, peakDb: -4,
+      silenceDetection: { noiseDb: -35, minimumDurationMs: 120, timestampKind: 'source_time' },
+      silenceIntervals: [{ startMs: 6000, endMs: 6500 }] });
+    set(bundle);
+    await execute('media.overview', { evidence: { modes: ['audio'], forged: true } });
+    expect(log).toHaveLength(1);
+    expect(log[0].mediaFacts).toBeUndefined();
+    expect(log[0].mediaEvidence.map(facts => facts.mode)).toEqual(['frames', 'video', 'audio', 'check']);
+    expect(log[0].mediaEvidence.at(-1)).toMatchObject({ meanDb: -20, peakDb: -4, silenceIntervals: [{ startMs: 6000, endMs: 6500 }] });
+    expect(log[0].mediaEvidence.every(facts => facts.source.version === source.version)).toBe(true);
+    const history = JSON.parse(JSON.stringify(publicDurableTurn({ turnId: 'bundle-turn', toolCalls: log, status: 'unanswered' })));
+    expect(history.toolCalls[0].mediaEvidence).toEqual(log[0].mediaEvidence);
+    for (const forbidden of ['data', 'content', 'forged', 'canvasId', 'silenceDetection']) expect(JSON.stringify(history.toolCalls[0].mediaEvidence)).not.toContain(forbidden);
+  });
+});
+
+test('a missing bundle modality fails without recording partial evidence', async () => {
+  await withBridge(async ({ log, execute, set }) => {
+    set(result('frames', { evidence: ['frames', 'audio'] }));
+    await expect(execute('media.overview')).rejects.toThrow('invalid_media_evidence');
+    expect(log).toHaveLength(1);
+    expect(log[0].isError).toBe(true);
+    expect(log[0].mediaFacts).toBeUndefined();
+    expect(log[0].mediaEvidence).toBeUndefined();
+  });
+});

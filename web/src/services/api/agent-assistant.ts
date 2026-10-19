@@ -41,6 +41,7 @@ export type AgentToolCall = {
     replayed?: boolean;
     /** Whitelisted successful media result, not model prose or tool arguments. */
     mediaFacts?: AssistantMediaFacts;
+    mediaEvidence?: AssistantMediaFacts[];
 };
 
 export type AssistantMediaFacts = {

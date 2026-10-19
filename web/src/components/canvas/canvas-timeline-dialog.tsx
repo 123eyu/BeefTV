@@ -825,7 +825,7 @@ export function CanvasTimelineDialog({
                     </Button>
                 </div>
 
-                <CanvasTimelinePreview clips={draft.clips} nodes={nodes} playheadMs={playheadMs} playing={previewPlaying} theme={theme} onTogglePlay={() => setPreviewPlaying((value) => !value)} onPlayheadChange={setPlayheadMs} />
+                <CanvasTimelinePreview clips={draft.clips} tracks={draft.tracks} output={draft.output} nodes={nodes} playheadMs={playheadMs} playing={previewPlaying} theme={theme} onTogglePlay={() => setPreviewPlaying((value) => !value)} onRequestPause={() => setPreviewPlaying(false)} onPlayheadChange={setPlayheadMs} />
 
                 <div className="timeline-editor-tracks flex min-h-0 flex-1">
                     <div className="flex w-44 shrink-0 flex-col border-r" style={{ borderColor: theme.toolbar.border, background: theme.toolbar.panel }}>

@@ -83,6 +83,30 @@ export function mediaFacts(result, operation) {
   return facts;
 }
 
+// A bundle reports only modes backed by validated content from one snapshot.
+// Keep separate public facts: frames never become proof of video or audio.
+export function mediaEvidence(result, operation) {
+  if (result?.evidence === undefined) return undefined;
+  const modes = result.evidence;
+  const invalid = () => { throw new Error('invalid_media_evidence'); };
+  if (operation !== 'media.overview' || !Array.isArray(modes) || modes.length < 1 || modes.length > 4 ||
+      new Set(modes).size !== modes.length || modes.some(mode => !['frames', 'video', 'audio', 'check'].includes(mode)) ||
+      !modes.some(mode => mode !== 'check') || !Array.isArray(result.content) ||
+      result.source?.endMs - result.source?.startMs > 15000) return invalid();
+  const partMode = part => part?.type === 'image' && part.mimeType?.startsWith('image/') ? 'frames'
+    : part?.type === 'media' ? { 'audio/wav': 'audio', 'video/mp4': 'video' }[part.mimeType] : undefined;
+  if (result.content.some(part => !modes.includes(partMode(part)) ||
+      ['canvasId', 'nodeId', 'assetId'].some(key => part.source?.[key] !== result.source?.[key]))) return invalid();
+  return modes.map(mode => {
+    if (mode === 'check' && result.hasAudio && (result.silenceDetection?.noiseDb !== -35 ||
+        result.silenceDetection?.minimumDurationMs !== 120 || result.silenceDetection?.timestampKind !== 'source_time')) return invalid();
+    const facts = mediaFacts({ ...result, content: mode === 'check' ? [] : result.content.filter(part => partMode(part) === mode) },
+      mode === 'check' ? 'media.check' : 'media.inspect');
+    if (!facts || facts.mode !== mode) return invalid();
+    return facts;
+  });
+}
+
 // Only backend-produced tool results are eligible. History stays in order:
 // attachments follow the entire consecutive tool-result group, never the last
 // assistant message. The transport calls this again so a swallowed extension

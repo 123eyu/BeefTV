@@ -48,3 +48,28 @@ test('turn guidance matches the actual native media transport gate', () => {
     }
   }
 });
+
+test('one overview tool preserves image, video and audio payload bytes in its next request', () => {
+  const parts = ['image/jpeg', 'video/mp4', 'audio/wav'].map(mime => ({ ...part(mime),
+    source: { ...part(mime).source, canvasId: 'canvas', nodeId: 'node' } }));
+  const converted = mediaToolResult({ result: { evidence: ['frames', 'video', 'audio', 'check'], content: parts } }, 'media.overview', model);
+  const text = converted.content.filter(p => p.type === 'text').map(p => p.text).join('\n');
+  const request = adaptMediaRequest({ messages: [
+    { role: 'assistant', tool_calls: [{ id: 'bundle', function: { name: 'media_overview' } }] },
+    { role: 'tool', tool_call_id: 'bundle', content: text },
+  ] }, model);
+  const native = request.messages.at(-1).content.filter(p => p.type === 'image_url');
+  expect(native.map(p => p.image_url.url.split(';')[0])).toEqual(['data:video/mp4', 'data:audio/wav']);
+  expect(native.map(p => p.image_url.url)).toEqual(parts.filter(p => p.type === 'media').map(p => `data:${p.mimeType};base64,${p.data}`));
+  expect(native.every(p => Buffer.from(p.image_url.url.split(',')[1], 'base64').length > 0)).toBe(true);
+  expect(converted.content.filter(p => p.type === 'image')).toHaveLength(1);
+  expect(request.messages.filter(p => p.role === 'tool')).toHaveLength(1);
+  const changed = parts.map(p => ({ ...p })); changed[2].sha256 = 'wrong';
+  expect(() => mediaToolResult({ result: { content: changed } }, 'media.overview', model)).toThrow('media_content_changed');
+});
+
+test('combined evidence shares the existing total media size limit', () => {
+  const bytes = Buffer.alloc(4 * 1024 * 1024 + 1, 1);
+  const large = mimeType => ({ ...part(mimeType), data: bytes.toString('base64'), sha256: crypto.createHash('sha256').update(bytes).digest('hex') });
+  expect(() => mediaToolResult({ result: { content: [large('audio/wav'), large('video/mp4')] } }, 'media.overview', model)).toThrow('media_content_too_large');
+});

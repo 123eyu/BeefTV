@@ -6,7 +6,7 @@
 import { collectTurnEffects, extendWriteChain, rebaseOntoWriteChain } from './canvas-turn.mjs';
 import { toolOperationId } from './session-identity.mjs';
 import { budgetError, spendToolStep } from './request-budget.mjs';
-import { mediaToolResult, mediaFacts } from './media-content.mjs';
+import { mediaToolResult, mediaFacts, mediaEvidence } from './media-content.mjs';
 import { canvasReadView, CANVAS_READ_VIEW_SCHEMA } from './canvas-read-view.mjs';
 import { canvasWriteView, canvasWriteViewDescription } from './canvas-write-view.mjs';
 import { awaitBusinessTasks } from './await-business-tasks.mjs';
@@ -197,9 +197,10 @@ export function createOperationBridge({
           }
           const converted = mediaToolResult(descriptor.id === 'canvas.get' ? canvasReadView(data, readView) : canvasWriteView(data, descriptor.id, params), descriptor.id, { ...mediaModel, originTurnId:turn.turnId,
             ...(generation.durable ? {nativePartStore} : {}) });
-          const facts = mediaFacts(data?.result, descriptor.id);
+          const evidence = mediaEvidence(data?.result, descriptor.id);
+          const facts = evidence ? undefined : mediaFacts(data?.result, descriptor.id);
           log.push({ toolCallId: toolCallId || null, tool: descriptor.id, args: params, isError: false, ms: Date.now() - started, replayed: !!data?.replayed, ...rebaseNote,
-            ...(facts ? { mediaFacts: facts } : {}) });
+            ...(facts ? { mediaFacts: facts } : {}), ...(evidence ? { mediaEvidence: evidence } : {}) });
           return converted;
         } catch (error) {
           log.push({ toolCallId: toolCallId || null, tool: descriptor.id, args: params, isError: true, error: error.message, ms: Date.now() - started, ...rebaseNote });

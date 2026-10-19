@@ -62,3 +62,13 @@ test("a full plan shows step progress without declaring quality accepted", () =>
     expect(html).toContain("步骤进度 · 1/1");
     expect(html).not.toContain("制作计划 · 已完成");
 });
+
+test("one overview retains every actual evidence item in the same resource group", () => {
+    const bundle = { tool: "media.overview", isError: false, mediaEvidence: [call("frames").mediaFacts,
+        call("video").mediaFacts, call("audio").mediaFacts, call("check", { meanDb: -18 }).mediaFacts] };
+    const html = render([bundle]);
+    expect(html.match(/data-media-fact-group=/g)).toHaveLength(1);
+    for (const label of ["静态抽帧区间", "视频片段读取", "音频片段读取", "客观检测"]) expect(html).toContain(label);
+    expect(html).toContain("平均音量：-18 dB");
+    expect(render([{ ...bundle, isError: true }])).not.toContain('aria-label="媒体检查记录"');
+});
