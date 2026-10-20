@@ -112,7 +112,7 @@ func TestSeedanceMultipartRecoversLostAckPartialBodyAndCompletion(t *testing.T) 
 			defer gateway.Close()
 			ctx := WithRuntime(context.Background(), Runtime{Endpoints: Endpoints{BeefAPIVideoBaseURL: gateway.URL}})
 			input := Input{Config: Config{BaseURL: gateway.URL + "/v1", APIKey: "gateway-key", Model: "seedance-2.0-mini", InterfaceType: "newapi"}, ReferenceImages: []Media{{DataURL: "fixture", MimeType: "image/png"}}}
-			err := PrepareBeefAPISeedanceReferences(ctx, input.Config, &input, func(string, Media) ([]byte, string, bool, error) { return data, "image/png", false, nil })
+			err := PrepareBeefAPIVideoReferences(ctx, input.Config, &input, func(string, Media) ([]byte, string, bool, error) { return data, "image/png", false, nil })
 			if err != nil {
 				t.Fatal(err)
 			}

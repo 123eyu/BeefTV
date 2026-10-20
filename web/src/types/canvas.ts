@@ -278,6 +278,8 @@ export type CanvasNodeMetadata = {
     isBatchRoot?: boolean;
     batchRootId?: string;
     batchChildIds?: string[];
+    /** Original output targets for this generation; independent of the editable batch layout. */
+    generationOutputNodeIds?: string[];
     batchFailedCount?: number;
     batchUsesReferenceImages?: boolean;
     primaryImageId?: string;
@@ -449,6 +451,7 @@ export type CanvasNodeMetadata = {
     /** 用户手动拉伸过尺寸；图片按真实比例自动适配时避让它。 */
     manualSize?: boolean;
     storyboard?: StoryboardData;
+    storyboardVisibleColumnsCustomized?: boolean;
     storyboardShotDuration?: StoryboardShotDuration;
     storyboardShotCount?: StoryboardShotCount;
     storyboardVideoInputMode?: StoryboardVideoInputMode;

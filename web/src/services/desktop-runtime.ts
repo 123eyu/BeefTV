@@ -41,6 +41,7 @@ export type DesktopRuntimeBinding = {
     RuntimeConfig: () => Promise<DesktopRuntimeConfig>;
     SaveOwnedMedia?: (fileName: string, resourceID: string) => Promise<boolean>;
     SaveOwnedArtifact?: (fileName: string, data: string) => Promise<boolean>;
+    SaveOwnedArchive?: (fileName: string, entries: Array<{ name: string; resourceId?: string; data?: string }>) => Promise<boolean>;
     UpdateStatus?: () => Promise<DesktopUpdateState>;
 	OpenUpdateLogDirectory?: () => Promise<void>;
     CheckForUpdate?: () => Promise<DesktopUpdateState>;

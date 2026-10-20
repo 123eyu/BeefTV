@@ -15,6 +15,7 @@ import { useAssetStore } from "@/stores/use-asset-store";
 import { publishGenerationDeliveryProgress } from "@/stores/use-generation-delivery-progress";
 import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
+import { recordCanvasBindingDiagnostic } from "@/services/diagnostics/canvas-binding-diagnostics";
 
 function throwIfAborted(signal?: AbortSignal) {
     if (signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
@@ -214,6 +215,7 @@ export async function bindBackendCanvasGenerationResult(input: {
     outputIndex?: number;
     signal?: AbortSignal;
     isCurrent: () => boolean;
+    isNodeOwned?: () => boolean;
     nodesRef: { current: CanvasNodeData[] };
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
     runtime?: BindBackendCanvasGenerationRuntime;
@@ -237,6 +239,11 @@ export async function bindBackendCanvasGenerationResult(input: {
     const now = runtime.now ?? Date.now;
     const publishDeliveryProgress = runtime.publishDeliveryProgress ?? publishGenerationDeliveryProgress;
     const startedAt = now();
+    // A mounted recovery can lose this node to a newer request while awaiting
+    // hydration or persistence. Check again before dispatching a durable bind.
+    const assertNodeOwnership = () => {
+        if (input.isNodeOwned && !input.isNodeOwned()) throw new DOMException("The node belongs to a newer request", "AbortError");
+    };
 
     const waitForMaterialization = (task: GenerationTask, forceRefresh = false) =>
         waitForMaterializedGenerationOutput(
@@ -272,6 +279,7 @@ export async function bindBackendCanvasGenerationResult(input: {
     });
     assertBindDispatchScope(capturedScope, liveScope);
 
+    assertNodeOwnership();
     const live = useCanvasStore.getState().projects.find((project) => project.id === capturedCanvasId);
     if (live) {
         syncInMemoryCanvasProjectMediaAssets(live);
@@ -331,7 +339,9 @@ export async function bindBackendCanvasGenerationResult(input: {
     const operationId = attachNodeEffectKey(task.id, input.nodeId, outputIndex);
     let response: Awaited<ReturnType<typeof bindCanvasTaskOutput>>;
     let healedOnBind = false;
+    recordCanvasBindingDiagnostic({ phase: "requested", canvasId: capturedCanvasId, nodeId: input.nodeId, outputIndex, task, project: useCanvasStore.getState().openProject(capturedCanvasId) ?? undefined });
     for (;;) {
+        assertNodeOwnership();
         try {
             response = await bindOutput({
                 operationId,
@@ -388,7 +398,10 @@ export async function bindBackendCanvasGenerationResult(input: {
             }
             // 交付仍在进行时 bind 会以 output_not_ready/resource_not_ready 拒绝；
             // 同一个 operationId 幂等，回到等待再重试，不把在途状态报成画布冲突。
-            if (!isOutputNotReadyError(error)) throw error;
+            if (!isOutputNotReadyError(error)) {
+                if (userScopeMatches(capturedScope, liveScope()) && !(error instanceof Error && error.name === "AbortError")) recordCanvasBindingDiagnostic({ phase: "refused", canvasId: capturedCanvasId, nodeId: input.nodeId, outputIndex, task, error, project: useCanvasStore.getState().openProject(capturedCanvasId) ?? undefined });
+                throw error;
+            }
             assertBindDispatchScope(capturedScope, liveScope);
             task = await waitForMaterialization(task, true);
             assertBindDispatchScope(capturedScope, liveScope);
@@ -405,6 +418,7 @@ export async function bindBackendCanvasGenerationResult(input: {
         input.nodesRef.current = adopted.nodes;
         input.setNodes(adopted.nodes);
     }
+    recordCanvasBindingDiagnostic({ phase: "confirmed", canvasId: capturedCanvasId, nodeId: input.nodeId, outputIndex, task, project: adopted });
 }
 
 function assertBindDispatchScope(expected: CapturedUserScope, live: () => CapturedUserScope) {
