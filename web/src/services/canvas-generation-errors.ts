@@ -1,13 +1,16 @@
 import { isCanvasRevisionConflict } from "@/services/canvas-revision-conflict";
+import { explainGenerationError } from "@/lib/generation-error";
 
 export class CanvasGenerationDurableAckError extends Error {
-    readonly code: "canvas_conflict" | "result_apply_failed";
+    readonly code: "canvas_conflict" | "result_apply_failed" | "result_target_unavailable";
     readonly cause: unknown;
 
     constructor(cause: unknown) {
-        super(isCanvasRevisionConflict(cause) ? "生成结果已保留，画布尚未更新" : "生成结果已保留，还没放回画布");
+        const explanation = explainGenerationError(cause);
+        const code = isCanvasRevisionConflict(cause) ? "canvas_conflict" : explanation.category === "result_target_unavailable" ? "result_target_unavailable" : "result_apply_failed";
+        super(code === "canvas_conflict" ? "生成结果已保留，画布尚未更新" : code === "result_target_unavailable" ? explanation.message : "生成结果已保留，还没放回画布");
         this.name = "CanvasGenerationDurableAckError";
-        this.code = isCanvasRevisionConflict(cause) ? "canvas_conflict" : "result_apply_failed";
+        this.code = code;
         this.cause = cause;
     }
 }

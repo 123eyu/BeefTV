@@ -52,12 +52,14 @@ async function start(dir, limit) {
     BEEFTV_AGENT_TOTAL_REQUEST_BUDGET: String(limit), BEEFTV_AGENT_MAX_REQUESTS_PER_TURN: '1',
   }});
   child.stdout.on('data', data => { log += data; }); child.stderr.on('data', data => { log += data; });
-  for (let i = 0; i < 150; i++) {
+  // Match assistantruntime's production ready deadline, including SDK import time.
+  const deadline = Date.now() + 20000;
+  while (Date.now() < deadline) {
     if (child.exitCode !== null) throw Error(log);
     try { if ((await fetch(base + '/health', { signal: AbortSignal.timeout(200) })).ok) return; } catch {}
     await delay(100);
   }
-  throw Error('Host did not start: ' + log);
+  throw Error('Host did not start within 20s: ' + log);
 }
 async function chat(canvasId = 'test') {
   const turnId = `budget-${++turnSeq}`;

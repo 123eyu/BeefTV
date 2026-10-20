@@ -104,15 +104,19 @@ type Scope struct {
 // HistoryState supplements pi conversation history with business receipts.
 // Reading it never settles or cancels an active round.
 type HistoryState struct {
-	PermissionMode string
-	Change         *Change
-	Undone         bool
-	SkillPins      []skills.Pin
+	ContinuationInvalidated bool
+	PermissionMode          string
+	Change                  *Change
+	Undone                  bool
+	SkillPins               []skills.Pin
 }
 
 // Record is the in-memory business round. Document is the pre-turn canvas
 // snapshot, not a chat transcript.
 type Record struct {
+	ContinuationInvalidated     bool
+	GenerationAuthorizationJSON string
+
 	DurableNativeSources string
 	DurableSessionID     string
 	PermissionMode       string

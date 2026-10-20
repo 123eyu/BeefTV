@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 18
+const CurrentSchemaVersion int64 = 21
 
 type localSchemaMigration struct {
 	Version   int64 `gorm:"primaryKey;autoIncrement:false"`
@@ -59,6 +59,7 @@ func LocalModels() []any {
 		&model.WorkflowTemplateVersion{}, &model.WorkflowInstance{}, &model.WorkflowStepInstance{}, &model.WorkflowStepTask{}, &model.ProductionTaskLink{},
 		&model.CanvasProject{}, &model.CanvasSnapshot{}, &model.CanvasSnapshotResource{}, &model.AgentOpRecord{},
 		&model.AssistantTurn{},
+		&model.AssistantContinuation{},
 		&model.AssistantSkillContext{}, &model.AssistantSkillContextMutation{},
 		&model.CreationConversation{},
 		&model.CanvasLibraryFolder{}, &model.CanvasDrawing{},
@@ -92,7 +93,10 @@ func canonicalLocalMigrations() []localMigration {
 		{version: 15, name: "assistant-permission-and-canvas-snapshots", apply: migrateAssistantPermissions},
 		{version: 16, name: "assistant-durable-session-binding", apply: migrateAssistantSessions},
 		{version: 17, name: "assistant-active-skill-context", apply: migrateAssistantSkillContexts},
-		{version: 18, name: "skill-market-release-metadata", apply: migrateSkillMarketReleaseMetadata},
+		{version: 18, name: "assistant-generation-continuations", apply: migrateAssistantContinuations},
+		{version: 19, name: "assistant-continuation-intent-fence", apply: migrateAssistantContinuationIntentFence},
+		{version: 20, name: "assistant-production-authorization", apply: migrateAssistantProductionAuthorization},
+		{version: 21, name: "skill-market-release-metadata", apply: migrateSkillMarketReleaseMetadata},
 	}
 }
 
@@ -387,6 +391,9 @@ func migrateLegacyCreationSubmissions(db *gorm.DB) error {
 }
 
 func RequireLocalSchema(db *gorm.DB) error {
+	if !db.Migrator().HasTable(&model.AssistantContinuation{}) {
+		return fmt.Errorf("本地工作区数据库结构缺失，请启用自动迁移")
+	}
 	for _, table := range []any{&model.Workspace{}, &model.Resource{}, &model.Project{}, &model.CanvasProject{}, &model.Task{}, &model.AgentOpRecord{}, &model.ImageSubmission{}, &model.AssistantTurn{}, &model.CreationConversation{}, &model.CanvasLibraryFolder{}, &model.CanvasDrawing{}, &model.AssistantSkillContext{}, &model.AssistantSkillContextMutation{}} {
 		if !db.Migrator().HasTable(table) {
 			return fmt.Errorf("本地工作区数据库结构缺失，请启用自动迁移")
@@ -401,6 +408,12 @@ func RequireLocalSchema(db *gorm.DB) error {
 	}
 	if version != CurrentSchemaVersion {
 		return fmt.Errorf("本地工作区数据库版本为 %d，期望 %d，请启用自动迁移", version, CurrentSchemaVersion)
+	}
+	if err := requireAssistantContinuations(db); err != nil {
+		return err
+	}
+	if err := requireAssistantContinuationIntentFence(db); err != nil {
+		return err
 	}
 	return requireReconciledSchema(db)
 }
@@ -489,7 +502,12 @@ func requireReconciledSchema(db *gorm.DB) error {
 			return err
 		}
 	}
-	if version >= 18 {
+	if version >= 20 {
+		if err := requireAssistantProductionAuthorization(db); err != nil {
+			return err
+		}
+	}
+	if version >= 21 {
 		return requireSkillMarketReleaseMetadata(db)
 	}
 	return nil

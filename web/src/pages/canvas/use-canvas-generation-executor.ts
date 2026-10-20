@@ -31,7 +31,7 @@ import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/ty
 import { executeImageGeneration } from "./canvas-image-generation-executor";
 import { executeAudioGeneration, executeVideoGeneration } from "./canvas-media-generation-executors";
 import { executeTextGeneration } from "./canvas-text-generation-executor";
-import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked, canvasImageGenerationHasPendingResult } from "./canvas-generation-failure";
+import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked, canvasImageGenerationHasPendingResult, canvasImagePendingResultMessage } from "./canvas-generation-failure";
 import { createReferenceLinkResolver } from "@/components/generation-reference-links";
 import { confirmCanvasGeneration, waitForCanvasPreparation } from "./canvas-generation-preflight";
 
@@ -69,6 +69,7 @@ export type CanvasNodeGenerationOptions = {
     context?: { conversationId?: string; messageId?: string };
     retryContext?: { retryOf: string; attemptGroupId: string; clientOperationId: string };
     onTaskUpdate?: (task: GenerationTask) => void;
+    onSubmissionPlan?: (manifest: import("@/services/api/assistant-continuation").AssistantSubmissionManifest) => Promise<void>;
     skipDuplicateConfirmation?: boolean;
 };
 
@@ -163,7 +164,7 @@ export function useCanvasGenerationExecutor({
                         }
                         if (mode === "image" && canvasImageGenerationHasPendingResult(sourceNode, inputNodes)) {
                             diagnostic("generation_pending_result", "warning");
-                            message.warning("生成结果已保留，请点击「继续取回」");
+                            message.warning(canvasImagePendingResultMessage(sourceNode, inputNodes));
                             return;
                         }
                         if (isCanvasNodeGenerating(nodesRef.current.find((node) => node.id === nodeId))) {
@@ -429,6 +430,7 @@ export function useCanvasGenerationExecutor({
                             skillMetadata: skillExecution.metadata,
                             taskContext: options?.context,
                             retryContext: options?.retryContext,
+                            onSubmissionPlan: options?.onSubmissionPlan,
                                 clientOperationId: options?.clientOperationId || options?.retryContext?.clientOperationId || `canvas:${createClientId()}`,
                             setNodes,
                             setConnections,
@@ -438,7 +440,7 @@ export function useCanvasGenerationExecutor({
                             startGenerationRequest,
                             finishGenerationRequest,
                             bindGenerationTask: (targetNodeId: string, task: GenerationTask) => {
-                                recordDiagnosticEvent({ category: "task", level: "info", code: "generation_submission_bound", message: "画布提交已关联生成任务", requestId: attemptId, canvasId: projectId, taskId: task.id });
+                                recordDiagnosticEvent({ category: "task", level: "info", code: "generation_submission_bound", message: "画布提交已关联生成任务", requestId: attemptId, canvasId: projectId, taskId: task.id, canvasBinding: { source: "client", nodeId: targetNodeId, clientOperationId: task.clientOperationId } });
                                 bindGenerationTask(targetNodeId, task);
                                 setNodes((current) => {
                                     const source = current.find((node) => node.id === nodeId);

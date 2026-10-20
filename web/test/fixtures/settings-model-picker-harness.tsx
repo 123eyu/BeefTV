@@ -15,7 +15,8 @@ import { createModelChannel, defaultConfig, normalizeConfigSnapshot, useConfigSt
 const config = normalizeConfigSnapshot({
     config: {
         ...defaultConfig,
-        channels: [createModelChannel({ id: "studio", name: "工作室渠道", baseUrl: "https://api.example.com", apiKey: "synthetic-key", models: ["chat-x", "chat-z", "image-y", "image-z", "video-y", "video-z", "audio-y", "audio-z"], modelProfiles: [
+        channels: [createModelChannel({ id: "studio", name: "工作室渠道", baseUrl: "https://api.example.com", apiKey: "synthetic-key", models: ["chat-x", "chat-z", "image-y", "image-z", "video-y", "video-z", "audio-y", "audio-z", "wand-vega-vl-1.0-flash"], modelProfiles: [
+            { model: "wand-vega-vl-1.0-flash", capability: "text", protocol: "chat-completion" },
             { model: "chat-x", capability: "text", protocol: "chat-completion" },
             { model: "chat-z", capability: "text", protocol: "chat-completion" },
             { model: "image-y", capability: "image", protocol: "openai-image" },

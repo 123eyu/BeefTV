@@ -25,6 +25,8 @@ type SkillContext struct {
 }
 
 type SkillContextChange struct {
+	// Set only by the host-authenticated route after validating the turn binding.
+	BoundTurnID      string       `json:"-"`
 	SessionID        string       `json:"sessionId"`
 	Action           string       `json:"action"`
 	ExpectedRevision int64        `json:"expectedRevision"`
@@ -106,8 +108,33 @@ func (s *Service) SkillContext(userID, canvasID, sessionID string) (*SkillContex
 }
 
 // ChangeSkillContext uses CAS and a durable receipt, shared by UI and host.
-// Package visibility/content validation belongs to the caller's skill service.
+// Callers that validate package access use ChangeSkillContextValidated so an
+// already committed receipt remains replayable after a package is removed.
 func (s *Service) ChangeSkillContext(userID, canvasID string, change SkillContextChange) (*SkillContext, error) {
+	return s.changeSkillContext(userID, canvasID, change, nil, "")
+}
+
+// SkillPinValidator must read through tx: the production SQLite pool has one
+// connection, and validation belongs to the same transaction as the mutation.
+type SkillPinValidator func(tx *gorm.DB, pins []skills.Pin) ([]skills.Pin, error)
+
+func (s *Service) ChangeSkillContextValidated(userID, canvasID string, change SkillContextChange, validate SkillPinValidator) (*SkillContext, error) {
+	if validate == nil {
+		return nil, storeUnavailable()
+	}
+	return s.changeSkillContext(userID, canvasID, change, validate, "")
+}
+
+// Only the trusted host's skill_load path may carry valid continuation receipts
+// across a skill revision. User selections and resets use the normal path.
+func (s *Service) LoadTurnSkillContextValidated(userID, canvasID, turnID string, change SkillContextChange, validate SkillPinValidator) (*SkillContext, error) {
+	if validate == nil || turnID == "" || change.Action != "activate" {
+		return nil, contextError("invalid_skill_context_request", "技能加载参数无效")
+	}
+	return s.changeSkillContext(userID, canvasID, change, validate, turnID)
+}
+
+func (s *Service) changeSkillContext(userID, canvasID string, change SkillContextChange, validate SkillPinValidator, skillLoadTurnID string) (*SkillContext, error) {
 	if err := s.contextActor(userID, canvasID, change.SessionID); err != nil {
 		return nil, err
 	}
@@ -136,13 +163,38 @@ func (s *Service) ChangeSkillContext(userID, canvasID string, change SkillContex
 		return nil, contextError("invalid_skill_context_request", "此操作不接受新的技能")
 	}
 	digestBody, _ := json.Marshal(struct {
-		Action string
-		Pins   []skills.Pin
-	}{change.Action, skillPinIdentities(change.Pins)})
+		Action          string
+		Pins            []skills.Pin
+		SkillLoadTurnID string `json:",omitempty"`
+	}{change.Action, skillPinIdentities(change.Pins), skillLoadTurnID})
 	sum := sha256.Sum256(digestBody)
 	digest := hex.EncodeToString(sum[:])
 	var result *SkillContext
 	err := s.store.DB().Transaction(func(tx *gorm.DB) error {
+		boundTurnID := change.BoundTurnID
+		if skillLoadTurnID != "" {
+			boundTurnID = skillLoadTurnID
+		}
+		exemptSource := ""
+		if boundTurnID != "" {
+			rec, err := s.lockOpenTurn(tx, userID, boundTurnID, canvasID)
+			if err != nil {
+				return err
+			}
+			if rec.UserID != userID || rec.CanvasID != canvasID || rec.DurableSessionID != change.SessionID {
+				return errNotFound()
+			}
+			var automatic int64
+			if err := tx.Model(&model.AssistantContinuation{}).Where("turn_id = ?", boundTurnID).Count(&automatic).Error; err != nil {
+				return err
+			}
+			// Loading the user's explicit selection initializes this new user turn.
+			// It must still be able to issue fresh proposals. An automatic turn's
+			// explicit user selection does revoke that older automatic intent.
+			if automatic == 0 && change.Action == "activate" {
+				exemptSource = boundTurnID
+			}
+		}
 		key := model.AssistantSkillContextMutation{UserID: userID, CanvasID: canvasID, DurableSessionID: change.SessionID, RequestID: change.RequestID}
 		var receipt model.AssistantSkillContextMutation
 		if err := tx.Where(&key).First(&receipt).Error; err == nil {
@@ -184,6 +236,13 @@ func (s *Service) ChangeSkillContext(userID, canvasID string, change SkillContex
 			}
 			row.Lifecycle = "reset_pending"
 		}
+		if validate != nil && change.Action != "clear" {
+			pins, err = validate(tx, pins)
+			if err != nil {
+				return err
+			}
+			pins = SortedSkillPins(pins)
+		}
 		encoded, _ := json.Marshal(pins)
 		row.ActivePinsJSON = string(encoded)
 		previous := row.Revision
@@ -195,6 +254,18 @@ func (s *Service) ChangeSkillContext(userID, canvasID string, change SkillContex
 		}
 		if update.RowsAffected != 1 {
 			return contextError("skill_context_revision_conflict", "技能状态已变化，请刷新后重试")
+		}
+		if skillLoadTurnID != "" {
+			// A runtime tool load does not replace user intent. Carry every still
+			// valid receipt in this exact scope/version, including pending peers.
+			// Cancelled, completed and already stale scopes can never be revived.
+			if err := tx.Model(&model.AssistantContinuation{}).Where("user_id = ? AND canvas_id = ? AND session_id = ? AND scope_id = ? AND scope_revision = ? AND state IN ?", userID, canvasID, change.SessionID, row.ScopeID, previous, []string{"waiting", "claimed", "running"}).Update("scope_revision", row.Revision).Error; err != nil {
+				return err
+			}
+		} else {
+			if err := s.cancelContinuations(tx, userID, canvasID, change.SessionID, "", false, exemptSource); err != nil {
+				return err
+			}
 		}
 		result, err = contextProjection(*row)
 		if err != nil {

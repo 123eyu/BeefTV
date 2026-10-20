@@ -207,24 +207,31 @@ func (s *Service) ScopeForHost(userID, turnID string) (Scope, bool, error) {
 	if rec.UserID != userID || rec.Undone || rec.effectiveState() != StateOpen {
 		return Scope{}, false, nil
 	}
+	if err := s.continuationTurnAllowed(s.store.DB(), turnID); err != nil {
+		return Scope{}, false, err
+	}
 	taskIDs := append([]string{}, rec.AssociatedTaskIDs...)
 	receipts, err := s.store.SucceededByTurn(nil, rec.UserID, rec.TurnID)
 	if err != nil {
 		return Scope{}, false, err
 	}
 	for _, receipt := range receipts {
-		if receipt.Op != "canvas.timeline.render" {
+		if receipt.Op != "canvas.timeline.render" && receipt.Op != "canvas.generation.submit" {
 			continue
 		}
 		var result struct {
-			CanvasID string `json:"canvasId"`
-			TaskID   string `json:"taskId"`
+			CanvasID string   `json:"canvasId"`
+			TaskID   string   `json:"taskId"`
+			TaskIDs  []string `json:"taskIds"`
 		}
 		if json.Unmarshal([]byte(receipt.ResultJSON), &result) != nil {
 			return Scope{}, false, errors.New("本地渲染回执损坏")
 		}
 		if (result.CanvasID == rec.CanvasID || Mode(rec.PermissionMode) == PermissionFullAccess) && strings.TrimSpace(result.TaskID) != "" {
 			taskIDs = append(taskIDs, result.TaskID)
+		}
+		if result.CanvasID == rec.CanvasID {
+			taskIDs = append(taskIDs, result.TaskIDs...)
 		}
 	}
 	sessionPins, err := s.sessionSkillPins(rec)
@@ -350,7 +357,10 @@ func (s *Service) Finalize(turnID string) error {
 			rec.Document = nil
 			rec.CanvasSnapshots = nil
 		}
-		return s.persist(tx, rec)
+		if err := s.persist(tx, rec); err != nil {
+			return err
+		}
+		return tx.Model(&model.AssistantContinuation{}).Where("turn_id = ? AND state IN ?", rec.TurnID, []string{"claimed", "running"}).Update("state", "done").Error
 	})
 }
 
@@ -391,12 +401,13 @@ func (s *Service) History(userID, canvasID, turnID string) (*HistoryState, error
 			return nil, err
 		}
 	}
-	return &HistoryState{Change: change, Undone: rec.Undone, PermissionMode: Mode(rec.PermissionMode), SkillPins: SortedSkillPins(rec.SkillPins)}, nil
+	return &HistoryState{Change: change, Undone: rec.Undone, ContinuationInvalidated: rec.ContinuationInvalidated, PermissionMode: Mode(rec.PermissionMode), SkillPins: SortedSkillPins(rec.SkillPins)}, nil
 }
 
 // CheckProposalRunnable is the server gate before a generation the round
-// suggested is started: an undone round must not start paid generation for
-// nodes it no longer owns. Missing or foreign rounds read as not found.
+// suggested is started. Undo and a changed intent both invalidate unstarted
+// proposals, even when automatic continuation is disabled. Missing or foreign
+// rounds read as not found.
 func (s *Service) CheckProposalRunnable(userID, canvasID, turnID string) error {
 	if err := requireActor(userID, canvasID); err != nil {
 		return err
@@ -416,6 +427,9 @@ func (s *Service) CheckProposalRunnable(userID, canvasID, turnID string) error {
 	}
 	if rec.Undone {
 		return &Error{Reason: ReasonUndone, Message: "这一轮已撤销，不会生成。"}
+	}
+	if rec.ContinuationInvalidated {
+		return continuationError("intent_changed")
 	}
 	return nil
 }

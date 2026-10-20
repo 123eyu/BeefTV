@@ -93,11 +93,16 @@ func registerAssistantRuntimeSkillContextRoutes(r gin.IRouter, svc *app.Service)
 			assistantturns.SkillContextChange
 			TurnID  string `json:"turnId"`
 			ScopeID string `json:"scopeId"`
+			Origin  string `json:"origin"`
 		}
 		decoder := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, 16384))
 		decoder.DisallowUnknownFields()
 		if decoder.Decode(&body) != nil || !errors.Is(decoder.Decode(new(any)), io.EOF) {
 			fail(c, http.StatusBadRequest, app.BadAuthRequest("技能状态参数无效"))
+			return
+		}
+		if body.Origin != "" && (body.Origin != "skill_load" || body.TurnID == "" || body.Action != "activate") {
+			fail(c, http.StatusBadRequest, app.BadAuthRequest("技能加载参数无效"))
 			return
 		}
 		if body.TurnID != "" {
@@ -110,10 +115,13 @@ func registerAssistantRuntimeSkillContextRoutes(r gin.IRouter, svc *app.Service)
 				fail(c, http.StatusForbidden, app.Forbidden("画布不匹配"))
 				return
 			}
+			body.SkillContextChange.BoundTurnID = body.TurnID
 		}
 		var result *assistantturns.SkillContext
 		if body.Action == "ack_reset" {
 			result, err = svc.AcknowledgeAssistantSkillScope(user.ID, canvasID, body.SessionID, body.ScopeID, body.ExpectedRevision)
+		} else if body.Origin == "skill_load" {
+			result, err = svc.LoadAssistantTurnSkillContext(user.ID, canvasID, body.TurnID, body.SkillContextChange)
 		} else {
 			result, err = svc.ChangeAssistantSkillContext(user.ID, canvasID, body.SkillContextChange)
 		}

@@ -1,6 +1,7 @@
 import { localAssetToInsertPayload } from "@/components/canvas/asset-picker-modal";
 import { isCanvasNodeGenerating } from "@/lib/canvas/canvas-node-task-state";
 import { CanvasAssistantSidebar } from "./canvas-assistant-sidebar";
+import { useCanvasAssistantContinuation } from "./use-canvas-assistant-continuation";
 import { highlightAssistantNodes } from "./canvas-assistant-highlight";
 import { resolveCanvasRightPanel, useCanvasAssistant, useCanvasAssistantDockable } from "./use-canvas-assistant";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -970,6 +971,7 @@ function InfiniteCanvasPage() {
         getCanvasCenter,
     });
 
+    const assistantContinuation = useCanvasAssistantContinuation(assistant, nodes, !readOnly);
     const { runAssistantProposal, assistantProposalFeedback, runningProposalIds } = useCanvasAssistantProposal({
         projectId,
         addedSkills,
@@ -977,6 +979,9 @@ function InfiniteCanvasPage() {
         connectionsRef,
         handledProposals: assistant.handledProposals,
         markProposalHandled: assistant.markProposalHandled,
+        continuationSessionId: assistant.sessionId,
+        continuePlan: Boolean(assistant.plan?.items.some(item => item.status !== "done")),
+        onContinuationArmed: assistantContinuation.refresh,
         handleGenerateNode,
     });
 
@@ -1037,6 +1042,8 @@ function InfiniteCanvasPage() {
         getCanvasCenter,
         createHandoffNodes: createAssetPayloadNodes,
         applyGenerationTaskResult,
+        startGenerationRequest,
+        finishGenerationRequest,
     });
     const canvasContext = useMemo(() => summarizeCanvasContext(nodes, selectedNodeIds, linkedProjectQuery.data?.units), [linkedProjectQuery.data?.units, nodes, selectedNodeIds]);
     const directorReferenceTargetRef = useRef<{ projectId: string; nodeId: string | null; scope: string } | null>(null);
@@ -2341,6 +2348,10 @@ function InfiniteCanvasPage() {
     const retryCanvasNode = useCallback(
         (node: CanvasNodeData) => {
             const plan = canvasNodeRetryPlan(node, nodesRef.current);
+            if (plan.kind === "history") {
+                setGenerationHistoryOpen(true);
+                return;
+            }
             if (plan.kind === "depth") {
                 void retryDepthCaptureNode(node);
                 return;
@@ -2368,7 +2379,7 @@ function InfiniteCanvasPage() {
             }
             void handleRetryNode(node);
         },
-        [generateScriptRows, handleRetryNode, message, nodesRef, reconcileImageBatchRootNode, retryDepthCaptureNode, retryImageBatchChildren],
+        [generateScriptRows, handleRetryNode, message, nodesRef, reconcileImageBatchRootNode, retryDepthCaptureNode, retryImageBatchChildren, setGenerationHistoryOpen],
     );
 
     // 改动卡片的「在画布上查看」：选中这些节点并把视野带过去，再点亮一下。
@@ -3275,7 +3286,7 @@ function InfiniteCanvasPage() {
                                     setNodes((prev) =>
                                         prev.map((node) =>
                                             node.id === activeScriptNode.id
-                                                ? { ...node, metadata: { ...node.metadata, storyboard: { rows: node.metadata?.storyboard?.rows || [], visibleColumns, referenceNodeIds: node.metadata?.storyboard?.referenceNodeIds || [] } } }
+                                                ? { ...node, metadata: { ...node.metadata, storyboardVisibleColumnsCustomized: true, storyboard: { rows: node.metadata?.storyboard?.rows || [], visibleColumns, referenceNodeIds: node.metadata?.storyboard?.referenceNodeIds || [] } } }
                                                 : node,
                                         ),
                                     );
@@ -3365,6 +3376,8 @@ function InfiniteCanvasPage() {
                         proposalFeedback={assistantProposalFeedback}
                         runningProposalIds={runningProposalIds}
                         assistant={assistant}
+                        continuation={assistantContinuation}
+                        nodes={nodes}
                         canvasTitle={workspaceProject?.title === "未命名项目" || !workspaceProject?.title ? "未命名工作区" : workspaceProject.title}
                         dockable={assistantDockable}
                         readOnly={readOnly}
