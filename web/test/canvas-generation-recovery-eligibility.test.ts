@@ -17,6 +17,7 @@ const recoverable: Array<[string, CanvasNodeData]> = [
     ["older interrupted node", node("legacy", { status: "error", errorDetails: "页面刷新后生成已中断，请重新生成。" })],
 ];
 const settled: Array<[string, CanvasNodeData]> = [
+    ["result target no longer accepts the task", node("target-unavailable", { status: "error", taskId: "t-unavailable", taskStatus: "succeeded", generationErrorCode: "result_target_unavailable" })],
     ["finished with content", node("done", { status: "success", taskId: "t5", taskStatus: "succeeded", content: "/x", storageKey: "resource:x" })],
     ["upload in progress", node("upload", { fileUpload: "uploading", fileUploadProgress: 30 })],
     ["aggregate batch root", node("root", { status: "loading", isBatchRoot: true, batchChildIds: ["a", "b"] })],

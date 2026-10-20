@@ -232,6 +232,7 @@ export function generationTaskMetadata(task: GenerationTask): CanvasNodeMetadata
     const progress = normalizeTaskProgress(task.progress, task.status);
     return {
         taskId: task.id,
+        taskType: task.type,
         taskClientOperationId: task.clientOperationId,
         generationSubmissionState: "accepted",
         retryOf: task.retryOf,
@@ -266,6 +267,7 @@ export function resetGenerationTaskMetadata(metadata: CanvasNodeMetadata | undef
         failedInputFingerprint: undefined,
     };
     delete next.taskId;
+    delete next.taskType;
     delete next.taskOutputIndex;
     delete next.generationOutputNodeIds;
     delete next.taskClientOperationId;
@@ -290,6 +292,7 @@ export function resetGenerationTaskMetadata(metadata: CanvasNodeMetadata | undef
 
 export function clearInPlaceMediaOutputMetadata(metadata: CanvasNodeMetadata | undefined, status: CanvasNodeMetadata["status"] = "loading"): CanvasNodeMetadata {
     const next = resetGenerationTaskMetadata(metadata, status);
+    delete next.depthSourceNodeId;
     delete next.content;
     delete next.storageKey;
     delete next.assetId;
@@ -546,7 +549,7 @@ const LEGACY_INTERRUPTED_GENERATION_DETAILS = "页面刷新后生成已中断，
 /** 节点是否还要和任务中心对账。首次打开画布和之后才载入的快照共用这一条判定。 */
 export function canvasNodeNeedsGenerationRecovery(node: CanvasNodeData) {
     const metadata = node.metadata;
-    if (!metadata || metadata.fileUpload === "uploading" || isDepthCaptureResultNode(node)) return false;
+    if (!metadata || metadata.generationErrorCode === "result_target_unavailable" || metadata.fileUpload === "uploading" || isDepthCaptureResultNode(node)) return false;
     const pendingAgentContinuation = metadata.agentGenerationContinuation?.status === "pending";
     const aggregateBatchRoot = metadata.isBatchRoot && metadata.batchChildIds?.length && !metadata.taskId;
     if (aggregateBatchRoot && !pendingAgentContinuation) return false;

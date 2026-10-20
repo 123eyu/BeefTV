@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/assistantturns"
+	"infinite-canvas/backend/internal/database"
 	"infinite-canvas/backend/internal/model"
 	localtask "infinite-canvas/backend/internal/task"
 )
@@ -20,6 +21,11 @@ func newBackgroundContinuation(t *testing.T, status model.TaskStatus) (*Service,
 	t.Helper()
 	svc, canvasID, _ := newAssistantTurnService(t)
 	t.Cleanup(func() { closeDB(t, svc.Database()) })
+	// StartWorker runs concurrent maintenance writes; use the desktop pool
+	// contract rather than the undo fixture's unbounded SQLite connections.
+	if err := database.ConfigurePool(svc.Database()); err != nil {
+		t.Fatal(err)
+	}
 	raw, err := svc.UserCanvasProject("local", canvasID)
 	if err != nil {
 		t.Fatal(err)

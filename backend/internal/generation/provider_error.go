@@ -281,6 +281,7 @@ var providerCodeCategories = map[string]FailureCategory{
 	"upstream_unavailable":                 CategoryProviderUnavailable,
 	"image_reference_upload_failed":        CategoryProviderUnavailable,
 	"reference_media_upload_failed":        CategoryProviderUnavailable,
+	"reference_preupload_failed":           CategoryProviderUnavailable,
 	"upstream_rejected":                    CategoryUnknown,
 	"upstream_error":                       CategoryUnknown,
 }
@@ -306,7 +307,8 @@ func (f Failure) IsModeration() bool {
 }
 
 func (f Failure) BlocksAutomaticRetry() bool {
-	if f.Uncertain || f.ProviderCode == "image_reference_upload_failed" || f.ProviderCode == "reference_media_upload_failed" {
+	_, preparation := referencePreparationCopies[f.ProviderCode]
+	if f.Uncertain || preparation {
 		return true
 	}
 	switch f.Category {
@@ -453,6 +455,19 @@ func ClassifyError(err error) Failure {
 	}
 	if errors.Is(err, context.Canceled) {
 		return normalizeFailure(Failure{Category: CategoryCancelled})
+	}
+	var referenceUpload *ReferenceUploadError
+	if errors.As(err, &referenceUpload) {
+		if referenceUpload.Meta.Stage != "put" && (referenceUpload.HTTPStatus == 400 || referenceUpload.HTTPStatus == 401 || referenceUpload.HTTPStatus == 402 || referenceUpload.HTTPStatus == 403) {
+			failure := ClassifyError(referenceUpload.Cause)
+			failure.RequestID = firstNonEmpty(referenceUpload.RequestID, failure.RequestID)
+			return failure
+		}
+		copy := referencePreparationCopies["reference_preupload_failed"]
+		failure := normalizeFailure(Failure{Category: CategoryProviderUnavailable, ProviderCode: "reference_preupload_failed",
+			Reason: copy.reason, Action: copy.action, HTTPStatus: referenceUpload.HTTPStatus, RequestID: referenceUpload.RequestID})
+		failure.Retryable = false
+		return failure
 	}
 	var notSent RequestNotSentError
 	if errors.As(err, &notSent) {
