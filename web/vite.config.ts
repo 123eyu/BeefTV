@@ -42,7 +42,11 @@ function licenseNoticesPlugin(): Plugin {
                 const name = request.url?.split("?")[0]?.replace(/^\/licenses\//, "");
                 if (!request.url?.startsWith("/licenses/") || !name) return next();
                 const bytes = notices().get(name);
-                if (!bytes) return next();
+                if (!bytes) {
+                    response.statusCode = 404;
+                    response.end("Not found");
+                    return;
+                }
                 response.setHeader("Content-Type", name.endsWith(".html") ? "text/html; charset=utf-8" : "text/plain; charset=utf-8");
                 response.end(bytes);
             });
