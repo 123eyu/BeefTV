@@ -449,6 +449,10 @@ func ClassifyError(err error) Failure {
 	if errors.As(err, &unknown) {
 		return normalizeFailure(Failure{Category: CategorySubmissionUncertain, Uncertain: true, Retryable: false})
 	}
+	var protocolPreparation ProtocolPreparationError
+	if errors.As(err, &protocolPreparation) {
+		return normalizeFailure(Failure{Category: CategoryModelMissing, Reason: protocolPreparation.Error(), Action: "本次请求尚未提交，请检查所选模型的插件是否已安装、启用并支持该生成类型"})
+	}
 	if errors.Is(err, context.Canceled) {
 		return normalizeFailure(Failure{Category: CategoryCancelled})
 	}

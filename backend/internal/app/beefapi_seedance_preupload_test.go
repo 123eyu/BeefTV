@@ -124,6 +124,39 @@ func TestBeefAPISeedancePreuploadConvertsInlineRefsAndPreservesOrder(t *testing.
 	}
 }
 
+// The shared upload stage preserves order; model reference counts are checked
+// separately, and this does not enable multiple references for Wan.
+func TestBeefAPIWanPreuploadPreservesMixedReferenceOrder(t *testing.T) {
+	harness := newBeefAPISeedanceUploadHarness(t)
+	input := harness.testInput(providerMedia{}, providerMedia{}, providerMedia{})
+	input.Config.Model, input.Config.InterfaceType = "wan3.0-video", "newapi-channel-2"
+	input.ReferenceImages = []providerMedia{
+		{ID: "first", DataURL: dataURL("image/png", []byte("first")), Width: 720, Height: 1280},
+		{ID: "remote", URL: "https://media.example/remote.png"},
+		{ID: "last", DataURL: dataURL("image/png", []byte("last")), Width: 1280, Height: 720},
+	}
+	if err := prepareBeefAPISeedanceReferences(harness.ctx(), input.Config, &input, nil); err != nil {
+		t.Fatal(err)
+	}
+	if harness.creates != 2 || harness.puts != 2 || harness.completes != 2 {
+		t.Fatalf("unexpected upload count: %d/%d/%d", harness.creates, harness.puts, harness.completes)
+	}
+	for i, id := range []string{"first", "remote", "last"} {
+		if input.ReferenceImages[i].ID != id {
+			t.Fatalf("reference %d changed identity", i)
+		}
+	}
+	if input.ReferenceImages[1].URL != "https://media.example/remote.png" || input.ReferenceImages[0].Width != 720 || input.ReferenceImages[2].Width != 1280 || input.ReferenceImages[0].DataURL != "" || input.ReferenceImages[2].DataURL != "" {
+		t.Fatal("reference metadata or existing URL changed")
+	}
+	for i, payload := range []string{"first", "last"} {
+		sum := sha256.Sum256([]byte(payload))
+		if harness.createBodies[i].SHA256 != hex.EncodeToString(sum[:]) {
+			t.Fatalf("upload %d changed reference order", i)
+		}
+	}
+}
+
 func TestBeefAPISeedancePreuploadSkipsPublicAndAssetURLs(t *testing.T) {
 	harness := newBeefAPISeedanceUploadHarness(t)
 	input := harness.testInput(

@@ -102,6 +102,26 @@ func TestSeedanceUploadRecoveryRetainsLargeVideoFailure(t *testing.T) {
 	}
 }
 
+func TestHTTPReferenceUploadFailureDoesNotUseSeedanceInlineRecovery(t *testing.T) {
+	for _, status := range []int{http.StatusForbidden, http.StatusServiceUnavailable} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			h := newBeefAPISeedanceUploadHarness(t)
+			h.putHook = func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(status) }
+			input := h.testInput(providerMedia{DataURL: dataURL("image/png", []byte("image"))}, providerMedia{}, providerMedia{})
+			input.Config.Model, input.Config.InterfaceType = "wan3.0-video", "newapi-channel-2"
+			err := prepareBeefAPISeedanceReferences(h.ctx(), input.Config, &input, nil)
+			var preparation generation.RequestPreparationError
+			var upload *generation.ReferenceUploadError
+			if !errors.As(err, &preparation) || !errors.As(err, &upload) || upload.HTTPStatus != status {
+				t.Fatalf("HTTP-only model used inline recovery: %v", err)
+			}
+			if h.generates != 0 || h.completes != 0 || h.puts != 1 || input.ReferenceImages[0].DataURL == "" {
+				t.Fatalf("failed preparation dispatched or rewrote input: generate=%d complete=%d puts=%d", h.generates, h.completes, h.puts)
+			}
+		})
+	}
+}
+
 func TestSeedanceUploadRecoveryValidatesRemainingInlineReferences(t *testing.T) {
 	h := newBeefAPISeedanceUploadHarness(t)
 	h.putHook = func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) }
