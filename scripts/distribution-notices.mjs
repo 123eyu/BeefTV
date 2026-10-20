@@ -50,7 +50,19 @@ export function distributionNotices({ root = repo, version, platform = "web", he
 <h1>第三方许可与源码</h1><p>BeefTV ${escapeHTML(version)} 使用以下媒体组件。各组件继续适用自己的许可证；BeefTV 的商业使用限制不替代这些许可证。</p>
 <ul>${links}</ul><p>各组件的使用、修改与再分发权利以其许可证为准。上游项目链接与本版本的对应源码包分别列出。</p>
 <p><a href="GPL-2.0.txt">GPL 2.0</a> · <a href="GPL-3.0.txt">GPL 3.0</a> · <a href="LGPL-2.1.txt">LGPL 2.1</a></p>
-<p><a href="LICENSE">BeefTV 许可</a> · <a href="NOTICE">版权声明</a> · <a href="THIRD_PARTY_NOTICES.md">第三方清单</a> · <a href="sources.json">版本与校验信息</a></p></html>\n`));
+<p><a href="LICENSE">BeefTV 许可</a> · <a href="NOTICE">版权声明</a> · <a href="THIRD_PARTY_NOTICES.md">第三方清单</a> · <a href="sources.json">版本与校验信息</a></p>
+<script>
+document.addEventListener("click", (event) => {
+    const link = event.target.closest?.('a[href^="https://"]');
+    if (!link) return;
+    let runtime = window.runtime;
+    try { runtime ||= window.parent.runtime; } catch { /* A browser may embed this page cross-origin. */ }
+    if (typeof runtime?.BrowserOpenURL === "function") {
+        event.preventDefault();
+        runtime.BrowserOpenURL(link.href);
+    }
+});
+</script></html>\n`));
     return files;
 }
 

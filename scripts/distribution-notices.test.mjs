@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 import { distributionNotices } from "./distribution-notices.mjs";
 
 function fixture(t) {
@@ -53,4 +54,27 @@ test("slim builds omit WASM and invalid inputs fail before producing notices", (
     assert.throws(() => distributionNotices({ root, version: 'v1.7.28', platform: '../bad' }), /platform/);
     writeFileSync(resolve(root, "web/node_modules/@ffmpeg/core/package.json"), JSON.stringify({ version: "0.99.0", license: "GPL-2.0-or-later" }));
     assert.throws(() => distributionNotices({ root, version: 'v1.7.28' }), /third-party notice/);
+});
+
+test("external links use the desktop browser bridge but retain normal browser navigation", (t) => {
+    const root = fixture(t);
+    const html = distributionNotices({ root, version: "v1.7.28" }).get("index.html").toString();
+    const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+    for (const mode of ["iframe-runtime", "parent-runtime", "browser", "cross-origin-browser"]) {
+        const opened = [];
+        const runtime = { BrowserOpenURL(url) { opened.push(url); } };
+        const window = { parent: {} };
+        if (mode === "iframe-runtime") window.runtime = runtime;
+        if (mode === "parent-runtime") window.parent.runtime = runtime;
+        if (mode === "cross-origin-browser") Object.defineProperty(window, "parent", { get() { throw Error("cross origin"); } });
+        let click;
+        runInNewContext(script, { window, document: { addEventListener(name, handler) { assert.equal(name, "click"); click = handler; } } });
+        let prevented = false;
+        const href = "https://github.com/glanderness/BeefTV/releases/download/v1.7.28/source.tar.gz";
+        click({ target: { closest() { return { href }; } }, preventDefault() { prevented = true; } });
+        const desktop = mode.endsWith("runtime");
+        assert.equal(prevented, desktop);
+        assert.deepEqual(opened, desktop ? [href] : []);
+        click({ target: { closest() { return null; } }, preventDefault() { throw Error("Intercepted a local license link"); } });
+    }
 });
