@@ -62,9 +62,18 @@ func completeBeefAPISeedanceMultipart(ctx context.Context, config Config, sessio
 	for attempt := 0; attempt < 4; attempt++ {
 		var offset int64
 		var putErr error
+		reporter, _ := ctx.Value(referenceProgressContext{}).(*referenceReporter)
+		if reporter != nil {
+			// Discard bytes sent without a receipt on an earlier attempt.
+			reporter.resumeAt(0)
+		}
 		for _, part := range session.Multipart.Parts {
 			end := offset + part.Bytes
-			if !part.Received {
+			if part.Received {
+				if reporter != nil {
+					reporter.resumeAt(end)
+				}
+			} else {
 				putErr = PutBeefAPISeedanceBytes(ctx, BeefAPISeedanceUploadSession{UploadURL: part.UploadURL, RequiredHeaders: part.RequiredHeaders}, data[offset:end])
 				if putErr != nil {
 					break
@@ -73,6 +82,9 @@ func completeBeefAPISeedanceMultipart(ctx context.Context, config Config, sessio
 			offset = end
 		}
 		if putErr == nil {
+			if reporter != nil {
+				reporter.report("processing", int64(len(data)))
+			}
 			return confirmSeedanceMultipart(ctx, config, session.Ticket)
 		}
 		resultErr = MapBeefAPISeedanceUploadError(putErr, false)

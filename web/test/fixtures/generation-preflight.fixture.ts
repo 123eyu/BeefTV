@@ -35,6 +35,8 @@ mock.module("@/pages/canvas/canvas-image-generation-executor", () => ({ executeI
 mock.module("@/pages/canvas/canvas-media-generation-executors", () => ({ executeVideoGeneration: (input: any) => executeVideo(input), executeAudioGeneration: async () => {} }));
 mock.module("@/pages/canvas/canvas-text-generation-executor", () => ({ executeTextGeneration: async () => {} }));
 const { useCanvasGenerationExecutor } = await import("@/pages/canvas/use-canvas-generation-executor");
+const { useOperationProgress } = await import("@/stores/use-operation-progress");
+const progressEntries = () => Object.values(useOperationProgress.getState().entries);
 const nodesRef: any = { current: [{ id: "video", type: "video", metadata: { content: "old-result", status: "success" } }] };
 const no = () => {};
 const generate = useCanvasGenerationExecutor({ projectId: "canvas", addedSkills: [], assets: [], nodesRef, connectionsRef: { current: [] },
@@ -50,7 +52,8 @@ hydrate = (context) => { pendingContext = context; return new Promise((resolve) 
 const first = generate("video", "video", "private prompt");
 await tick();
 assert.equal(running, "video");
-assert.equal(loading.size, 1);
+assert.equal(loading.size, 0);
+assert.deepEqual(progressEntries().map(({ target, detail, phase }) => ({ target, detail, phase })), [{ target: { projectId: "canvas", nodeId: "video" }, detail: "正在准备参考素材", phase: "preparing" }]);
 assert.equal(dispatched, 0);
 const duplicate = generate("video", "video", "private prompt");
 assert(diagnostics.some((e) => e.code === "generation_duplicate_click"));
@@ -58,6 +61,7 @@ requests.get("video")!.abort();
 await Promise.all([first, duplicate]);
 assert.equal(requests.size, 0);
 assert.equal(loading.size, 0);
+assert.equal(progressEntries().length, 0, "cancelled preparation must clear node progress");
 assert.equal(running, null);
 resolveRead(pendingContext);
 await tick();
@@ -70,6 +74,7 @@ await generate("video", "video", "private prompt");
 assert.equal(dispatched, 0);
 assert.equal(requests.size, 0);
 assert(errors[0]!.includes("参数不兼容"));
+assert.equal(progressEntries().length, 0, "validation failure must clear node progress");
 compatible = true;
 await generate("video", "video", "private prompt");
 assert.equal(dispatched, 1);
@@ -87,6 +92,7 @@ confirmations[1].onOk();
 await confirmed;
 assert.equal(dispatched, 2);
 assert.equal(loading.size, 0);
+assert.equal(progressEntries().length, 0, "dispatch must hand node progress to the generation task");
 // Accelerate only the preparation deadline; exercise the real hook and guard.
 const realSetTimeout = globalThis.setTimeout;
 globalThis.setTimeout = ((fn: any, ms: number, ...args: any[]) => realSetTimeout(fn, ms === 60_000 ? 5 : ms, ...args)) as typeof setTimeout;
@@ -99,6 +105,7 @@ try {
 assert(errors.some((text) => text.includes("尚未提交生成任务")));
 assert.equal(requests.size, 0);
 assert.equal(loading.size, 0);
+assert.equal(progressEntries().length, 0, "timed-out preparation must clear node progress");
 resolveRead(pendingContext);
 await tick();
 assert.equal(dispatched, 2);
@@ -136,14 +143,14 @@ assert.equal(requests.has("result-1"), true, "result still owns download control
 assert.equal(firstExecution.controller.signal.aborted, false);
 hydrate = (context) => { pendingContext = context; return new Promise((resolve) => { resolveRead = resolve; }); };
 const next = generate("video", "video", "second shot");
-while (loading.size === 0) await tick();
+while (progressEntries().length === 0) await tick();
 assert.equal(running, "video", "source can prepare the next shot");
 for (let n = 0; n < 510; n++) firstExecution.bindGenerationTask("result-1", { id: "old-task", type: "canvas_video", status: "running", stage: "正在取回生成结果" });
 assert.equal(diagnostics.filter((event) => event.code === "generation_submission_bound" && event.taskId === "old-task").length, 1, "progress must not flood binding diagnostics");
 rejectOld(new Error("old download interrupted"));
 await old;
 assert.equal(running, "video", "old completion must not clear the newer busy state");
-assert.equal(loading.size, 1, "old cleanup must not destroy the newer preparation message");
+assert.equal(progressEntries().length, 1, "old cleanup must not destroy the newer preparation progress");
 assert.equal(requests.has("video"), true);
 executeVideo = async (input) => { dispatched++; input.bindGenerationTask("result-2", { id: "new-task", type: "canvas_video", status: "succeeded" }); };
 resolveRead(pendingContext);

@@ -144,6 +144,7 @@ func PrepareBeefAPIVideoReferences(ctx context.Context, config Config, input *In
 			digest := sha256.Sum256(data)
 			hexDigest := hex.EncodeToString(digest[:])
 			uploadCtx := withReferenceUpload(ctx, ReferenceUploadMeta{Kind: group.kind, Index: index + 1})
+			uploadCtx, reporter := beginReferenceProgress(uploadCtx, referenceMediaLabel(group.kind, index), int64(len(data)))
 			if runtime, ok := RuntimeFromContext(ctx); ok && runtime.Stages != nil {
 				if err := runtime.Stages.SetStage(ctx, ReferenceUploadMeta{Kind: group.kind, Index: index + 1, Stage: "put"}.Label()); err != nil {
 					return err
@@ -191,6 +192,7 @@ func PrepareBeefAPIVideoReferences(ctx context.Context, config Config, input *In
 			if uploaded.Bytes > 0 {
 				media.Bytes = uploaded.Bytes
 			}
+			reporter.report("processing", size)
 		}
 	}
 	return nil
@@ -403,7 +405,7 @@ func PutBeefAPISeedanceBytes(ctx context.Context, session BeefAPISeedanceUploadS
 	if err := ValidateBeefAPISeedanceSecureURL(ctx, session.UploadURL); err != nil {
 		return referenceUploadAddressError(ctx, err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, strings.TrimSpace(session.UploadURL), bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, strings.TrimSpace(session.UploadURL), referenceUploadReader(ctx, bytes.NewReader(data)))
 	if err != nil {
 		return errBeefAPISeedanceUploadUnavailable
 	}

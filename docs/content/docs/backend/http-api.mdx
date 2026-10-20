@@ -250,7 +250,9 @@ NewAPI Channel 2 与 BeefAPI 视频的暂时下载断连会保留原任务 ID �
 
 上述内嵌恢复只适用于 Seedance；要求 HTTP 参考链接的模型在预上传失败时停止准备，不回退到内嵌素材，也不提交生成。
 
-生成结果正在取回时，任务详情与列表的 `delivery.outputs[]` 给出该任务每个输出的 `downloadedBytes`、`totalBytes`（未知为 -1）、`bytesPerSecond` 和 `state`（`downloading` / `retrying`），供页面显示进度。它只存在进程内存中，不写数据库，取回结束即消失，重启后不保留；没有取回中的下载时该字段省略。
+生成结果正在取回时，任务详情与列表的 `delivery.outputs[]` 给出该任务每个输出的 `downloadedBytes`、`totalBytes`（未知为 -1）、`bytesPerSecond`、`updatedAt`（Unix 毫秒采样时间）和 `state`（`downloading` / `retrying` / `waiting`），供页面显示进度。页面在采样超过 3 秒后隐藏速度与剩余时间。它只存在进程内存中，不写数据库，取回结束即消失，重启后不保留；没有取回中的下载时该字段省略。
+
+生成前正在上传参考素材时，任务详情和列表可返回临时的 `referenceProgress`：`label` 标识当前素材，`phase` 为 `preparing`、`transferring` 或 `processing`，并提供 `loadedBytes`、`totalBytes`、`bytesPerSecond`、`startedAt` 和 `updatedAt`（Unix 毫秒）。字节传完后仍需等待上传回执与可用性确认；只有确认完成才进入生成提交阶段。进度绑定 BeefTV 自己的任务 ID，不包含上传地址、票据或本地路径，不写数据库；准备结束或任务退出后清除。
 
 生成成功后仍在下载的结果，可用 `POST /tasks/:id/cancel` 停止取回：生成状态保持 `succeeded`，`stage=delivery_paused`；单次下载满 15 分钟则停止并记为 `delivery_timed_out`。尚未取回的输出使用相同的 `materializationErrorCode`。暂停跨应用重启保留，后台不会自动重启；`POST /tasks/:id/retry` 对这两种成功任务只解除暂停，由交付 worker 继续取回原结果，不重新生成或取消上游任务。应用关闭会停止当前下载，未手动暂停或超时的任务在下次启动后恢复。全部输出取回后清除下载阶段；任务详情和列表也依据已就绪输出将历史残留的下载阶段显示为“生成完成”，不修改旧任务记录或重新提交生成。成功绑定到画布时清除节点的旧任务阶段。
 

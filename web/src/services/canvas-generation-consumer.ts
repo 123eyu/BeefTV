@@ -219,6 +219,7 @@ export async function bindBackendCanvasGenerationResult(input: {
     nodesRef: { current: CanvasNodeData[] };
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
     runtime?: BindBackendCanvasGenerationRuntime;
+    onPhaseChange?: (phase: "fetching" | "saving") => void;
 }) {
     if (input.task.status !== "succeeded") throw new Error("只有成功的任务才能绑定到画布");
     const runtime = input.runtime ?? {};
@@ -267,9 +268,11 @@ export async function bindBackendCanvasGenerationResult(input: {
     let task = input.task;
     if (task.outputs?.length && !generationTaskOutput(task, outputIndex)) throw new CanvasGenerationOutputMissingError(outputIndex);
     if (isMediaGenerationTask(task) && Boolean(task.outputs?.length) && !generationTaskOutputMaterialized(task, outputIndex)) {
+        input.onPhaseChange?.("fetching");
         task = await waitForMaterialization(task);
     }
     assertBindDispatchScope(capturedScope, liveScope);
+    input.onPhaseChange?.("saving");
 
     await hydrateOutputs(task, input.signal, {
         writeAsset: (asset) => {
@@ -403,8 +406,10 @@ export async function bindBackendCanvasGenerationResult(input: {
                 throw error;
             }
             assertBindDispatchScope(capturedScope, liveScope);
+            input.onPhaseChange?.("fetching");
             task = await waitForMaterialization(task, true);
             assertBindDispatchScope(capturedScope, liveScope);
+            input.onPhaseChange?.("saving");
         }
     }
     assertBindDispatchScope(capturedScope, liveScope);

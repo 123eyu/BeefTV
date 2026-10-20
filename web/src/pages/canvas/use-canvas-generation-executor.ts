@@ -34,6 +34,7 @@ import { executeTextGeneration } from "./canvas-text-generation-executor";
 import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked, canvasImageGenerationHasPendingResult, canvasImagePendingResultMessage } from "./canvas-generation-failure";
 import { createReferenceLinkResolver } from "@/components/generation-reference-links";
 import { confirmCanvasGeneration, waitForCanvasPreparation } from "./canvas-generation-preflight";
+import { startOperation } from "@/stores/use-operation-progress";
 
 type UseCanvasGenerationExecutorOptions = {
     projectId: string;
@@ -117,6 +118,7 @@ export function useCanvasGenerationExecutor({
                     let stage = "validation";
                     const attemptId = createClientId();
                     let preparing = false;
+                    let preparationProgress: ReturnType<typeof startOperation> | undefined;
                     let sourceReleased = false;
                     let selectedModel = options?.confirmedModelKey || "";
                     let refSummary = "";
@@ -224,7 +226,8 @@ export function useCanvasGenerationExecutor({
                         startGenerationRequest(nodeId, nodeId, nodeId, controller);
                         preparing = true;
                         setRunningNodeId(nodeId);
-                        message.loading({ key: preparationMessageKey, content: "正在准备参考素材…", duration: 0 });
+                        if (mode === "video") preparationProgress = startOperation("准备视频素材", { target: { projectId, nodeId }, detail: "正在准备参考素材" });
+                        else message.loading({ key: preparationMessageKey, content: "正在准备参考素材…", duration: 0 });
                         stage = "references";
                         diagnostic("generation_preflight_stage");
                         // AutoDL/其他声明式视频协议需要结构化参考素材；只有普通
@@ -368,6 +371,7 @@ export function useCanvasGenerationExecutor({
 
                         controller.signal.throwIfAborted();
                         stage = "dispatch";
+                        preparationProgress?.dismiss();
                         diagnostic("generation_dispatch_started");
                         if (isPreparingEmptyImage) {
                             setNodes((current) =>
@@ -518,6 +522,7 @@ export function useCanvasGenerationExecutor({
                         diagnostic(controller.signal.aborted ? "generation_submission_aborted" : "generation_submission_finished");
                         message.destroy(preparationMessageKey);
                         finishGenerationRequest(nodeId, controller);
+                        preparationProgress?.dismiss();
                         if (preparing) setRunningNodeId((current) => current === nodeId ? null : current);
                     }
                 },

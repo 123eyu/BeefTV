@@ -11,6 +11,7 @@ import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { archiveFileExtension, assertUniqueArchiveNames, ExportIntegrityError, type MissingExportFile } from "@/lib/export-integrity";
 import { assertUserScope, captureUserScope } from "@/lib/user-scope-guard";
 import { http } from "@/services/api/request";
+import { startOperation } from "@/stores/use-operation-progress";
 import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
 
@@ -36,12 +37,20 @@ export function canvasExportProgressLabel(progress: CanvasExportProgress) {
 
 export async function exportCanvasProjects(projects: CanvasProject[], fileName = "画布", options: { includeLocalDrawings?: boolean; folders?: CanvasFolder[]; signal?: AbortSignal; onProgress?: (progress: CanvasExportProgress) => void } = {}): Promise<OwnedMediaSaveResult> {
     const scope = captureUserScope();
+    const operation = startOperation("导出画布", { owner: scope, detail: "正在读取画布与媒体文件", totalFiles: projects.reduce((sum, project) => sum + collectStorageKeys(project).length, 0) });
+    const finish = (result: OwnedMediaSaveResult) => {
+        if (result === "cancelled") operation.dismiss(); else operation.done("画布备份已保存");
+        return result;
+    };
+    try {
     const recordedPhases = new Set<CanvasExportProgress["phase"]>();
     const check = () => { options.signal?.throwIfAborted(); assertUserScope(scope); };
     const step = <T,>(promise: Promise<T>) => awaitCanvasExportStep(promise, options.signal);
     const progress = (value: CanvasExportProgress) => {
         check();
         options.onProgress?.(value);
+        operation.update({ phase: value.phase === "packing" || value.phase === "saving" ? "processing" : "preparing", detail: canvasExportProgressLabel(value) });
+        if (value.phase === "media") operation.update({ completedFiles: value.completed, totalFiles: value.total });
         if (!recordedPhases.has(value.phase)) {
             recordedPhases.add(value.phase);
             recordDiagnosticEvent({ category: "action", level: "info", code: "canvas_export_" + value.phase, message: `画布导出 ${value.phase}`, canvasId: projects.length === 1 ? projects[0]?.id : undefined });
@@ -145,11 +154,15 @@ export async function exportCanvasProjects(projects: CanvasProject[], fileName =
     progress({ phase: "packing" });
     const archiveFiles = [{ name: "projects.json", data: JSON.stringify(data, null, 2) }, ...zipFiles];
     const saved = await saveOwnedNativeArchiveFiles(`${safeFileName(fileName)}.zip`, archiveFiles, scope, { signal: options.signal, onSaving: () => progress({ phase: "saving" }) });
-    if (saved !== undefined) return saved;
+    if (saved !== undefined) return finish(saved);
     const zip = await step(createZip(archiveFiles));
     check();
     progress({ phase: "saving" });
-    return saveOwnedOrBrowserBlob(`${safeFileName(fileName)}.zip`, zip);
+    return finish(await saveOwnedOrBrowserBlob(`${safeFileName(fileName)}.zip`, zip));
+    } catch (error) {
+        if (options.signal?.aborted) operation.dismiss(); else operation.fail("画布导出未完成，请查看错误后重试");
+        throw error;
+    }
 }
 
 // A cache/IndexedDB read may never settle. Cancellation stops this export;
