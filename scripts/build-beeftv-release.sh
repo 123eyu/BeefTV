@@ -83,6 +83,16 @@ fi
 
 echo "Building BeefTV $VERSION_VALUE ($COMMIT_VALUE)"
 
+# The frontend embeds the source index, so the native packet must exist before
+# Wails builds it. Keep the runtime outside Wails' -clean output directory.
+if [[ "$AGENT_TARGET" == darwin/* ]]; then
+  MEDIA_RUNTIME_STAGE="$(mktemp -d "${TMPDIR:-/tmp}/beeftv-release-media.XXXXXX")"
+  trap 'rm -rf "$MEDIA_RUNTIME_STAGE"' EXIT
+  bash "$ROOT_DIR/scripts/package-media-runtime-macos.sh" "$AGENT_TARGET" \
+    "$MEDIA_RUNTIME_STAGE/media-runtime" "" \
+    "$ROOT_DIR/dist/BeefTV-${VERSION_VALUE}-ffprobe-${AGENT_TARGET/\//-}-sources.tar.gz"
+fi
+
 mkdir -p "$DESKTOP_DIR/build"
 cp "$ROOT_DIR/assets/app-icon.png" "$DESKTOP_DIR/build/appicon.png"
 
@@ -131,9 +141,7 @@ cp "$ROOT_DIR/plugin-packages/"*.beeftv-plugin "$PLUGIN_RESOURCE_DIR/"
 
 bun "$ROOT_DIR/scripts/package-agent-host.mjs" "$AGENT_TARGET" \
   "$APP_BUNDLE/Contents/Resources/agent-host"
-bash "$ROOT_DIR/scripts/package-media-runtime-macos.sh" "$AGENT_TARGET" \
-  "$APP_BUNDLE/Contents/Resources/agent-host/media-runtime" "" \
-  "$ROOT_DIR/dist/BeefTV-${VERSION_VALUE}-ffprobe-${AGENT_TARGET/\//-}-sources.tar.gz"
+cp -R "$MEDIA_RUNTIME_STAGE/media-runtime" "$APP_BUNDLE/Contents/Resources/agent-host/media-runtime"
 bun "$ROOT_DIR/scripts/distribution-notices.mjs" "${AGENT_TARGET/\//-}" \
   "$APP_BUNDLE/Contents/Resources/agent-host/licenses" "$VERSION_VALUE"
 if [[ "$AGENT_TARGET" == "darwin/$(uname -m)" || ( "$AGENT_TARGET" == darwin/amd64 && "$(uname -m)" == x86_64 ) ]]; then
