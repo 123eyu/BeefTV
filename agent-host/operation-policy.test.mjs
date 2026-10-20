@@ -23,7 +23,7 @@ test('Go descriptors drive default Pi discovery, calls and durable replay', asyn
   await bridge.loadDescriptors();
   const build = mode => bridge.buildTools('canvas-a',[],{aborted:false,...(mode ? {permissionMode:mode}: {})},newTurnAccumulator(),'session');
   const tools = build();
-  for (const id of ['canvas.script.rows.append','canvas.script.row.update','canvas.script.row.remove']) {
+  for (const id of ['canvas.script.rows.append','canvas.script.row.update','canvas.script.row.remove','canvas.script.prepare']) {
    const tool = tools.find(tool => tool.label === id);
    expect(tool).toBeDefined(); expect(durableToolReplay(tool)).toBe('safe');
    expect(build('read-only').some(tool => tool.label === id)).toBe(false);
