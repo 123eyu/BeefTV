@@ -20,6 +20,7 @@ import urllib.request
 from urllib.parse import urlsplit
 import uuid
 from desktop_cos_store import COSStore, PublishError, fingerprint
+from distribution_sources import release_sources
 
 PLATFORMS = {"darwin-arm64", "darwin-amd64", "windows-amd64", "linux-amd64"}
 PREFIX = "beeftv"
@@ -267,7 +268,7 @@ class Publisher:
             self.public.check(f"{self.public_base}/{payload['version']}/{source.name}",
                               *fingerprint(source), version=payload['version'])
 
-    def stage(self, manifest, assets_dir, with_installers=False):
+    def stage(self, manifest, assets_dir, with_installers=False, with_sources=False):
         payload = self.load(manifest)
         sources = []
         for platform, asset in payload["platforms"].items():
@@ -277,6 +278,12 @@ class Publisher:
                 raise PublishError(f"Local archive missing or size/hash mismatch: {name}")
             sources.append((f"{PREFIX}/{payload['version']}/{name}", source))
         installers = self.installer_sources(payload, assets_dir) if with_installers else []
+        source_packets = self.source_packets(payload, assets_dir) if with_sources else []
+        # Sources are validated before the first write and become downloadable
+        # before the application or update feed can be activated.
+        for source in source_packets:
+            self.immutable_put(f"{PREFIX}/{payload['version']}/{source.name}", source)
+        self.check_sources(payload, source_packets)
         for key, source in sources + installers:
             self.immutable_put(key, source)
         self.check_installers(payload, installers)
@@ -284,8 +291,31 @@ class Publisher:
         self.public_check(payload, manifest)
         return payload["version"]
 
-    def activate(self, manifest, installer_dir=None):
+    def source_packets(self, payload, directory):
+        try:
+            return release_sources(payload, directory)
+        except (ValueError, OSError, KeyError) as error:
+            raise PublishError(f"Source delivery check failed: {error}") from error
+
+    def check_sources(self, payload, sources, github=False):
+        if github:
+            result = run(["gh", "api", f"repos/glanderness/BeefTV/releases/tags/{payload['version']}"])
+            if result.returncode:
+                raise PublishError("Cannot verify GitHub source assets")
+            assets = {item.get("name"): item for item in json.loads(result.stdout).get("assets", [])}
+            for source in sources:
+                size, sha = fingerprint(source)
+                item = assets.get(source.name, {})
+                if item.get("state") != "uploaded" or item.get("size") != size or item.get("digest") != "sha256:" + sha:
+                    raise PublishError(f"GitHub source asset missing or differs: {source.name}")
+        for source in sources:
+            self.public.check(f"{self.public_base}/{payload['version']}/{source.name}",
+                              *fingerprint(source), version=payload["version"])
+
+    def activate(self, manifest, installer_dir=None, source_dir=None):
         payload = self.load(manifest)
+        if source_dir is not None:
+            self.check_sources(payload, self.source_packets(payload, source_dir), github=True)
         if installer_dir is not None:
             self.check_installers(payload, self.installer_sources(payload, installer_dir))
         self.release_check(payload, manifest, self.public)
@@ -314,11 +344,13 @@ class Publisher:
         return payload["version"]
 
     def resume(self, manifest, original_lock, original_claim, *, confirm_no_inflight=False,
-               confirm_writers_frozen=False, confirm_no_unlock_attempt=False, installer_dir=None):
+               confirm_writers_frozen=False, confirm_no_unlock_attempt=False, installer_dir=None, source_dir=None):
         if (getattr(self.store, "provider", None) != "cos" or not confirm_no_inflight
                 or not confirm_writers_frozen or not confirm_no_unlock_attempt):
             raise PublishError("COS recovery requires explicit confirmation: all writers frozen, no in-flight PUT and no prior unlock attempt")
         payload = self.load(manifest)
+        if source_dir is not None:
+            self.check_sources(payload, self.source_packets(payload, source_dir), github=True)
         require_terminal_publisher(original_lock)
         if installer_dir is not None:
             self.check_installers(payload, self.installer_sources(payload, installer_dir))
@@ -358,6 +390,7 @@ def main():
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--assets-dir", type=Path)
     parser.add_argument("--with-installers", action="store_true")
+    parser.add_argument("--with-sources", action="store_true", help="Require matching license/source packets; mandatory in the official release workflow")
     parser.add_argument("--lock-document", type=Path, help="Exact original COS publisher lock document for resume")
     parser.add_argument("--claim-document", type=Path, help="Exact original COS ETag claim document for resume")
     parser.add_argument("--confirm-no-inflight-put", action="store_true", help="Operator confirmed original remote PUT requests have ended; required for resume")
@@ -381,8 +414,8 @@ def main():
         # COS proves native forbid-overwrite for immutable objects and locks;
         # legacy R2 proves its native conditional PUT headers. Never assume S3
         # compatibility supplies either primitive.
-        store.check_conditions()
         if args.command == "check-store":
+            store.check_conditions()
             print("Release storage conditional writes verified")
             return 0
         publisher = Publisher(store, PublicHTTP(), args.verifier.resolve(), args.public_base)
@@ -393,16 +426,21 @@ def main():
                 raise PublishError("Manifest is too large")
             manifest.write_bytes(args.manifest.read_bytes())
             assets_dir = args.assets_dir or args.manifest.parent
+            if args.with_sources:
+                publisher.source_packets(publisher.load(manifest), assets_dir)
+            store.check_conditions()
             if args.command == "stage":
-                version = publisher.stage(manifest, assets_dir, args.with_installers)
+                version = publisher.stage(manifest, assets_dir, args.with_installers, args.with_sources)
             elif args.command == "resume":
                 version = publisher.resume(manifest, recovery_document(args.lock_document), recovery_document(args.claim_document),
                                            confirm_no_inflight=args.confirm_no_inflight_put,
                                            confirm_writers_frozen=args.confirm_writers_frozen,
                                            confirm_no_unlock_attempt=args.confirm_no_unlock_attempt,
-                                           installer_dir=assets_dir if args.with_installers else None)
+                                           installer_dir=assets_dir if args.with_installers else None,
+                                           source_dir=assets_dir if args.with_sources else None)
             else:
-                version = publisher.activate(manifest, assets_dir if args.with_installers else None)
+                version = publisher.activate(manifest, assets_dir if args.with_installers else None,
+                                             assets_dir if args.with_sources else None)
         print(f"{args.command} verified: {version}")
     except PublishError as error:
         print(f"Desktop publication failed: {error}", file=sys.stderr)

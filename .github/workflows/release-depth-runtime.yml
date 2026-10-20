@@ -27,6 +27,8 @@ jobs:
       BEEFTV_UPDATER_PUBLIC_KEY: ${{ vars.BEEFTV_UPDATER_PUBLIC_KEY }}
     steps:
       - uses: actions/checkout@v4
+      - name: Require corresponding sources for every bundled FFmpeg
+        run: python3 scripts/collect-distribution-sources.py --version "$(cat VERSION)" --destination dist/depth --component ffmpeg-windows-amd64 --component imageio-ffmpeg-windows-amd64
       - name: Require official main and unused runtime tag
         run: |
           set -euo pipefail

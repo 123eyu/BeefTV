@@ -65,6 +65,16 @@ jobs:
       - name: Require two rounds of real client generation
         run: node scripts/verify-real-generation-release.mjs
 
+      - name: Require reviewed media source inputs before publication
+        run: python3 scripts/collect-distribution-sources.py --version "$(cat VERSION)" --component ffmpeg-wasm --component ffmpeg-windows-amd64
+
+      - name: Preserve matching media sources
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-media-sources
+          path: dist/*-sources.tar.gz
+          if-no-files-found: error
+
       - name: Require updater keys
         env:
           BEEFTV_UPDATER_PRIVATE_KEY: ${{ secrets.BEEFTV_UPDATER_PRIVATE_KEY }}
@@ -201,6 +211,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-media-sources
+          path: dist
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: backend/go.mod
@@ -313,6 +328,10 @@ jobs:
         shell: bash
         run: python scripts/package-desktop-installer.py --platform '${{ matrix.platform }}'
 
+      - name: Verify license texts and corresponding sources in final ZIP
+        shell: bash
+        run: python scripts/distribution_sources.py --archive 'dist/BeefTV-${{ needs.preflight.outputs.version }}-${{ matrix.platform }}.zip' --sources-dir dist --platform '${{ matrix.platform }}' --version '${{ needs.preflight.outputs.version }}'
+
       - name: Verify native installer lifecycle
         shell: bash
         env:
@@ -356,7 +375,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.platform }}
-          path: dist/BeefTV-${{ needs.preflight.outputs.version }}-${{ matrix.platform }}*
+          path: |
+            dist/BeefTV-${{ needs.preflight.outputs.version }}-${{ matrix.platform }}*
+            dist/BeefTV-${{ needs.preflight.outputs.version }}-ffprobe-${{ matrix.platform }}-sources.tar.gz
           retention-days: 7
           if-no-files-found: error
 
@@ -438,7 +459,7 @@ jobs:
       - name: Stage and verify immutable COS assets
         run: |
           python3 scripts/publish-desktop-r2.py stage \
-            --manifest dist/desktop-update.json --assets-dir dist --with-installers \
+            --manifest dist/desktop-update.json --assets-dir dist --with-installers --with-sources \
             --verifier "$RUNNER_TEMP/update-release" --provider cos \
             --endpoint-url "$RELEASE_ENDPOINT" --region "$RELEASE_REGION" \
             --bucket "$RELEASE_BUCKET" --public-base "$UPDATER_DOWNLOAD_BASE"
@@ -446,13 +467,13 @@ jobs:
       - name: Publish signed GitHub release
         run: |
           set -euo pipefail
-          gh release upload "$VERSION" "dist/desktop-update.json" dist/BeefTV-"$VERSION"-*.zip dist/BeefTV-"$VERSION"-*.dmg dist/BeefTV-"$VERSION"-*-setup.exe dist/BeefTV-"$VERSION"-*.deb
+          gh release upload "$VERSION" "dist/desktop-update.json" dist/BeefTV-"$VERSION"-*.zip dist/BeefTV-"$VERSION"-*.dmg dist/BeefTV-"$VERSION"-*-setup.exe dist/BeefTV-"$VERSION"-*.deb dist/BeefTV-"$VERSION"-*-sources.tar.gz
           gh release edit "$VERSION" --draft=false --latest
 
       - name: Activate verified COS update feed
         run: |
           python3 scripts/publish-desktop-r2.py activate \
-            --manifest dist/desktop-update.json --assets-dir dist --with-installers \
+            --manifest dist/desktop-update.json --assets-dir dist --with-installers --with-sources \
             --verifier "$RUNNER_TEMP/update-release" --provider cos \
             --endpoint-url "$RELEASE_ENDPOINT" --region "$RELEASE_REGION" \
             --bucket "$RELEASE_BUCKET" --public-base "$UPDATER_DOWNLOAD_BASE"

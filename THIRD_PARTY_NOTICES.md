@@ -30,15 +30,31 @@ licenses are MIT or Apache-2.0 and can be inspected after `bun install`.
 
 ### FFmpeg.wasm
 
-`@ffmpeg/core` 0.12.10 declares `GPL-2.0-or-later`. Its corresponding source is
-available from <https://github.com/ffmpegwasm/ffmpeg.wasm> and its package
-metadata identifies the exact version. Builds that bundle this core must
+`@ffmpeg/core` 0.12.10 declares `GPL-2.0-or-later`. Its upstream project is
+<https://github.com/ffmpegwasm/ffmpeg.wasm>; a repository link and package version
+alone do not establish the complete corresponding source for a binary. Builds that bundle this core must
 preserve the GPL notice and satisfy the GPL source-distribution requirements.
 Neither Part A nor the historical MIT terms in Part B of the root LICENSE
 override this component's GPL terms. The source-available restrictions must
 not be imposed on GPL-governed material. Actual combinations and distributed
 builds must also satisfy applicable compatibility and corresponding-source
 requirements; listing the component here is not a compatibility determination.
+
+### Native FFmpeg tools
+
+Windows desktop bundles Gyan's FFmpeg/ffprobe 8.0.1 essentials build under
+GPL-3.0-or-later. macOS bundles a locally compiled FFmpeg 8.0.1 ffprobe with
+external libraries and GPL features disabled, under LGPL-2.1-or-later.
+Their original notices are retained in `agent-host/media-runtime`; additional
+license texts and a versioned source index are in `agent-host/licenses`.
+The optional Windows depth runtime also contains imageio-ffmpeg's binary and
+requires its own source and license review.
+
+The [media source delivery procedure](docs/media-source-distribution.md)
+defines source collection and final artifact verification. The application
+provides a “第三方许可与源码” entry from its changelog dialog. License texts are
+also available offline in the distributed files. These delivery mechanisms
+do not resolve the separate question of combination compatibility.
 
 ## Agent host runtime dependencies
 

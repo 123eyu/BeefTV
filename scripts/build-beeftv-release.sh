@@ -46,6 +46,7 @@ fi
 COMMIT_VALUE="$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 BUILD_TIME_VALUE="${CANVAS_BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 export CANVAS_BUILD_VERSION="$VERSION_VALUE"
+export BEEFTV_DIST_PLATFORM="${AGENT_TARGET/\//-}"
 export GOTOOLCHAIN="${GOTOOLCHAIN:-local}"
 
 LDFLAGS="-X infinite-canvas/backend/internal/buildinfo.Version=$VERSION_VALUE -X infinite-canvas/backend/internal/buildinfo.Commit=$COMMIT_VALUE -X infinite-canvas/backend/internal/buildinfo.BuildTime=$BUILD_TIME_VALUE"
@@ -111,6 +112,7 @@ if [[ "$AGENT_TARGET" == linux/amd64 ]]; then
   cp "$ROOT_DIR/plugin-packages/"*.beeftv-plugin "$LINUX_BUNDLE/plugin-packages/"
   cp "$ROOT_DIR/docs/linux-install.md" "$LINUX_BUNDLE/README.md"
   bun "$ROOT_DIR/scripts/package-agent-host.mjs" "$AGENT_TARGET" "$LINUX_BUNDLE/agent-host"
+  bun "$ROOT_DIR/scripts/distribution-notices.mjs" "${AGENT_TARGET/\//-}" "$LINUX_BUNDLE/agent-host/licenses" "$VERSION_VALUE"
   (
     cd "$ROOT_DIR/backend"
     go build -trimpath -ldflags "$LDFLAGS" -o "$LINUX_BUNDLE/cli/beeftv" ./cmd/beeftv
@@ -130,7 +132,10 @@ cp "$ROOT_DIR/plugin-packages/"*.beeftv-plugin "$PLUGIN_RESOURCE_DIR/"
 bun "$ROOT_DIR/scripts/package-agent-host.mjs" "$AGENT_TARGET" \
   "$APP_BUNDLE/Contents/Resources/agent-host"
 bash "$ROOT_DIR/scripts/package-media-runtime-macos.sh" "$AGENT_TARGET" \
-  "$APP_BUNDLE/Contents/Resources/agent-host/media-runtime"
+  "$APP_BUNDLE/Contents/Resources/agent-host/media-runtime" "" \
+  "$ROOT_DIR/dist/BeefTV-${VERSION_VALUE}-ffprobe-${AGENT_TARGET/\//-}-sources.tar.gz"
+bun "$ROOT_DIR/scripts/distribution-notices.mjs" "${AGENT_TARGET/\//-}" \
+  "$APP_BUNDLE/Contents/Resources/agent-host/licenses" "$VERSION_VALUE"
 if [[ "$AGENT_TARGET" == "darwin/$(uname -m)" || ( "$AGENT_TARGET" == darwin/amd64 && "$(uname -m)" == x86_64 ) ]]; then
   bash "$ROOT_DIR/scripts/test-media-runtime-macos.sh" "$APP_BUNDLE/Contents/Resources/agent-host/media-runtime"
 fi
