@@ -21,6 +21,9 @@ import (
 // It is non-retryable so the caller can map it to the product size-limit copy.
 var ErrResourceTooLarge = errors.New("远程资源超过大小上限")
 
+// ErrResumeRestart means cached bytes no longer match the current response.
+var ErrResumeRestart = errors.New("远程资源需要重新完整下载")
+
 // ResumableOptions configures DownloadResumable. There is deliberately no total
 // timeout here: the caller owns the overall delivery deadline through ctx.
 type ResumableOptions struct {
@@ -30,6 +33,9 @@ type ResumableOptions struct {
 	HeaderTimeout time.Duration
 	IdleTimeout   time.Duration
 	Attempts      int
+	// OpenResponse lets authenticated callers retain their redirect and
+	// diagnostic policy. Range and If-Range are already set.
+	OpenResponse func(*http.Request) (*http.Response, error)
 	// OnProgress reports transfer progress. It is called synchronously from the
 	// download goroutine, never after DownloadResumable returns, and is throttled
 	// to resumableProgressInterval between body reads.
@@ -176,9 +182,11 @@ func downloadResumableAttempt(ctx context.Context, parsed *url.URL, opts Resumab
 	emitter.observe(offset)
 	emitter.emit(offset, sidecarTotal, "downloading", true)
 
-	attemptCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	headerTimer := time.AfterFunc(headerTimeout, cancel)
+	attemptCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	headerTimer := time.AfterFunc(headerTimeout, func() {
+		cancel(fmt.Errorf("等待下载响应超时：%w", context.DeadlineExceeded))
+	})
 
 	request, err := http.NewRequestWithContext(attemptCtx, http.MethodGet, parsed.String(), nil)
 	if err != nil {
@@ -213,23 +221,27 @@ func downloadResumableAttempt(ctx context.Context, parsed *url.URL, opts Resumab
 		}
 		return nil
 	}
-	response, err := client.Do(request)
+	open := client.Do
+	if opts.OpenResponse != nil {
+		open = opts.OpenResponse
+	}
+	response, err := open(request)
 	headerTimer.Stop()
 	if err != nil {
-		return ResumableResult{}, true, err
+		return ResumableResult{}, true, resumableTransferError(attemptCtx, err)
 	}
 	defer response.Body.Close()
 
 	total := int64(-1)
 	pending := resumableSidecar{
-		URL:          parsed.String(),
+		URL:          resumableSourceURL(parsed),
 		ETag:         response.Header.Get("ETag"),
 		LastModified: response.Header.Get("Last-Modified"),
 	}
 	switch response.StatusCode {
 	case http.StatusRequestedRangeNotSatisfiable:
 		removeResumablePartial(opts.PartialPath)
-		return ResumableResult{}, true, fmt.Errorf("远程资源范围请求无效：%s", response.Status)
+		return ResumableResult{}, true, fmt.Errorf("%w：%s", ErrResumeRestart, response.Status)
 	case http.StatusOK:
 		// The server ignored Range, or the validator changed. Restart from zero.
 		offset = 0
@@ -239,18 +251,18 @@ func downloadResumableAttempt(ctx context.Context, parsed *url.URL, opts Resumab
 	case http.StatusPartialContent:
 		if offset > 0 && sidecar != nil && strongResumableETag(sidecar.ETag) && response.Header.Get("ETag") != sidecar.ETag {
 			removeResumablePartial(opts.PartialPath)
-			return ResumableResult{}, true, errors.New("远程资源标识已变化")
+			return ResumableResult{}, true, fmt.Errorf("%w：标识已变化", ErrResumeRestart)
 		}
 		start, contentTotal, ok := parseContentRange(response.Header.Get("Content-Range"))
 		if !ok || start != offset {
 			removeResumablePartial(opts.PartialPath)
-			return ResumableResult{}, true, errors.New("远程资源断点位置不匹配")
+			return ResumableResult{}, true, fmt.Errorf("%w：断点位置不匹配", ErrResumeRestart)
 		}
 		// A known total that no longer matches means the remote object changed
 		// size under the same validator; appending would corrupt the artifact.
 		if sidecar != nil && sidecar.Total >= 0 && contentTotal >= 0 && sidecar.Total != contentTotal {
 			removeResumablePartial(opts.PartialPath)
-			return ResumableResult{}, true, errors.New("远程资源总大小已变化")
+			return ResumableResult{}, true, fmt.Errorf("%w：总大小已变化", ErrResumeRestart)
 		}
 		total = contentTotal
 	default:
@@ -293,7 +305,9 @@ func downloadResumableAttempt(ctx context.Context, parsed *url.URL, opts Resumab
 	emitter.observe(offset)
 	emitter.emit(offset, total, "downloading", true)
 
-	idleTimer := time.AfterFunc(idleTimeout, cancel)
+	idleTimer := time.AfterFunc(idleTimeout, func() {
+		cancel(fmt.Errorf("下载长时间没有收到数据：%w", context.DeadlineExceeded))
+	})
 	defer idleTimer.Stop()
 	reader := &idleResetReader{body: response.Body, timer: idleTimer, idle: idleTimeout}
 
@@ -327,7 +341,7 @@ func downloadResumableAttempt(ctx context.Context, parsed *url.URL, opts Resumab
 		readErr = closeErr
 	}
 	if readErr != nil {
-		return ResumableResult{}, true, readErr
+		return ResumableResult{}, true, resumableTransferError(attemptCtx, readErr)
 	}
 	if total >= 0 && written != total {
 		return ResumableResult{}, true, io.ErrUnexpectedEOF
@@ -349,8 +363,27 @@ func downloadResumableAttempt(ctx context.Context, parsed *url.URL, opts Resumab
 	}, false, nil
 }
 
+func resumableTransferError(ctx context.Context, err error) error {
+	if cause := context.Cause(ctx); cause != nil {
+		return cause
+	}
+	// net/http includes the final signed URL in url.Error. Keep the transport
+	// cause for classification, without persisting the artifact credential.
+	var requestErr *url.Error
+	for errors.As(err, &requestErr) {
+		err = requestErr.Err
+	}
+	return err
+}
+
 func strongResumableETag(value string) bool {
 	return len(value) >= 2 && strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"")
+}
+
+func resumableSourceURL(source *url.URL) string {
+	identity := *source
+	identity.RawQuery, identity.Fragment, identity.User = "", "", nil
+	return identity.String()
 }
 
 func resumableSourceMatches(sidecar *resumableSidecar, next *url.URL) bool {

@@ -264,6 +264,9 @@ func DoBinary(req *http.Request) ([]byte, string, error) {
 }
 
 func DoBinaryWithConsumer(req *http.Request, onChunk func(string, []byte)) ([]byte, string, error) {
+	if partial, _ := req.Context().Value(videoDownloadPartialContext{}).(string); partial != "" && req.Method == http.MethodGet && onChunk == nil {
+		return getResumableVideoBinary(req, partial)
+	}
 	return doBinaryWithAdmission(req, onChunk, nil)
 }
 
@@ -331,25 +334,7 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 	outbound.ApplyDefaultOutboundHeaders(req)
 	client := outbound.OutboundHTTPClient(requestTimeout)
 	if videoIdleTimeout > 0 {
-		checkRedirect := client.CheckRedirect
-		leftOrigin := false
-		client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
-			if err := checkRedirect(next, via); err != nil {
-				return err
-			}
-			if !SameProviderOrigin(req.URL.String(), next.URL.String()) {
-				leftOrigin = true
-			}
-			if leftOrigin {
-				// Signed media URLs carry their own authorization. Even a
-				// same-host redirect to another port must not inherit gateway
-				// credentials or custom channel headers.
-				next.Header = make(http.Header)
-				outbound.ApplyDefaultOutboundHeaders(next)
-				stripVideoCredentialQuery(next.URL, credentials.Values)
-			}
-			return nil
-		}
+		client = videoDownloadHTTPClient(req, requestTimeout)
 	}
 	if noRedirect, _ := req.Context().Value(binaryNoRedirectContext{}).(bool); noRedirect {
 		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
@@ -402,7 +387,7 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 	observation.HTTPStatus = resp.StatusCode
 	observation.StatusCode = resp.StatusCode
 	observation.DeclaredResponseBytes = resp.ContentLength
-	observation.RequestID = firstNonEmpty(resp.Header.Get("X-Request-Id"), resp.Header.Get("Request-Id"))
+	observation.RequestID = firstNonEmpty(resp.Header.Get("X-Request-Id"), resp.Header.Get("Request-Id"), resp.Header.Get("X-Oneapi-Request-Id"))
 	if resp.ContentLength > responseLimit {
 		observation.Outcome = "response_limit"
 		return nil, "", fmt.Errorf("上游响应超过 %s 限制", formatStorageLimit(responseLimit))
@@ -449,7 +434,7 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 			_ = runtime.Limits.RecordChannelResult(req.Context(), channelID, resp.StatusCode >= 500)
 		}
 		httpErr := HTTPError{
-			RequestID:           firstNonEmpty(resp.Header.Get("X-Request-Id"), resp.Header.Get("Request-Id")),
+			RequestID:           observation.RequestID,
 			StatusCode:          resp.StatusCode,
 			Status:              resp.Status,
 			Body:                string(data),

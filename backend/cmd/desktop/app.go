@@ -172,6 +172,20 @@ func (a *DesktopApp) SaveOwnedArtifact(fileName string, data []byte) (bool, erro
 	})
 }
 
+func (a *DesktopApp) SaveOwnedArchive(fileName string, entries []bootstrap.OwnedArchiveEntry) (bool, error) {
+	return a.saveToChosenPath(fileName, func(path string) error {
+		runtime := a.runtime()
+		if runtime == nil {
+			return errors.New("本地后端尚未就绪")
+		}
+		ctx, err := a.dialogContext()
+		if err != nil {
+			return err
+		}
+		return runtime.WriteOwnedArchiveTo(ctx, entries, path)
+	})
+}
+
 func (a *DesktopApp) saveToChosenPath(fileName string, write func(path string) error) (bool, error) {
 	ctx, err := a.dialogContext()
 	if err != nil {

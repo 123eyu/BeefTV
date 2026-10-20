@@ -167,6 +167,11 @@ type DeliveryProgressPort interface {
 	ClearDelivery()
 }
 
+// VideoDownloadCachePort is bound to the owning local task, not a provider URL.
+type VideoDownloadCachePort interface {
+	PartialPath() string
+}
+
 type Runtime struct {
 	ReferenceStorage  ReferenceStoragePort
 	Resources         ResourcePort
@@ -174,6 +179,7 @@ type Runtime struct {
 	Receipts          ReceiptPort
 	Stages            StagePort
 	Delivery          DeliveryProgressPort
+	DownloadCache     VideoDownloadCachePort
 	ReferenceProgress ReferenceProgressPort
 	Images            ImageSubmissionPort
 	Workflow          WorkflowPort

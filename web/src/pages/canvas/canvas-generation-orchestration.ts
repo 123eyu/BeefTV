@@ -9,6 +9,7 @@ import { bindMissingCanvasResourceAssets, canvasNodesMissingResourceAssetBinding
 import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
 import { getGenerationCount } from "@/lib/canvas/canvas-project-generation";
 import { shouldBlockManualRetry } from "@/lib/generation-error";
+import { canvasNodeFailureExplanation, isDepthCaptureResultNode } from "@/lib/canvas/canvas-depth-capture";
 import type { GenerationTask } from "@/services/api/task-center";
 import type { Asset } from "@/stores/use-asset-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type Position } from "@/types/canvas";
@@ -18,6 +19,7 @@ import { CanvasOwnerAbandonedError, canvasOwnerCanPersist, canvasOwnerEpochMatch
 const NODE_STATUS_SUCCESS = "success" as const;
 
 export type CanvasNodeRetryPlan =
+    | { kind: "history" }
     | { kind: "depth" }
     | { kind: "script"; prompt: string }
     | { kind: "script-empty" }
@@ -27,7 +29,8 @@ export type CanvasNodeRetryPlan =
     | { kind: "single" };
 
 export function canvasNodeRetryPlan(node: CanvasNodeData, nodes: CanvasNodeData[]): CanvasNodeRetryPlan {
-    if (node.metadata?.depthSourceNodeId) return { kind: "depth" };
+    if (canvasNodeFailureExplanation(node).category === "result_target_unavailable") return { kind: "history" };
+    if (isDepthCaptureResultNode(node)) return { kind: "depth" };
     if (node.type === CanvasNodeType.Script) {
         const prompt = (node.metadata?.composerContent || node.metadata?.prompt || "").trim();
         return prompt ? { kind: "script", prompt } : { kind: "script-empty" };

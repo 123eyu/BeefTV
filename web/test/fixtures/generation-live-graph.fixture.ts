@@ -13,12 +13,13 @@ mock.module("@/services/diagnostics/client-diagnostics", () => ({ recordDiagnost
 mock.module("@/stores/use-config-store", () => ({ useEffectiveConfig: () => ({}), useConfigStore: (select: any) => select({ isAiConfigReady: () => true }), resolveModelRequestConfig: () => ({}) }));
 mock.module("@/components/canvas/canvas-node-generation", () => ({ buildNodeGenerationContext: (_nodes: any, _edges: any, _id: any, prompt: string) => ({ prompt, referenceImages: [], referenceVideos: [], referenceAudios: [], characterReferences: [], resolvedCharacterVoices: [] }), hydrateNodeGenerationContext: async (context: any) => context }));
 mock.module("@/pages/canvas/canvas-assistant-proposal-execution", () => ({ buildConfirmedGenerationConfig: () => ({ model: "fixture", taskWorkflowProvider: "model", size: "1:1" }) }));
-mock.module("@/lib/canvas/canvas-generation-submission", () => ({ canvasGenerationPromptMetadata: () => ({}), canvasGenerationRequestFingerprint: () => "repeat", runCanvasGenerationSubmissionOnce: async (locks: Map<string, any>, id: string, fn: any) => { if (locks.has(id)) return; const result = fn(); locks.set(id, result); try { return await result; } finally { locks.delete(id); } } }));
+const submission = await import("@/lib/canvas/canvas-generation-submission");
+mock.module("@/lib/canvas/canvas-generation-submission", () => ({ ...submission, canvasGenerationRequestFingerprint: () => "repeat" }));
 mock.module("@/lib/canvas/canvas-project-generation", () => ({ isGenerationCanceled: () => false }));
 mock.module("@/lib/model-selection", () => ({ modelCompatibilityError: () => "", modelGroupReferenceLimits: () => undefined, modelPromptLengthError: () => "", modelRequestOptions: () => ({}) }));
 mock.module("@/services/skill-runtime", () => ({ skillRuntime: { prepare: async ({ prompt }: any) => ({ prompt, metadata: {} }) } }));
 mock.module("@/lib/canvas/canvas-style-execution", () => ({ resolveCanvasStyleExecution: () => undefined }));
-mock.module("@/pages/canvas/canvas-generation-failure", () => ({ canvasGenerationRetryBlocked: () => false, canvasImageGenerationHasPendingResult: () => false, canvasGenerationFailureMetadata: () => ({}) }));
+mock.module("@/pages/canvas/canvas-generation-failure", () => ({ canvasGenerationRetryBlocked: () => false, canvasImageGenerationHasPendingResult: () => false, canvasImagePendingResultMessage: () => "", canvasGenerationFailureMetadata: () => ({}) }));
 mock.module("@/components/generation-reference-links", () => ({ createReferenceLinkResolver: () => undefined }));
 mock.module("@/pages/canvas/canvas-image-generation-executor", () => ({ executeImageGeneration: async (input: any) => { dispatched.push(input); input.nodesRef.current = input.canvasNodes.map((n: any) => n.id === input.nodeId ? { ...n, metadata: { ...n.metadata, storageKey: "new:" + n.id, taskId: "new-task:" + n.id } } : n); } }));
 mock.module("@/pages/canvas/canvas-media-generation-executors", () => ({ executeVideoGeneration: async (input: any) => { dispatched.push(input); }, executeAudioGeneration: async () => {} }));

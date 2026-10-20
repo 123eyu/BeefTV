@@ -231,7 +231,7 @@ test("默认模型下拉展开时诊断记录点击、弹层位置与遮挡情�
         expect(recorded.some(event => event.code === "MODEL_PICKER_PRESS" && event.message.includes("默认文本模型"))).toBe(true);
         const opened = recorded.find(event => event.code === "MODEL_PICKER_OPEN")!;
         expect(opened.message).toContain("未被遮挡");
-        expect(opened.message).toContain("已渲染选项 2 个");
+        expect(opened.message).toContain("已渲染选项 3 个");
         expect(opened.message).toContain("在窗口内");
     } finally { await page.close(); }
 }, 30000);
@@ -253,7 +253,7 @@ for (const reduced of [false, true]) {
     }, 30000);
     for (const dark of [false, true]) {
         for (const mobile of [false, true]) {
-            test(`五类默认模型可见并可选择：${reduced ? "减少动态效果" : "普通动效"} / ${dark ? "深色" : "浅色"} / ${mobile ? "手机" : "桌面"}`, async () => {
+            test(`六类默认模型可见并可选择：${reduced ? "减少动态效果" : "普通动效"} / ${dark ? "深色" : "浅色"} / ${mobile ? "手机" : "桌面"}`, async () => {
                 const page = await open({ reduced, dark, mobile });
                 try {
                     for (const [id, key, model] of [
@@ -261,6 +261,7 @@ for (const reduced of [false, true]) {
                         ["video", "videoModel", "video-z"],
                         ["text", "textModel", "chat-z"],
                         ["assistant", "assistantModel", "chat-z"],
+                        ["multimodal", "mediaReviewModel", "wand-vega-vl-1.0-flash"],
                         ["audio", "audioModel", "audio-z"],
                     ]) {
                         const row = page.locator(`section[aria-labelledby="default-${id}-title"]`);
@@ -284,7 +285,7 @@ for (const reduced of [false, true]) {
                         expect(selected[key!]).toBe(`studio::${model}`);
                     }
                     const recorded = await events(page);
-                    expect(recorded.filter(event => event.code === "MODEL_PICKER_CHANGE")).toHaveLength(5);
+                    expect(recorded.filter(event => event.code === "MODEL_PICKER_CHANGE")).toHaveLength(6);
                     expect(recorded.filter(event => event.code === "MODEL_PICKER_POPUP_HIDDEN")).toHaveLength(0);
                     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
                 } finally { await page.close(); }

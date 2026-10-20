@@ -18,8 +18,9 @@ const bindRevisionAttempts = 4
 type TaskOutputBind struct {
 	// Set only by the transaction-bound composition root after local render ownership validation.
 	AllowEmptyVideo bool `json:"-"`
-	// Trusted admission identity for a depth node saved before the task response.
-	DepthClientOperationID string `json:"-"`
+	// Trusted admission identity for a pending video saved before the task response.
+	PendingClientOperationID string `json:"-"`
+	TaskType                 string `json:"-"`
 
 	CanvasID    string
 	NodeID      string
@@ -80,10 +81,14 @@ func (s *Service) bindTaskOutputOnce(userID string, patch TaskOutputBind) (TaskO
 			Message: "原任务节点已删除，未重新创建节点",
 		}
 	}
-	if got := nodeString(nodeMetadata(node), "taskId"); got != strings.TrimSpace(patch.TaskID) && !canBindEmptyRenderNode(node, patch) && !canBindPendingDepthNode(node, patch) {
+	if got := nodeString(nodeMetadata(node), "taskId"); got != strings.TrimSpace(patch.TaskID) && !canBindEmptyRenderNode(node, patch) && !canBindPendingVideoNode(node, patch) {
+		message := "节点已绑定到其他任务，未覆盖该节点"
+		if got == "" {
+			message = "节点尚未关联这次任务，生成结果已保留"
+		}
 		return TaskOutputBindResult{}, &kernel.AppError{
 			Status: http.StatusConflict, Reason: kernel.ErrorReason("node_task_mismatch"),
-			Message: "节点已绑定到其他任务，未覆盖该节点",
+			Message: message,
 		}
 	}
 	metadata := nodeMetadata(node)
@@ -367,9 +372,9 @@ func isDocMediaKind(kind string) bool {
 	}
 }
 
-func canBindPendingDepthNode(node map[string]any, patch TaskOutputBind) bool {
+func canBindPendingVideoNode(node map[string]any, patch TaskOutputBind) bool {
 	metadata := nodeMetadata(node)
-	if patch.DepthClientOperationID == "" || nodeString(metadata, "taskClientOperationId") != patch.DepthClientOperationID || nodeString(metadata, "depthSourceNodeId") == "" {
+	if patch.PendingClientOperationID == "" || nodeString(metadata, "taskClientOperationId") != patch.PendingClientOperationID {
 		return false
 	}
 	// The same empty-media guard also rejects a node assigned to another task.
@@ -414,6 +419,14 @@ func alreadyBound(metadata map[string]any, patch TaskOutputBind) bool {
 }
 
 func applyGenerationBindMetadata(metadata map[string]any, patch TaskOutputBind) {
+	// Preparation keeps the previous video playable. Its previews and measured
+	// properties belong to that media, so replace them only when the new output binds.
+	if patch.MediaType == "video" && ((patch.StorageKey != "" && patch.StorageKey != nodeString(metadata, "storageKey")) ||
+		(patch.Content != "" && patch.Content != nodeString(metadata, "content"))) {
+		for _, key := range []string{"previewContent", "videoPreview", "naturalWidth", "naturalHeight", "durationMs", "hasAudio", "bytes", "mimeType", "outputParameterWarning"} {
+			delete(metadata, key)
+		}
+	}
 	if patch.Content != "" {
 		metadata["content"] = patch.Content
 	}
@@ -455,8 +468,12 @@ func applyGenerationBindMetadata(metadata map[string]any, patch TaskOutputBind) 
 	}
 	metadata["status"] = "success"
 	metadata["taskId"] = patch.TaskID
+	if patch.TaskType != "" {
+		metadata["taskType"] = patch.TaskType
+	}
 	metadata["taskStatus"] = "succeeded"
 	metadata["taskProgress"] = 100
+	metadata["taskStage"] = nil
 	metadata["errorDetails"] = nil
 	metadata["generationErrorCode"] = nil
 	metadata["resourceReloadAvailable"] = nil
