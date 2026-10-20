@@ -417,7 +417,7 @@ describe('预算门禁、密钥脱敏与评测配置校验测试', () => {
       expect(SCENARIOS.find((scenario) => scenario.code === 'S6').turns.filter((turn) => turn.useActiveSkillPins).length).toBe(1);
       expect(userReview.metrics.passed).toBe(true);
       expect(userReview.metrics.turnCount).toBe(2);
-      expect(userReview.metrics.mediaInspections).toBe(1);
+      expect(userReview.metrics.mediaInspections).toBe(2); // overview + versioned inspect
       expect(userReview.metrics.unconfirmedGenerationCount).toBe(0);
       expect(markdown).not.toContain('多轮压缩后技能规则保持率');
     } finally {

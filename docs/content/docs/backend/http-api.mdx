@@ -143,6 +143,10 @@ MiniMax speech 的 OpenAI 音频兼容目录通过 `audioOptions` 提供官方�
 成功的媒体工具记录可带 `toolCalls[].mediaFacts`：`source{resourceId,version,startMs,endMs,nodeId?}`、`mode: frames|video|audio|check`、`durationMs`、`hasAudio`，以及客观检测的可选 `silenceIntervals[{startMs,endMs}]`、`meanDb`、`peakDb`。摘要仅从真实成功结果白名单投影；原生媒体转换失败时不记录成功读取，区间来自结果而非请求参数。摘要不含媒体字节、路径、URL 或自由文本，随既有回合记录保存并通过历史与 `turn_end` 返回。界面的“媒体检查记录”按资源和版本分开显示读取区间与静音事实；`nodeId` 仅用于匹配当前节点名称，不从当前节点推断历史媒体状态。不表示模型理解、全片检查或质量通过；“步骤进度”只是助手记录的步骤计数。旧记录没有摘要时不回填或推断，需要再次实际检查才产生新记录。
 `media.overview` 可选 `evidence:{startMs,endMs,modes,checks?}`，从同一份已关联素材字节取得明确区间的多种实际证据。区间必须在真实时长内且不超过 15 秒，`modes` 为不重复的 `frames`、`video`、`audio`，`checks:true` 同时返回原有客观检测。任何请求部分失败则整次失败，不返回部分成功。所有部分共享资源版本及合计 8 MiB 内容上限；连续运动和声音分别需要真实 video、audio，静态帧不代替。成功记录使用 `toolCalls[].mediaEvidence` 数组逐项保留上述摘要；单项工具的 `mediaFacts` 继续返回。`media.inspect` 与 `media.check` 仍要求 `expectedVersion`，工程导出仍为单独的成功回执。
 
+`media.review` 将已关联视频的指定区间交给独立多模态模型观察，参数为 `canvasId`、`nodeId` 或 `assetId`、`expectedVersion`、`startMs`、`endMs`、`question`。它复用 `media.inspect` 的归属、版本、15 秒区间与内容大小限制，发送真实 MP4 及原音轨；主模型只接收来源、片段哈希、观察、请求编号与用量，不接收该工具的视频字节。观察中的时间从片段起点计，需加上 `source.startMs` 才是原素材位置。观察可能遗漏，不表示成片验收通过，也不写入主模型已观看影音的检查记录。
+
+审片连接由本地模型配置的可选 `mediaReviewModel: "channelId::modelId"` 选择，复用已有渠道凭据解析；当前适配经验证的 `wand-vega-vl-1.0-flash`、`chat-completion` 协议。未配置或不支持时明确返回不可用。此操作不修改画布，但调用可能收费，因此描述符为 `readOnly: true, replay: "unsafe"`：官方 Durable 不自动重放中断的付费检查。一次操作只发起一次供应商请求；空回复、截断及请求失败不能作为通过依据。它没有工具权限或独立 Agent 循环。
+
 宿主对模型请求与工具步骤各自有单轮上限（`BEEFTV_AGENT_MAX_REQUESTS_PER_TURN`、
 `BEEFTV_AGENT_MAX_TOOL_STEPS_PER_TURN`），按轮独立计数、下一轮从零开始；总预算
 `BEEFTV_AGENT_TOTAL_REQUEST_BUDGET` 默认关闭，只有显式配置才启用。

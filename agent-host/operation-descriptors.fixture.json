@@ -1848,6 +1848,57 @@
     "replay": "safe"
   },
   {
+    "id": "media.review",
+    "summary": "用单独配置的多模态审片模型检查已关联视频的指定区间（最多15秒，包含原音轨），返回观察和用量，可能收费。先用media.overview取得版本。问题应来自用户要求，不预填正确答案或已知缺陷。结果是模型观察，不是整片合格证明；失败或中断不自动重发。未配置时明确不可用。",
+    "readOnly": true,
+    "scope": "canvas",
+    "params": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "canvasId": {
+          "type": "string"
+        },
+        "nodeId": {
+          "type": "string"
+        },
+        "assetId": {
+          "type": "string"
+        },
+        "expectedVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "startMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "endMs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "question": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        }
+      },
+      "required": [
+        "canvasId",
+        "expectedVersion",
+        "startMs",
+        "endMs",
+        "question"
+      ]
+    },
+    "assistantModes": [
+      "full-access",
+      "read-only",
+      "canvas"
+    ],
+    "replay": "unsafe"
+  },
+  {
     "id": "model.catalog",
     "summary": "按所需类型查询模型、参考能力和已保存的视频报价（videoPricing）；未返回报价表示价格未知，不能承诺预算；不含密钥",
     "readOnly": true,

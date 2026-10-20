@@ -465,10 +465,17 @@ export function createFakeModelServer(options = {}) {
         }
         const nodes = getRes.data?.result?.canvas?.nodes || getRes.data?.canvas?.nodes || getRes.data?.nodes || [];
         const imgNode = nodes.find((n) => n.type === 'image') || { id: 'node-1' };
+        const overview = toolResults.find((t) => t.name === 'media_overview');
+        if (!overview) {
+          sendToolCall(res, body.model, 'media_overview', { nodeId: imgNode.id });
+          return;
+        }
         const inspected = toolResults.find((t) => t.name === 'media_inspect');
         if (!inspected) {
           sendToolCall(res, body.model, 'media_inspect', {
             nodeId: imgNode.id,
+            expectedVersion: overview.data?.result?.source?.version,
+            mode: 'frames',
           });
           return;
         }

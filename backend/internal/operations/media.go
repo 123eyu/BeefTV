@@ -109,6 +109,7 @@ func ValidateMediaReference(domain Domain, userID, canvasID, nodeID, assetID, re
 }
 
 func registerMediaOps(r *Registry) {
+	registerMediaReview(r)
 	summaries := map[string]string{
 		"media.overview": "获取已关联媒体的版本、时长与静态预览；概要不能替代连续视频或声音内容审查。已知15秒以内区间可用 evidence 一次读取真实 frames/video/audio 及客观检测。",
 		"media.inspect":  "实际读取指定区间，每次最多 15 秒：frames 看静态截图，video 看连续原生视频，audio 听原生音频；按问题选择，不把抽帧当作完整影音审查。",

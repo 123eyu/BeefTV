@@ -48,14 +48,15 @@ type AssistantChannel struct {
 }
 
 type AssistantConfigSnapshot struct {
-	Revision       int64              `json:"-"`
-	AssistantModel string             `json:"assistantModel"`
-	TextModel      string             `json:"textModel"`
-	ImageModel     string             `json:"imageModel"`
-	VideoModel     string             `json:"videoModel"`
-	AudioModel     string             `json:"audioModel"`
-	BaseURL        string             `json:"baseUrl"`
-	Channels       []AssistantChannel `json:"channels"`
+	Revision         int64              `json:"-"`
+	AssistantModel   string             `json:"assistantModel"`
+	MediaReviewModel string             `json:"mediaReviewModel"`
+	TextModel        string             `json:"textModel"`
+	ImageModel       string             `json:"imageModel"`
+	VideoModel       string             `json:"videoModel"`
+	AudioModel       string             `json:"audioModel"`
+	BaseURL          string             `json:"baseUrl"`
+	Channels         []AssistantChannel `json:"channels"`
 }
 
 // ManagedCredentialLookup fills hosted-channel secrets that are not stored in

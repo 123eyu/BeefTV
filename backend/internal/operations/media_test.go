@@ -470,6 +470,12 @@ func TestMediaDiscoveryExplainsEvidenceAndInspectionModes(t *testing.T) {
 		if slices.Contains(schema.Required, "expectedVersion") != (descriptor.ID != "media.overview") {
 			t.Fatalf("%s discovery does not match the required media version", descriptor.ID)
 		}
+		if descriptor.ID == "media.review" {
+			if !slices.Contains(schema.Required, "question") || descriptor.Replay != "unsafe" {
+				t.Fatal("review must require a question and avoid replaying external charges")
+			}
+			continue
+		}
 		mode := schema.Properties["mode"]
 		for _, word := range []string{"frames", "静态", "video", "连续", "audio", "声音"} {
 			if !strings.Contains(mode.Description, word) {
@@ -494,7 +500,7 @@ func TestMediaDiscoveryExplainsEvidenceAndInspectionModes(t *testing.T) {
 			}
 		}
 	}
-	if len(seen) != 3 {
+	if len(seen) != 4 {
 		t.Fatal("incomplete media discovery")
 	}
 }

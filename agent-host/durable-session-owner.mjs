@@ -434,7 +434,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
       name: tool.name, description: tool.description + (tool.label === 'canvas.generation.propose'
         ? '。先完成本阶段的计划更新，再提出生成提案；成功提案会结束本轮并等待用户确认。' : ''), parameters: tool.parameters,
       replay: durableToolReplay(tool), executionMode: 'sequential',
-      ...(['media.overview', 'media.inspect', 'media.check'].includes(tool.label) ? { outputLimits: { maxBytes: 64 * 1024 * 1024, maxLines: 100000 } } : {}),
+      ...(['media.overview', 'media.inspect', 'media.check', 'media.review'].includes(tool.label) ? { outputLimits: { maxBytes: 64 * 1024 * 1024, maxLines: 100000 } } : {}),
       execute: async (args, api, context) => {
         if (entry.generation.aborted) throw fail('aborted');
         if (entry.generation.pendingInputError) throw fail(entry.generation.pendingInputError.reason);

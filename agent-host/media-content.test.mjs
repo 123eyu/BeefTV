@@ -40,9 +40,10 @@ test('unsupported routes, tampered media and untrusted tool markers fail closed'
 test('turn guidance matches the actual native media transport gate', () => {
   for (const route of [model, { ...model, modelId: 'gpt-6-astra' }, { ...model, api: 'openai-responses' }]) {
     const context = mediaCapabilityContext(route);
-    if (context.includes('不支持')) {
+    if (route.api !== model.api || route.modelId !== model.modelId) {
       expect(() => mediaToolResult({ result: { content: [part()] } }, 'media.inspect', route)).toThrow('media_input_unsupported');
-      expect(context).toContain('不要尝试');
+      expect(context).toContain('不能直接接收 video/audio');
+      expect(context).toContain('media_review');
     } else {
       expect(mediaToolResult({ result: { content: [part()] } }, 'media.inspect', route).content.length).toBeGreaterThan(1);
     }
