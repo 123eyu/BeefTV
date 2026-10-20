@@ -82,7 +82,7 @@ jobs:
           python3 -m unittest discover -s scripts -p 'test_publish_desktop_r2.py'
           python3 -m unittest discover -s scripts -p 'test_distribution_sources.py'
           python3 -m unittest discover -s scripts -p 'test_collect_distribution_sources.py'
-          python3 -m unittest discover -s scripts -p 'test-package-wasm-sources.py'
+          python3 scripts/test-package-wasm-sources.py
           python3 -m unittest discover -s scripts -p 'test_verify_depth_sources.py'
           python3 -m unittest discover -s scripts -p 'test_desktop_cos_store.py'
           python3 -m unittest discover -s scripts -p 'test_smoke_desktop_installer.py'
