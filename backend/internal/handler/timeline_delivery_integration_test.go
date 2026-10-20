@@ -25,11 +25,12 @@ func TestDurableTimelineDeliveryUsesRealGoWorkerAndCanonicalSubtitleLines(t *tes
 		if crash {
 			name = "host_crash_after_render_admission"
 		}
-		t.Run(name, func(t *testing.T) { realTimelineDelivery(t, crash) })
+		t.Run(name, func(t *testing.T) { realTimelineDelivery(t, crash, false) })
 	}
+	t.Run("refresh_saved_timeline", func(t *testing.T) { realTimelineDelivery(t, false, true) })
 }
 
-func realTimelineDelivery(t *testing.T, crash bool) {
+func realTimelineDelivery(t *testing.T, crash, refresh bool) {
 	env := newAssistantTestEnv(t, nil)
 	owner, err := env.service.LocalWorkspaceOwner()
 	if err != nil {
@@ -77,6 +78,27 @@ func realTimelineDelivery(t *testing.T, crash bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if refresh {
+		var document map[string]any
+		if err := json.Unmarshal(doc, &document); err != nil {
+			t.Fatal(err)
+		}
+		document["revision"] = summary.Revision
+		document["nodes"] = append(document["nodes"].([]any), map[string]any{"id": "prior-film", "type": "video", "title": "Delivered film", "metadata": map[string]any{}})
+		document["timeline"] = map[string]any{
+			"version": 2, "durationMs": 1000, "output": map[string]any{"width": 320, "height": 240, "fps": 24},
+			"tracks": []any{map[string]any{"id": "visual", "kind": "video"}, map[string]any{"id": "captions", "kind": "subtitle"}},
+			"clips": []any{
+				map[string]any{"id": "visual", "kind": "video", "nodeId": "source", "trackId": "visual", "startMs": 0, "durationMs": 1000, "volume": 0.35},
+				map[string]any{"id": "caption", "kind": "subtitle", "trackId": "captions", "startMs": 0, "durationMs": 1000, "text": "First line\nSecond line"},
+			},
+		}
+		doc, _ = json.Marshal(document)
+		summary, err = env.service.UpsertUserCanvasProject(owner.ID, doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	const turnID = "ccddee1122334455"
 	env.beginTurn(t, turnID, assistantTurnInput(nil, nil))
 	env.service.StartWorker()
@@ -110,7 +132,7 @@ func realTimelineDelivery(t *testing.T, crash bool) {
 		t.Fatal(err)
 	}
 	settings := map[string]any{"root": root, "directory": directory, "backend": backend.URL + "/api", "canvasId": env.canvasID,
-		"turnId": turnID, "hostToken": assistantTestHostToken, "revision": summary.Revision}
+		"turnId": turnID, "hostToken": assistantTestHostToken, "revision": summary.Revision, "refresh": refresh}
 	config, _ := json.Marshal(settings)
 	configPath := filepath.Join(directory, "config.json")
 	if err := os.WriteFile(configPath, config, 0600); err != nil {
@@ -176,6 +198,7 @@ func realTimelineDelivery(t *testing.T, crash bool) {
 		Timeline editing.Project `json:"timeline"`
 		Nodes    []struct {
 			ID       string `json:"id"`
+			Title    string `json:"title"`
 			Metadata struct {
 				TaskID     string `json:"taskId"`
 				StorageKey string `json:"storageKey"`
@@ -188,10 +211,16 @@ func realTimelineDelivery(t *testing.T, crash bool) {
 	if saved.Timeline.Clips[1].Text != "First line\nSecond line" {
 		t.Fatalf("subtitle lines not canonical: %q", saved.Timeline.Clips[1].Text)
 	}
+	if refresh && (saved.Timeline.Clips[0].Volume != 0.35 || saved.Timeline.Clips[0].DirectMedia == nil || saved.Timeline.Clips[0].DirectMedia.ID != resource.ID) {
+		t.Fatal("refresh lost the source or changed saved volume")
+	}
 	bound := false
 	for _, node := range saved.Nodes {
 		if node.ID == result.NodeID {
 			bound = node.Metadata.TaskID == result.TaskID && strings.HasPrefix(node.Metadata.StorageKey, "resource:")
+			if refresh && node.Title != "Delivered film · 2" {
+				t.Fatalf("revision title collision not resolved: %q", node.Title)
+			}
 		}
 	}
 	if !bound {

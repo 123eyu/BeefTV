@@ -13,7 +13,7 @@ const timeline = { version: 2, durationMs: 12000, tracks: [{ id: 'video', kind: 
   clips: [{ id: 'shot', kind: 'video', trackId: 'video', nodeId: 'source', startMs: 0, durationMs: 12000 }],
   output: { width: 480, height: 854, fps: 24 } };
 
-for (const scenario of ['delivery', 'lines', 'large-bind', 'foreign-edit', 'export-failure', 'export-recovery']) {
+for (const scenario of ['delivery', 'refresh', 'lines', 'large-bind', 'foreign-edit', 'export-failure', 'export-recovery']) {
   test(`one official tool performs delivery: ${scenario}`, { timeout: 30000 }, async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'beeftv-delivery-'));
     let revision = 5;
@@ -22,7 +22,7 @@ for (const scenario of ['delivery', 'lines', 'large-bind', 'foreign-edit', 'expo
     const expectedTimeline = scenario === 'lines' ? { ...timeline, clips: [...timeline.clips,
       { id: 'caption', kind: 'subtitle', trackId: 'captions', startMs: 0, durationMs: 12000, text: '第一行\n第二行' }] } : timeline;
     const posts = [], effects = new Map();
-    const names = new Set(['canvas.timeline.update', 'canvas.timeline.render', 'canvas.nodes.create', 'canvas.task.bind', 'canvas.project.export', 'task.get']);
+    const names = new Set(['canvas.get', 'canvas.timeline.update', 'canvas.timeline.render', 'canvas.nodes.create', 'canvas.task.bind', 'canvas.project.export', 'task.get']);
     const server = createServer(async (req, res) => {
       res.setHeader('content-type', 'application/json');
       const wrap = data => res.end(JSON.stringify({ code: 0, data }));
@@ -31,6 +31,8 @@ for (const scenario of ['delivery', 'lines', 'large-bind', 'foreign-edit', 'expo
       const body = JSON.parse(raw), op = req.url.slice('/ops/'.length), p = body.params;
       posts.push({ op, ...body });
       assert.equal(p.canvasId ?? 'canvas', 'canvas');
+      if (op === 'canvas.get') return wrap({ result: { canvasId: 'canvas', canvas: { revision, nodes: scenario === 'refresh'
+        ? [...Array.from({ length: 51 }, (_, index) => ({ id: `node-${index}`, title: `素材 ${index}` })), { title: '新成片' }, { title: '新成片 · 2' }] : [] } } });
       if (op === 'task.get') {
         assert.equal(p.taskId, 'original-render');
         if (scenario === 'foreign-edit') revision++;
@@ -44,12 +46,15 @@ for (const scenario of ['delivery', 'lines', 'large-bind', 'foreign-edit', 'expo
       }
       let result;
       if (op === 'canvas.timeline.update') {
-        assert.deepEqual(p.timeline, expectedTimeline);
+        if (scenario === 'refresh') {
+          assert.deepEqual(p.refreshNodeIds, ['source']);
+          assert.equal(p.timeline, undefined, 'replacement must not rewrite subtitles or track settings');
+        } else assert.deepEqual(p.timeline, expectedTimeline);
         result = { canvasId: 'canvas', revision: ++revision, timelineUpdated: true };
       } else if (op === 'canvas.timeline.render') {
         result = { canvasId: 'canvas', sourceRevision: revision, taskId: 'original-render', status: 'queued', charged: false };
       } else if (op === 'canvas.nodes.create') {
-        assert.deepEqual(p.nodes, [{ type: 'video', title: '新成片' }]);
+        assert.deepEqual(p.nodes, [{ type: 'video', title: scenario === 'refresh' ? '新成片 · 3' : '新成片' }]);
         result = { canvasId: 'canvas', revision: ++revision, created: [{ id: 'result-node', type: 'video', title: '新成片' }] };
       } else if (op === 'canvas.task.bind') {
         assert.deepEqual(p, { canvasId: 'canvas', taskId: 'original-render', nodeId: 'result-node', outputIndex: 0 });
@@ -74,7 +79,8 @@ for (const scenario of ['delivery', 'lines', 'large-bind', 'foreign-edit', 'expo
       fixture = await modelFixture(directory, 'fixture', ['fixture'], body => {
         if (++responses === 1) {
           assert.ok(body.tools.some(tool => tool.function.name === 'canvas_timeline_deliver'));
-          return { toolCalls: [{ id: 'deliver', name: 'canvas_timeline_deliver', args: { expectedRevision: 5, timeline: requestTimeline, title: '新成片' } }] };
+          return { toolCalls: [{ id: 'deliver', name: 'canvas_timeline_deliver', args: { expectedRevision: 5,
+            ...(scenario === 'refresh' ? { refreshNodeIds: ['source'] } : { timeline: requestTimeline }), title: '新成片' } }] };
         }
         if (scenario === 'export-recovery' && responses === 2) {
           return { toolCalls: [{ id: 'resume-export', name: 'canvas_project_export', args: { expectedRevision: 8 } }] };
@@ -90,11 +96,12 @@ for (const scenario of ['delivery', 'lines', 'large-bind', 'foreign-edit', 'expo
       assert.equal(fixture.requests.length, responseCount, 'only a failed business step may need a recovery response');
       const reply = fixture.payloads[1].messages.find(message => message.role === 'tool');
       const delivered = JSON.parse(typeof reply.content === 'string' ? reply.content : reply.content.map(part => part.text || '').join(''));
+      assert.ok(!Object.keys(delivered.receipts).some(key => key.startsWith('names:')), 'delivery must not expose the source canvas');
       if (scenario === 'large-bind') {
         assert.equal(delivered.receipts.bind.canvas, undefined);
         assert.ok(JSON.stringify(delivered).length < 10000, 'nested delivery must not expose source prompts');
       }
-      if (scenario === 'delivery' || scenario === 'large-bind' || scenario === 'lines') {
+      if (scenario === 'delivery' || scenario === 'refresh' || scenario === 'large-bind' || scenario === 'lines') {
         assert.equal(delivered.result.status, 'delivered');
         assert.equal(delivered.result.project.resourceId, 'project-zip');
         assert.equal(delivered.result.nodeId, 'result-node');

@@ -44,6 +44,7 @@ type Op struct {
 	AssistantCanvas   bool
 	AssistantProposal bool
 	ReplaySafe        bool
+	ReplayUnsafe      bool // A read can still incur an external model charge.
 }
 
 // Descriptor 是给客户端做能力发现用的稳定描述。
@@ -113,7 +114,7 @@ func (r *Registry) Descriptor(id string) (Descriptor, bool) {
 
 func (op *Op) Descriptor() Descriptor {
 	replay := "unsafe"
-	if op.ReadOnly || op.ReplaySafe {
+	if (op.ReadOnly || op.ReplaySafe) && !op.ReplayUnsafe {
 		replay = "safe"
 	}
 	return Descriptor{ID: op.ID, Summary: op.Summary, ReadOnly: op.ReadOnly, Scope: op.Scope, Params: op.writeAwareParams(), AssistantModes: op.assistantModes(), Replay: replay}

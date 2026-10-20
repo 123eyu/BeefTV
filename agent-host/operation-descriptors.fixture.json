@@ -1369,6 +1369,18 @@
     "readOnly": false,
     "scope": "canvas",
     "params": {
+      "oneOf": [
+        {
+          "required": [
+            "timeline"
+          ]
+        },
+        {
+          "required": [
+            "refreshNodeIds"
+          ]
+        }
+      ],
       "properties": {
         "canvasId": {
           "type": "string"
@@ -1380,6 +1392,17 @@
         "operationId": {
           "description": "调用方生成的稳定幂等键；重试同一操作必须复用同一个值，服务端据此回读原结果",
           "type": "string"
+        },
+        "refreshNodeIds": {
+          "description": "仅把已存在媒体片段替换为这些节点当前绑定的素材。保留全部字幕、时序、裁剪、音量、轨道和输出规格；新素材过短则拒绝，不自动改时长。与 timeline 二选一。局部重生成后优先用此参数。",
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
         },
         "timeline": {
           "description": "时间线 v2；时间均为毫秒。所有可见 video/image 片段按 startMs 播放且不可重叠（跨轨也一样）；空隙补黑。音频、字幕可与视觉重叠。仅使用当前画布已关联的素材或已保存时间线中的资源。",
@@ -1577,7 +1600,6 @@
       "required": [
         "canvasId",
         "expectedRevision",
-        "timeline",
         "operationId"
       ],
       "type": "object"
@@ -1824,6 +1846,57 @@
       "canvas"
     ],
     "replay": "safe"
+  },
+  {
+    "id": "media.review",
+    "summary": "用单独配置的多模态审片模型检查已关联视频的指定区间（最多15秒，包含原音轨），返回观察和用量，可能收费。先用media.overview取得版本。问题应来自用户要求，不预填正确答案或已知缺陷。结果是模型观察，不是整片合格证明；失败或中断不自动重发。未配置时明确不可用。",
+    "readOnly": true,
+    "scope": "canvas",
+    "params": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "canvasId": {
+          "type": "string"
+        },
+        "nodeId": {
+          "type": "string"
+        },
+        "assetId": {
+          "type": "string"
+        },
+        "expectedVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "startMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "endMs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "question": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        }
+      },
+      "required": [
+        "canvasId",
+        "expectedVersion",
+        "startMs",
+        "endMs",
+        "question"
+      ]
+    },
+    "assistantModes": [
+      "full-access",
+      "read-only",
+      "canvas"
+    ],
+    "replay": "unsafe"
   },
   {
     "id": "model.catalog",
