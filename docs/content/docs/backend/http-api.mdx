@@ -153,7 +153,7 @@ MiniMax speech 的 OpenAI 音频兼容目录通过 `audioOptions` 提供官方�
 
 `media.review` 将已关联视频的指定区间交给独立多模态模型观察，参数为 `canvasId`、`nodeId` 或 `assetId`、`expectedVersion`、`startMs`、`endMs`、`question`。它复用 `media.inspect` 的归属、版本、15 秒区间与内容大小限制，发送真实 MP4 及原音轨；主模型只接收来源、片段哈希、观察、请求编号与用量，不接收该工具的视频字节。观察中的时间从片段起点计，需加上 `source.startMs` 才是原素材位置。观察可能遗漏，不表示成片验收通过，也不写入主模型已观看影音的检查记录。
 
-审片连接由本地模型配置的可选 `mediaReviewModel: "channelId::modelId"` 选择，复用已有渠道凭据解析；当前适配经验证的 `wand-vega-vl-1.0-flash`、`chat-completion` 协议。未配置或不支持时明确返回不可用。此操作不修改画布，但调用可能收费，因此描述符为 `readOnly: true, replay: "unsafe"`：官方 Durable 不自动重放中断的付费检查。一次操作只发起一次供应商请求；空回复、截断及请求失败不能作为通过依据。它没有工具权限或独立 Agent 循环。
+用户在设置的“默认模型”中选择“默认多模态模型”，保存为可选 `mediaReviewModel: "channelId::modelId"`，复用所选渠道的凭据。当前适配经验证的 `wand-vega-vl-1.0-flash`、`chat-completion` 协议，支持托管 BeefAPI 和自定义渠道中实际存在的模型及其配置别名。它与助手模型分别选择，不受主助手模型名单限制；连接或刷新目录不自动替用户选择。清空表示不使用独立多模态模型，失效选择返回不可用，不静默改用其他模型。此操作不修改画布，但调用可能收费，因此描述符为 `readOnly: true, replay: "unsafe"`：官方 Durable 不自动重放中断的付费检查。一次操作只发起一次供应商请求；空回复、截断及请求失败不能作为通过依据。它没有工具权限或独立 Agent 循环。
 
 宿主对模型请求与工具步骤各自有单轮上限（`BEEFTV_AGENT_MAX_REQUESTS_PER_TURN`、
 `BEEFTV_AGENT_MAX_TOOL_STEPS_PER_TURN`），按轮独立计数、下一轮从零开始；总预算
