@@ -356,7 +356,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.platform }}
-          path: dist/BeefTV-${{ needs.preflight.outputs.version }}-${{ matrix.platform }}*
+          path: |
+            dist/BeefTV-${{ needs.preflight.outputs.version }}-${{ matrix.platform }}*
+            dist/BeefTV-${{ needs.preflight.outputs.version }}-ffprobe-${{ matrix.platform }}-sources.tar.gz
           retention-days: 7
           if-no-files-found: error
 
@@ -446,7 +448,7 @@ jobs:
       - name: Publish signed GitHub release
         run: |
           set -euo pipefail
-          gh release upload "$VERSION" "dist/desktop-update.json" dist/BeefTV-"$VERSION"-*.zip dist/BeefTV-"$VERSION"-*.dmg dist/BeefTV-"$VERSION"-*-setup.exe dist/BeefTV-"$VERSION"-*.deb
+          gh release upload "$VERSION" "dist/desktop-update.json" dist/BeefTV-"$VERSION"-*.zip dist/BeefTV-"$VERSION"-*.dmg dist/BeefTV-"$VERSION"-*-setup.exe dist/BeefTV-"$VERSION"-*.deb dist/BeefTV-"$VERSION"-ffprobe-darwin-*-sources.tar.gz
           gh release edit "$VERSION" --draft=false --latest
 
       - name: Activate verified COS update feed

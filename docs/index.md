@@ -45,3 +45,4 @@ BeefTV 是一个本地优先、轻量、AI Native 的视频工作台。本页只
 - [项目许可](../LICENSE)
 - [许可范围与使用场景](content/docs/overview/licensing.mdx)
 - [第三方声明](../THIRD_PARTY_NOTICES.md)
+- [媒体组件的许可与源码交付](media-source-distribution.md)
