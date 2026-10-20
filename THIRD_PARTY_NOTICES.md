@@ -51,7 +51,7 @@ The optional Windows depth runtime also contains imageio-ffmpeg's binary and
 requires its own source and license review.
 
 The [media source delivery procedure](docs/media-source-distribution.md)
-defines source collection and final artifact verification. The application
+describes the delivered notices and macOS source packets. The application
 provides a “第三方许可与源码” entry from its changelog dialog. License texts are
 also available offline in the distributed files. These delivery mechanisms
 do not resolve the separate question of combination compatibility.

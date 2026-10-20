@@ -19,16 +19,6 @@ foreach ($binary in @("ffmpeg.exe", "ffprobe.exe")) {
         throw "构建缺少 $binary；必须显式提供可验证的 FFmpeg 发行包目录"
     }
 }
-foreach ($notice in @("LICENSE", "README.txt", "manifest.json")) {
-    if (-not (Test-Path -LiteralPath (Join-Path $ffmpegSource $notice) -PathType Leaf)) {
-        throw "FFmpeg distribution is missing $notice; use the verified media-runtime directory"
-    }
-}
-$mediaManifest = Get-Content -LiteralPath (Join-Path $ffmpegSource "manifest.json") -Raw | ConvertFrom-Json
-foreach ($entry in @(@("ffmpeg.exe", "binarySHA256"), @("ffprobe.exe", "probeSHA256"))) {
-    $actual = (Get-FileHash -LiteralPath (Join-Path $ffmpegSource $entry[0]) -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($actual -ne $mediaManifest.($entry[1])) { throw "FFmpeg binary does not match its source manifest: $($entry[0])" }
-}
 
 $commit = "4f5ae23172ba60fd7bc11ef671cca678842c7072"
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
@@ -63,11 +53,6 @@ try {
     New-Item -ItemType Directory -Path $bin -Force | Out-Null
     foreach ($binary in @("ffmpeg.exe", "ffprobe.exe")) {
         Copy-Item -LiteralPath (Join-Path $ffmpegSource $binary) -Destination $bin
-    }
-    $mediaNotices = Join-Path $runtime "licenses\ffmpeg"
-    New-Item -ItemType Directory -Path $mediaNotices -Force | Out-Null
-    foreach ($notice in @("LICENSE", "README.txt", "manifest.json")) {
-        Copy-Item -LiteralPath (Join-Path $ffmpegSource $notice) -Destination $mediaNotices
     }
 
     $sourceRepo = Join-Path $scratch "vda-source"

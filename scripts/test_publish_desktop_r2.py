@@ -17,8 +17,6 @@ from unittest.mock import Mock, patch
 import urllib.request
 from urllib.parse import urlsplit
 
-from test_distribution_sources import desktop_fixture
-
 spec = importlib.util.spec_from_file_location("publish_desktop_r2", Path(__file__).with_name("publish-desktop-r2.py"))
 release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
@@ -59,8 +57,6 @@ class PublicationTests(unittest.TestCase):
         store = self.store
         self.public_requests = []
         requests = self.public_requests
-        self.public_overrides = {}
-        overrides = self.public_overrides
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
@@ -69,8 +65,7 @@ class PublicationTests(unittest.TestCase):
                 if not re.fullmatch(r"BeefTV-Desktop-Updater/v\d+\.\d+\.\d+", agent):
                     self.send_error(403)
                     return
-                key = self.path.lstrip("/")
-                content = overrides.get(key, store.objects.get(key))
+                content = store.objects.get(self.path.lstrip("/"))
                 if content is None:
                     self.send_error(404)
                     return
@@ -99,138 +94,20 @@ class PublicationTests(unittest.TestCase):
         self.publisher = release.Publisher(self.store, release.PublicHTTP(opener), "/tmp/update-release",
                                            "https://updates.beefapi.com/beeftv", lambda *args: None)
 
-    def manifest(self, version="v1.5.7", omit=None, with_sources=False):
+    def manifest(self, version="v1.5.7", omit=None):
         platforms = {}
         for platform in sorted(release.PLATFORMS):
             if platform == omit:
                 continue
             name = f"BeefTV-{version}-{platform}.zip"
-            if with_sources:
-                archive, _, _ = desktop_fixture(self.root, platform, version)
-                data = archive.read_bytes()
-            else:
-                data = (version + platform).encode() * 32
-                (self.root / name).write_bytes(data)
+            data = (version + platform).encode() * 32
+            (self.root / name).write_bytes(data)
             platforms[platform] = {"url": f"https://updates.beefapi.com/beeftv/{version}/{name}",
                                    "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
         payload = {"schema": 1, "version": version, "commit": "a" * 40, "notes": "test release", "platforms": platforms}
         path = self.root / f"{version}.json"
         path.write_text(json.dumps({"payload": base64.b64encode(json.dumps(payload).encode()).decode(), "signature": "fixture"}))
         return path
-
-    def test_missing_or_tampered_source_packets_block_stage_before_any_write(self):
-        for missing in (True, False):
-            with self.subTest(missing=missing):
-                manifest = self.manifest(with_sources=True)
-                source = next(self.root.glob("*-sources.tar.gz"))
-                if missing:
-                    source.unlink()
-                else:
-                    data = source.read_bytes()
-                    source.write_bytes(bytes([data[0] ^ 1]) + data[1:])
-                with self.assertRaisesRegex(release.PublishError, "Source delivery check failed"):
-                    self.publisher.stage(manifest, self.root, with_sources=True)
-                self.assertEqual(self.store.writes, [])
-                self.assertEqual(self.public_requests, [])
-
-    def test_cli_with_sources_rejects_invalid_packets_before_cloud_probe(self):
-        self.store.check_conditions = Mock()
-        for command in ("stage", "activate"):
-            for missing in (True, False):
-                with self.subTest(command=command, missing=missing):
-                    manifest = self.manifest(with_sources=True)
-                    source = next(self.root.glob("*-sources.tar.gz"))
-                    if missing:
-                        source.unlink()
-                    else:
-                        data = source.read_bytes()
-                        source.write_bytes(bytes([data[0] ^ 1]) + data[1:])
-                    args = ["publish", command, "--manifest", str(manifest), "--assets-dir", str(self.root),
-                            "--with-sources", "--verifier", "/tmp/update-release",
-                            "--endpoint-url", "https://cos.ap-guangzhou.myqcloud.com",
-                            "--public-base", self.publisher.public_base]
-                    errors = io.StringIO()
-                    with patch.object(release.sys, "argv", args), patch.object(release, "storage_config", return_value=self.store), redirect_stderr(errors):
-                        self.assertEqual(release.main(), 1)
-                    self.assertIn("Source delivery check failed", errors.getvalue())
-                    self.store.check_conditions.assert_not_called()
-                    self.assertEqual(self.store.writes, [])
-                    self.assertEqual(self.public_requests, [])
-
-    def test_sources_are_immutable_and_publicly_verified_before_desktop_upload(self):
-        manifest = self.manifest(with_sources=True)
-        source_keys = {f"beeftv/v1.5.7/{source.name}" for source in self.root.glob("*-sources.tar.gz")}
-
-        def before_put(key):
-            if key.endswith(".zip"):
-                self.assertTrue(source_keys.issubset(self.store.objects))
-                self.assertTrue({"/" + name for name in source_keys}.issubset({path for path, _ in self.public_requests}))
-
-        self.store.before_put = before_put
-        self.publisher.stage(manifest, self.root, with_sources=True)
-        self.assertEqual({key for key, _ in self.store.writes[:len(source_keys)]}, source_keys)
-        self.assertTrue(all(cache == release.IMMUTABLE for _, cache in self.store.writes))
-        self.assertNotIn(release.LATEST, self.store.objects)
-        writes = list(self.store.writes)
-        self.publisher.stage(manifest, self.root, with_sources=True)
-        self.assertEqual(self.store.writes, writes)
-        source_key = sorted(source_keys)[0]
-        self.store.objects[source_key] = b"existing different source packet"
-        with self.assertRaisesRegex(release.PublishError, "Immutable"):
-            self.publisher.stage(manifest, self.root, with_sources=True)
-        self.assertEqual(self.store.writes, writes)
-
-    def test_failed_public_source_readback_prevents_desktop_upload(self):
-        manifest = self.manifest(with_sources=True)
-        source = next(self.root.glob("*-sources.tar.gz"))
-        self.public_overrides[f"beeftv/v1.5.7/{source.name}"] = b"x" * source.stat().st_size
-        with self.assertRaisesRegex(release.PublishError, "hash"):
-            self.publisher.stage(manifest, self.root, with_sources=True)
-        self.assertTrue(self.store.writes)
-        self.assertTrue(all(key.endswith("-sources.tar.gz") for key, _ in self.store.writes))
-        self.assertNotIn(release.LATEST, self.store.objects)
-
-    def test_activation_requires_github_source_size_digest_and_public_source_bytes(self):
-        manifest = self.manifest(with_sources=True)
-        self.publisher.stage(manifest, self.root, with_sources=True)
-        sources = sorted(self.root.glob("*-sources.tar.gz"))
-        assets = [{"name": source.name, "state": "uploaded", "size": source.stat().st_size,
-                   "digest": "sha256:" + hashlib.sha256(source.read_bytes()).hexdigest()} for source in sources]
-        metadata = {"assets": assets}
-
-        def response(command):
-            return subprocess.CompletedProcess(command, 0, json.dumps(metadata) if command[0] == "gh" else "", "")
-
-        self.verify_command.side_effect = response
-        self.publisher.release_check = Mock()
-        self.store.objects[release.LATEST] = b"previous latest feed"
-        writes = list(self.store.writes)
-        changes = [{"state": "new"}, {"size": assets[0]["size"] + 1}, {"digest": None}, {"digest": "sha256:" + "0" * 64}]
-        for change in [None] + changes:
-            with self.subTest(change=change):
-                metadata["assets"] = assets[1:] if change is None else [dict(assets[0], **change)] + assets[1:]
-                with self.assertRaisesRegex(release.PublishError, "GitHub source asset"):
-                    self.publisher.activate(manifest, source_dir=self.root)
-                self.assertEqual(self.store.writes, writes)
-                self.assertEqual(self.store.objects[release.LATEST], b"previous latest feed")
-                self.publisher.release_check.assert_not_called()
-        metadata["assets"] = assets
-        source_key = f"beeftv/v1.5.7/{sources[0].name}"
-        for content in (None, b"x" * sources[0].stat().st_size):
-            with self.subTest(public_source=content is not None):
-                self.public_overrides[source_key] = content
-                with self.assertRaises(release.PublishError):
-                    self.publisher.activate(manifest, source_dir=self.root)
-                self.assertEqual(self.store.writes, writes)
-                self.assertEqual(self.store.objects[release.LATEST], b"previous latest feed")
-                self.publisher.release_check.assert_not_called()
-        self.public_overrides.clear()
-        del self.store.objects[release.LATEST]
-        self.public_requests.clear()
-        self.publisher.activate(manifest, source_dir=self.root)
-        self.assertEqual(self.store.objects[release.LATEST], manifest.read_bytes())
-        self.publisher.release_check.assert_called_once()
-        self.assertTrue({f"/beeftv/v1.5.7/{source.name}" for source in sources}.issubset({path for path, _ in self.public_requests}))
 
     def test_installers_are_required_before_any_write_and_read_back_before_activation(self):
         manifest = self.manifest()
@@ -523,7 +400,7 @@ class S3AdapterTests(unittest.TestCase):
                     self.assertEqual(lock_bytes, lock.read_bytes())
                     self.assertEqual(claim_bytes, claim.read_bytes())
                     self.assertEqual(confirmations, dict(confirm_no_inflight=True, confirm_writers_frozen=True,
-                                                         confirm_no_unlock_attempt=True, installer_dir=None, source_dir=None))
+                                                         confirm_no_unlock_attempt=True, installer_dir=None))
                     return "v1.5.7"
                 publisher.return_value.resume.side_effect = resume
                 self.assertEqual(release.main(), 0)

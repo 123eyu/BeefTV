@@ -15,7 +15,6 @@ COPY README.md /app/README.md
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md /app/
 COPY licenses /app/licenses
 COPY scripts/distribution-notices.mjs /app/scripts/distribution-notices.mjs
-COPY licenses/source-packets /app/dist
 COPY assets /app/assets
 COPY backend/internal/providerpreset/image_contracts.json /app/backend/internal/providerpreset/image_contracts.json
 COPY backend/internal/providerpreset/video_contracts.json /app/backend/internal/providerpreset/video_contracts.json
@@ -23,18 +22,10 @@ COPY web ./
 # 生产镜像只构建云端工作台前端；Agent Runtime 在后端 Worker 中运行。
 RUN bun --bun ./node_modules/vite/bin/vite.js build
 
-FROM python:3.12-slim AS web-source-check
-ARG BUILD_VERSION
-ARG VERIFY_SOURCE_DELIVERY=0
-COPY --from=web-build /app/web/dist /web
-COPY licenses/source-packets /web/licenses/sources
-COPY scripts/distribution_sources.py /scripts/distribution_sources.py
-RUN if [ "$VERIFY_SOURCE_DELIVERY" = 1 ]; then python /scripts/distribution_sources.py --web-dir /web --version "$BUILD_VERSION"; fi
-
 # 运行镜像：nginx 托管静态前端，并在 Compose 中把 /api 转发到后端服务。
 FROM nginx:1.27-alpine
 
-COPY --from=web-source-check /web /usr/share/nginx/html
+COPY --from=web-build /app/web/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 3000

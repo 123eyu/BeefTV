@@ -42,12 +42,20 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go test ./internal/app -run 'Test.*Depth|TestChooseDepthDevice' -count=1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Package pinned FFmpeg with its notices
+      - name: Find FFmpeg and FFprobe
         shell: pwsh
         run: |
-          $binaryDir = Join-Path $env:RUNNER_TEMP "depth-media-runtime"
-          ./scripts/package-media-runtime-windows.ps1 -Destination $binaryDir
-          if ($LASTEXITCODE -ne 0) { throw "Pinned FFmpeg packaging failed" }
+          if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue) -or -not (Get-Command ffprobe -ErrorAction SilentlyContinue)) {
+            choco install ffmpeg -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "无法安装 FFmpeg 测试依赖" }
+            Import-Module "$env:ChocolateyInstall\helpers\chocolateyProfile.psm1"
+            refreshenv
+          }
+          # Chocolatey's PATH commands are shims, not relocatable executables.
+          $binaryDir = Join-Path $env:ChocolateyInstall "lib\ffmpeg\tools\ffmpeg\bin"
+          if (-not (Test-Path (Join-Path $binaryDir "ffmpeg.exe")) -or -not (Test-Path (Join-Path $binaryDir "ffprobe.exe"))) {
+            throw "找不到 Chocolatey 安装的实际 FFmpeg/FFprobe 二进制文件"
+          }
           "DEPTH_FFMPEG_DIR=$binaryDir" >> $env:GITHUB_ENV
       - name: Build and relocate ${{ matrix.variant }} runtime
         shell: powershell

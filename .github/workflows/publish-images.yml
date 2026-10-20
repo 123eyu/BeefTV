@@ -50,10 +50,6 @@ jobs:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
-      - name: Require corresponding WASM sources
-        if: matrix.image == 'beeftv-web'
-        run: python3 scripts/collect-distribution-sources.py --version '${{ steps.build-info.outputs.version }}' --component ffmpeg-wasm --destination licenses/source-packets
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -88,7 +84,6 @@ jobs:
             BUILD_VERSION=${{ steps.build-info.outputs.version }}
             BUILD_COMMIT=${{ github.sha }}
             BUILD_TIME=${{ steps.build-info.outputs.build_time }}
-            VERIFY_SOURCE_DELIVERY=1
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.image }}

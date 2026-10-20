@@ -5,12 +5,7 @@
 `894da5ca7d742e4429ffb2af534fcda0103ef593`:
 https://github.com/FFmpeg/FFmpeg/tree/894da5ca7d742e4429ffb2af534fcda0103ef593
 
-`distribution-inputs.json` owns the reviewed source packet selection for
-prebuilt binaries. `ffmpeg-wasm-sources.json` records candidate upstream
-source inputs for rebuilding the WASM core; its unresolved status must not
-be promoted to a historical binary attestation.
-
 See [media source distribution](../docs/media-source-distribution.md) for
-the packet format, collection, final artifact checks and publication rules.
-`source-packets/` is an ignored container build input, not a source archive
-stored in Git.
+the component inventory, offline notices, and macOS source packet delivery.
+Upstream project links are not a claim of complete corresponding-source
+delivery for prebuilt binaries.

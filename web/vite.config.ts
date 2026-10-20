@@ -1,5 +1,4 @@
 import { dirname, resolve } from "node:path";
-import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
@@ -48,21 +47,8 @@ function licenseNoticesPlugin(): Plugin {
                 response.end(bytes);
             });
         },
-        generateBundle(_options, bundle) {
-            const files = notices();
-            const index = JSON.parse(files.get("sources.json")!.toString());
-            const core = index.components.find((component: { id: string }) => component.id === "ffmpeg-wasm");
-            if (core) {
-                core.binaryAssets = {};
-                for (const key of ["wasm", "javascript"]) {
-                    const assets = Object.values(bundle).filter((asset) => asset.type === "asset" &&
-                        createHash("sha256").update(asset.source).digest("hex") === core.binaryHashes[key]);
-                    if (assets.length !== 1) throw new Error(`Cannot bind emitted FFmpeg ${key} to its source index`);
-                    core.binaryAssets[key] = assets[0].fileName;
-                }
-            }
-            files.set("sources.json", Buffer.from(JSON.stringify(index, null, 2) + "\n"));
-            for (const [name, source] of files) {
+        generateBundle() {
+            for (const [name, source] of notices()) {
                 this.emitFile({ type: "asset", fileName: `licenses/${name}`, source });
             }
         },
