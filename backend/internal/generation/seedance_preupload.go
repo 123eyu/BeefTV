@@ -53,10 +53,11 @@ var (
 type BeefAPISeedanceMediaReader func(kind string, media Media) (data []byte, mime string, skip bool, err error)
 
 type BeefAPISeedanceUploadSession struct {
-	UploadURL       string            `json:"upload_url"`
-	UploadMethod    string            `json:"upload_method"`
-	RequiredHeaders map[string]string `json:"required_headers"`
-	Ticket          string            `json:"ticket"`
+	UploadURL       string                        `json:"upload_url"`
+	UploadMethod    string                        `json:"upload_method"`
+	RequiredHeaders map[string]string             `json:"required_headers"`
+	Ticket          string                        `json:"ticket"`
+	Multipart       *BeefAPISeedanceMultipartPlan `json:"multipart,omitempty"`
 }
 
 type BeefAPISeedanceUploadComplete struct {
@@ -68,10 +69,11 @@ type BeefAPISeedanceUploadComplete struct {
 }
 
 type BeefAPISeedanceUploadRequest struct {
-	Kind   string `json:"kind"`
-	Bytes  int64  `json:"bytes"`
-	SHA256 string `json:"sha256"`
-	Mime   string `json:"mime"`
+	Resumable bool   `json:"resumable,omitempty"`
+	Kind      string `json:"kind"`
+	Bytes     int64  `json:"bytes"`
+	SHA256    string `json:"sha256"`
+	Mime      string `json:"mime"`
 }
 
 // PrepareBeefAPIVideoReferences uploads built-in BeefAPI local/inline
@@ -351,6 +353,7 @@ func validateSeedanceReferenceCapability(input *Input, kind string, index int, m
 
 func CreateBeefAPISeedanceUpload(ctx context.Context, config Config, request BeefAPISeedanceUploadRequest) (BeefAPISeedanceUploadSession, error) {
 	ctx = referenceUploadStage(ctx, "create")
+	request.Resumable = true
 	var session BeefAPISeedanceUploadSession
 	if err := PostJSON(ctx, config, beefAPISeedanceUploadCreatePath, request, &session); err != nil {
 		return BeefAPISeedanceUploadSession{}, referenceUploadError(ctx, err)
@@ -362,6 +365,9 @@ func CreateBeefAPISeedanceUpload(ctx context.Context, config Config, request Bee
 }
 
 func CompleteBeefAPISeedanceUpload(ctx context.Context, config Config, session BeefAPISeedanceUploadSession, data []byte) (BeefAPISeedanceUploadComplete, error) {
+	if session.Multipart != nil {
+		return completeBeefAPISeedanceMultipart(ctx, config, session, data)
+	}
 	if err := PutBeefAPISeedanceBytes(ctx, session, data); err != nil {
 		return BeefAPISeedanceUploadComplete{}, MapBeefAPISeedanceUploadError(err, false)
 	}
@@ -479,6 +485,9 @@ func PutBeefAPISeedanceBytes(ctx context.Context, session BeefAPISeedanceUploadS
 func ValidateBeefAPISeedanceSession(ctx context.Context, session BeefAPISeedanceUploadSession) error {
 	if strings.TrimSpace(session.Ticket) == "" {
 		return errBeefAPISeedanceUploadUnavailable
+	}
+	if session.Multipart != nil {
+		return validateSeedanceMultipart(ctx, session.Multipart, 0)
 	}
 	method := strings.ToUpper(strings.TrimSpace(session.UploadMethod))
 	if method != "" && method != http.MethodPut {
