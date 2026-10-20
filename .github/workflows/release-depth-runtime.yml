@@ -53,6 +53,8 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m unittest discover -s scripts -p 'test_prepare_depth_manifest.py'
+          python3 -m unittest discover -s scripts -p 'test_verify_depth_sources.py'
+          python3 scripts/verify-depth-sources.py dist/depth --version "$(cat VERSION)"
           python3 scripts/prepare-depth-manifest.py dist/depth dist/depth-payload.json
           cd backend
           go test ./cmd/update-release ./internal/depthruntime

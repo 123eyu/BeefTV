@@ -43,6 +43,8 @@ python3 scripts/distribution_sources.py \
 
 正式 Web 镜像流水线先把源码收集到 `licenses/source-packets/`，再以 `VERIFY_SOURCE_DELIVERY=1` 构建。最终静态文件和源码包必须匹配才可推送。容器通过 `/licenses/` 提供许可，`/licenses/sources/` 提供对应源码。普通本地构建允许尚未收集的源码输入，不能据此认定可公开分发。
 
+深度运行包在签名前运行 `python3 scripts/verify-depth-sources.py dist/depth --version "$(cat VERSION)"`。检查会复用已有的分片大小与哈希协议，临时重组 CUDA ZIP，逐一核对 CPU/CUDA 包中的主 FFmpeg、ffprobe 和 imageio 自带 FFmpeg，再删除临时重组文件。缺少许可、源码或出现未声明的 FFmpeg 都会停止发布。wheel 的 BSD 许可证不代表其内嵌 FFmpeg 的源码义务已经满足。
+
 ## 重建 WASM
 
 `licenses/ffmpeg-wasm-sources.json` 固定官方 core 0.12.10 发布提交及其依赖候选源码。`scripts/package-wasm-sources.py` 收集这些归档、许可和离线构建配方。公开 npm 包缺少足以绑定历史构建输入的证明时，候选源码包保持 `unresolved`，`--require-resolved` 必须拒绝它。
