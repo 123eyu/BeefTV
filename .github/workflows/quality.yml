@@ -78,7 +78,9 @@ jobs:
       - name: Test immutable publication and activation
         run: |
           node --test scripts/image-preparation-release-contract.test.mjs
+          node --test scripts/music3-release-contract.test.mjs
           python3 -m unittest discover -s scripts -p 'test_publish_desktop_r2.py'
+          python3 -m unittest discover -s scripts -p 'test_desktop_cos_store.py'
           python3 -m unittest discover -s scripts -p 'test_smoke_desktop_installer.py'
 
   backend:
