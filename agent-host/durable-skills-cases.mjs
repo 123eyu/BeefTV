@@ -12,6 +12,7 @@ import { BACKGROUND_CONTEXT as CTX } from '@earendil-works/chord/context';
 import { CompactionTask, defineExtension, hook } from '@earendil-works/pi-durable';
 import { agentThinkingLevel, createDurableSessionStore } from './durable-session-owner.mjs';
 import { fixtureSkillContext } from './test-support/skill-context-fixture.mjs';
+import { createOperationBridge } from './operation-bridge.mjs';
 
 const hash = (c) => c.repeat(64);
 const batches = { skillId: 'batches', versionId: 'v1', contentHash: hash('a') };
@@ -24,7 +25,7 @@ const bodies = {
 };
 const resourceFor = (pin) => ({ pin, ...bodies[pin.skillId], version: pin.versionId.slice(1), files: [], unsupportedCapabilities: [] });
 
-async function skillFixture(directory, { thinkingLevel, script = () => null, gate = async () => {}, versionGate=()=>{}, contextGate=async()=>{}, contextValidation=()=>{}, closedTurns=new Set(), lossy=false, catalogItems=[batches,catalogOnly] } = {}) {
+async function skillFixture(directory, { thinkingLevel, script = () => null, gate = async () => {}, authorizationGate=async()=>{}, versionGate=()=>{}, contextGate=async()=>{}, contextValidation=()=>{}, closedTurns=new Set(), lossy=false, catalogItems=[batches,catalogOnly] } = {}) {
   const payloads = [], reads = [], catalogs = [];
   const server = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
@@ -46,7 +47,7 @@ async function skillFixture(directory, { thinkingLevel, script = () => null, gat
   const contexts = fixtureSkillContext(directory);
   const store = createDurableSessionStore({ sessionRoot: path.join(directory, 'sessions'), workspaceRoot: path.join(directory, 'workspace'),
     getModels: () => models, getModelRef: () => ({ provider: 'beeftv', modelId: 'thinker' }), buildTools: () => [],
-    authorizeTurn: async () => ({ open: true, canvasId: 'canvas', permissionMode: 'canvas' }), settings: { retry: { maxRetries: 0 },compaction:{enabled:false,keepRecentTokens:100,reserveTokens:2048,backgroundTokens:0} },
+    authorizeTurn: async input => { await authorizationGate(input); return { open: true, canvasId: 'canvas', permissionMode: 'canvas' }; }, settings: { retry: { maxRetries: 0 },compaction:{enabled:false,keepRecentTokens:100,reserveTokens:2048,backgroundTokens:0} },
     extensions:()=>lossy?[defineExtension({name:'fixture.lossy-summary',hooks:[hook(CompactionTask,{beforeCompact:async()=>({summary:'Earlier planning is complete.'})})]})]:[],
     ...(thinkingLevel ? { thinkingLevel } : {}),
     skills: {
@@ -377,11 +378,81 @@ test('missing or disabled active package fails before dispatch and clear still w
       let submission=await fixture.store.submit(entry,{turnId:'one',content:'先选技能',skills:[batches]});
       assert.equal((await fixture.store.wait(entry,submission)).error,null);const calls=fixture.payloads.length;
       revoked=true;submission=await fixture.store.submit(entry,{turnId:'two',content:'继续'});
-      const failed=await fixture.store.wait(entry,submission);assert(failed.error);assert.equal(fixture.payloads.length,calls,`${reason}: stale section must not reach provider`);
+      const failed=await fixture.store.wait(entry,submission);assert(failed.error);assert.equal(failed.errorReason,reason==='hash_mismatch'?'skill_version_unavailable':reason);assert.equal(fixture.payloads.length,calls,`${reason}: stale section must not reach provider`);
       const current=await fixture.store.skillContext(entry);
       const cleared=await fixture.store.changeSkillContext(entry,{action:'clear',expectedRevision:current.revision,requestId:'clear'});assert.equal(cleared.activePins.length,0);
     }finally{await fixture?.close();fs.rmSync(directory,{recursive:true,force:true});}
   }
+});
+
+for (const mode of ['transport_closed', 'scope_denied']) test(`authorization ${mode} is not reported as a missing skill`, {timeout:30000}, async()=>{
+  const directory=temp(`authorization-${mode}`);let fixture,denied=false;
+  const authority=createServer((_req,res)=>{
+    res.setHeader('content-type','application/json');
+    if(denied)res.writeHead(403).end(JSON.stringify({code:403,reason:'scope_denied'}));
+    else res.end(JSON.stringify({code:0,data:{}}));
+  });
+  await new Promise(resolve=>authority.listen(0,'127.0.0.1',resolve));
+  const bridge=createOperationBridge({opsUrl:`http://127.0.0.1:${authority.address().port}`,hostToken:'synthetic'});
+  try{
+    fixture=await skillFixture(directory,{
+      authorizationGate:()=>bridge.opsRequest('GET','/assistant/runtime/turns/turn'),
+      gate:async(_body,call)=>{
+        if(call!==1)return;
+        if(mode==='transport_closed'){
+          authority.closeAllConnections();await new Promise(resolve=>authority.close(resolve));
+        }else denied=true;
+      },
+      script:(_body,call)=>call===1?{name:'plan_update',args:{items:[{id:'one',title:'Synthetic completed operation',status:'doing'}]}}:null,
+    });
+    const entry=await fixture.store.createSession('canvas');
+    const submission=await fixture.store.submit(entry,{turnId:'turn',requestId:'request',content:'Synthetic task'});
+    const record=await fixture.store.wait(entry,submission);
+    const reason=mode==='transport_closed'?'turn_authorization_unavailable':'scope_denied';
+    assert.equal(record.errorReason,reason);
+    assert.equal(record.cancelled,false,'an outage or denied scope is not proof of a user interruption');
+    assert.equal(fixture.payloads.length,1,'failed authorization must not dispatch another model request');
+    assert.equal(record.toolCalls.filter(tool=>tool.tool==='plan.update'&&!tool.isError).length,0,'a denied authorization must not execute the planned write');
+    assert.equal((await fixture.store.history('canvas',entry.sessionId)).turns[0].errorReason,reason);
+  }finally{
+    await fixture?.close();authority.closeAllConnections();
+    if(authority.listening)await new Promise(resolve=>authority.close(resolve));
+    fs.rmSync(directory,{recursive:true,force:true});
+  }
+});
+
+test('official close interrupts live work without committing a false skill failure and explicit recovery keeps completed tools', {timeout:30000},async()=>{
+  const directory=temp('close-live');let fixture,release,started;
+  const pending=new Promise(resolve=>{release=resolve;});
+  const dispatched=new Promise(resolve=>{started=resolve;});
+  try{
+    fixture=await skillFixture(directory,{
+      gate:async(_body,call)=>{if(call===2){started();await pending;}},
+      script:(_body,call)=>call===1?{name:'plan_update',args:{items:[{id:'one',title:'Synthetic committed step',status:'doing'}]}}:null,
+    });
+    const entry=await fixture.store.createSession('canvas');
+    await fixture.store.submit(entry,{turnId:'interrupted-turn',requestId:'interrupted-request',content:'Synthetic task'});
+    await dispatched;
+    const start=Date.now();
+    await fixture.store.disposeAll();
+    assert(Date.now()-start<3000,'official close must interrupt the pending request promptly');
+    assert.equal(fixture.payloads.length,2);
+    const sessionId=entry.sessionId;
+    release();await fixture.close();
+    fixture=await skillFixture(directory);
+    const history=await fixture.store.history('canvas',sessionId);
+    assert.equal(history.active?.requestId,'interrupted-request');
+    assert.equal(history.active?.errorReason,undefined,'close must not manufacture a terminal skill error');
+    assert.equal(history.turns.length,0);
+    assert.equal(history.plan.items[0].status,'doing','the committed tool effect remains visible');
+    assert.equal(fixture.payloads.length,0,'opening history must not dispatch model work');
+    const restored=await fixture.store.ensureSession('canvas',sessionId);
+    const recovered=await fixture.store.recover(restored);
+    const record=await fixture.store.wait(restored,recovered);
+    assert.equal(record.error,null);
+    assert.equal(record.toolCalls.filter(tool=>tool.tool==='plan.update'&&!tool.isError).length,1,'completed tool must not be duplicated');
+    assert.equal(fixture.payloads.length,1,'only explicit recovery may dispatch the interrupted request');
+  }finally{release?.();await fixture?.close();fs.rmSync(directory,{recursive:true,force:true});}
 });
 
 test('thinking level defaults to low, honours the env, and reaches existing conversations on their next turn', { timeout: 60000 }, async () => {

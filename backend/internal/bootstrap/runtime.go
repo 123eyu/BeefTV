@@ -429,10 +429,17 @@ func (r *Runtime) Close(ctx context.Context) error {
 	r.closeOnce.Do(func() {
 		r.closed.Store(true)
 		r.status.beginDrain()
+		var failures []error
+		// Durable must release its invocations while Go authorization and ops
+		// are still reachable; closing HTTP first turns Quit into fetch errors.
+		if r.assistantHost != nil {
+			if err := r.assistantHost.StopContext(ctx); err != nil {
+				failures = append(failures, err)
+			}
+		}
 		if r.beefAPI != nil {
 			r.beefAPI.Close()
 		}
-		var failures []error
 		if err := r.DepthComponents().CloseComponents(ctx); err != nil {
 			failures = append(failures, fmt.Errorf("暂停组件下载：%w", err))
 		}
@@ -472,13 +479,6 @@ func (r *Runtime) Close(ctx context.Context) error {
 				}
 			}
 		}
-		// 本进程启动的内置宿主子进程必须跟着一起退出：否则后端重启后旧宿主会占着端口，
-		// 让状态查询显示「可用」但其实是上一个进程的实例。只清理本进程启动过的 PID。
-		if r.assistantHost != nil {
-			if err := r.assistantHost.StopContext(ctx); err != nil {
-				failures = append(failures, err)
-			}
-		}
 		var serviceErr error
 		if r.localApp != nil {
 			serviceErr = r.localApp.Close()
@@ -509,7 +509,7 @@ func desktopCORSMiddleware() gin.HandlerFunc {
 			c.Header("Access-Control-Allow-Credentials", "true")
 			c.Header("Vary", "Origin, Access-Control-Request-Method, Access-Control-Request-Headers")
 		}
-		c.Header("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-Desktop-Token, X-Beeftv-UI-Bootstrap, X-Beeftv-Ui-Session, X-Canvas-Trace-ID, X-Idempotency-Key, X-Canvas-Scene, X-Canvas-Upstream-URL, X-Canvas-Upstream-Format, X-Canvas-Upstream-Base-URL, X-Canvas-Upstream-Headers")
+		c.Header("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, Traceparent, X-Desktop-Token, X-Beeftv-UI-Bootstrap, X-Beeftv-Ui-Session, X-Canvas-Trace-ID, X-Idempotency-Key, X-Canvas-Scene, X-Canvas-Upstream-URL, X-Canvas-Upstream-Format, X-Canvas-Upstream-Base-URL, X-Canvas-Upstream-Headers")
 		c.Header("Access-Control-Expose-Headers", "X-Request-ID, X-Canvas-Trace-ID, X-Diagnostic-Bundle-ID, X-Diagnostic-Schema-Version")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		if c.Request.Method == http.MethodOptions {

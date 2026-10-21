@@ -335,7 +335,7 @@ func (a generationDeliveryMediaAdapter) decodeGenerationArtifact(userID, identit
 		if contextErr != nil {
 			return "", nil, "", "", 0, 0, 0, contextErr
 		}
-		defer func() { finish(err == nil) }()
+		defer func() { finish(err) }()
 		if _, urlErr := validateRemoteResourceURL(artifactURL); urlErr != nil {
 			return "", nil, "", "", 0, 0, 0, urlErr
 		}

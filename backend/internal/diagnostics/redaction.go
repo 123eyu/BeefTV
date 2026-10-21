@@ -11,6 +11,9 @@ import (
 
 func sanitizeClientEvent(event ClientEvent) clientEventRecord {
 	return clientEventRecord{
+		LaunchID: sanitizeIdentifier(event.LaunchID), SessionID: sanitizeIdentifier(event.SessionID), SpanID: sanitizeIdentifier(event.SpanID),
+		ClientOperationID: sanitizeOperationID(event.ClientOperationID), NodeID: sanitizeIdentifier(event.NodeID),
+		AssistantSessionID: sanitizeIdentifier(event.AssistantSessionID), AssistantTurnID: sanitizeIdentifier(event.AssistantTurnID), Media: sanitizeMedia(event.Media),
 		CanvasBinding: sanitizeCanvasBinding(event.CanvasBinding),
 		Reason:        sanitizeIdentifier(event.Reason),
 		ID:            sanitizeIdentifier(event.ID), Timestamp: redactText(event.Timestamp, 80), Level: redactText(event.Level, 24), Category: redactText(event.Category, 32),

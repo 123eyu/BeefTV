@@ -9,12 +9,15 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"gorm.io/gorm"
+	"infinite-canvas/backend/internal/diagnostics"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/supporttrace"
 )
 
 func TestGenerationDownloadCanPauseAndResumeWithoutRegenerating(t *testing.T) {
@@ -161,7 +164,7 @@ func TestGenerationDownloadDeadlinePausesAndCloseCancels(t *testing.T) {
 			case <-time.After(time.Second):
 				t.Fatal("context remained active")
 			}
-			finish(false)
+			finish(ctx.Err())
 			got, err := svc.repo.Task(task.ID)
 			if err != nil {
 				t.Fatal(err)
@@ -206,12 +209,12 @@ func TestGenerationDownloadRecoveryDoesNotResetDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	deadline, _ := ctx.Deadline()
-	finish(false)
+	finish(context.Canceled)
 	next, finishNext, err := svc.beginGenerationDownload(task.UserID, task.ID+":0", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer finishNext(false)
+	defer finishNext(context.Canceled)
 	nextDeadline, _ := next.Deadline()
 	if !nextDeadline.Equal(deadline) {
 		t.Fatal("background retry extended total download budget")
@@ -237,9 +240,93 @@ func TestGenerationDownloadAllowedAfterWorkerRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("worker restarted but download remained disabled: %v", err)
 	}
-	defer finish(false)
+	defer finish(context.Canceled)
 	if ctx.Err() != nil {
 		t.Fatalf("restarted context: %v", ctx.Err())
+	}
+}
+
+func TestDownloadShutdownDoesNotWaitForDiagnosticCheckpoint(t *testing.T) {
+	svc, db := newGenerationDeliveryMediaService(t, filepath.Join(t.TempDir(), "delivery.db"), t.TempDir())
+	defer closeDB(t, db)
+	task := seedSucceededTaskAt(t, db, "diagnostic-stall", `{}`, time.Now())
+	entered, release, queried := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var releaseOnce, queryOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	defer unblock()
+	go svc.supportTraceOnce.Do(func() { close(entered); <-release })
+	<-entered
+	if err := db.Callback().Query().After("gorm:query").Register("test:diagnostic-checkpoint-task-read", func(tx *gorm.DB) {
+		if tx.Statement.Table == "tasks" {
+			queryOnce.Do(func() { close(queried) })
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Callback().Query().Remove("test:diagnostic-checkpoint-task-read")
+	started := make(chan error, 1)
+	go func() {
+		_, finish, err := svc.beginGenerationDownload(task.UserID, task.ID+":0", time.Minute)
+		if finish != nil {
+			finish(context.Canceled)
+		}
+		started <- err
+	}()
+	<-queried
+	stopped := make(chan struct{})
+	go func() { svc.stopGenerationDownloads(); close(stopped) }()
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Error("shutdown waited for diagnostic storage")
+	}
+	unblock()
+	if err := <-started; !errors.Is(err, context.Canceled) {
+		t.Fatalf("download admitted after shutdown: %v", err)
+	}
+}
+
+func TestRefusedDownloadAdmissionIsNotFailureOrRecoveryInActualBundle(t *testing.T) {
+	svc, db := newGenerationDeliveryMediaService(t, filepath.Join(t.TempDir(), "delivery.db"), t.TempDir())
+	defer closeDB(t, db)
+	defer svc.closeSupportTrace()
+	task := seedSucceededTaskAt(t, db, "admission-stopped", `{}`, time.Now())
+	_, finish := svc.SupportTrace().Start(context.Background(), "generation.download", supporttrace.Fields{UserID: task.UserID, TaskID: task.ID})
+	finish("upstream_download_failed")
+	var queries atomic.Int32
+	if err := db.Callback().Query().After("gorm:query").Register("test:stop-admission-after-checkpoint", func(tx *gorm.DB) {
+		if tx.Statement.Table == "tasks" && queries.Add(1) == 2 {
+			svc.deliveryClosed = true
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Callback().Query().Remove("test:stop-admission-after-checkpoint")
+	if _, _, err := svc.beginGenerationDownload(task.UserID, task.ID+":0", time.Minute); !errors.Is(err, context.Canceled) {
+		t.Fatalf("admitted after shutdown: %v", err)
+	}
+	bundle, err := svc.ExportDiagnosticBundle(task.UserID, DiagnosticExportRequest{TaskID: task.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings, err := diagnostics.AnalyzeBundle(bundle.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	confirmed, stopped := 0, false
+	for _, finding := range findings {
+		if finding.Stage == "result_download" && finding.Status == "confirmed" {
+			confirmed++
+			if finding.Reason != "upstream_download_failed" {
+				t.Fatalf("refused admission became failure: %+v", finding)
+			}
+		}
+		if finding.Reason == "download_not_started" && finding.Status == "inconclusive" {
+			stopped = true
+		}
+	}
+	if confirmed != 1 || !stopped {
+		t.Fatalf("original failure lost or admission misreported: %+v", findings)
 	}
 }
 

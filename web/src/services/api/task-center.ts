@@ -3,7 +3,7 @@ import { GENERATION_RESULT_FETCH_STAGE } from "@/lib/generation-delivery-progres
 import { assertUserScope, captureUserScope, isUserScopeAbandonedError, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { ApiError, http, apiBaseURL, type BackendEnvelope, type HttpRequestConfig } from "@/services/api/request";
 import { consumeTaskTextStream, createTaskTextStreamParser, type TaskTextStreamEvent } from "@/services/api/task-text-stream";
-import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
+import { getDiagnosticTraceId, recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
 import { publishGenerationDeliveryProgress } from "@/stores/use-generation-delivery-progress";
 import { beginTaskReferenceObservation, publishTaskReferenceProgress } from "@/services/task-reference-progress";
 
@@ -33,6 +33,7 @@ export type GenerationTaskDeliveryProgress = {
 export type GenerationTask = {
     failureDiagnostics?: import("@/lib/generation-error").GenerationFailureDiagnostics;
     id: string;
+    traceId?: string;
     clientOperationId?: string;
     retryOf?: string;
     attemptGroupId?: string;
@@ -141,7 +142,7 @@ export type CreateTaskInput = {
 };
 export function createGenerationTask(input: CreateTaskInput, config?: HttpRequestConfig) {
     return http.post<GenerationTask>("/tasks", input, config).then((task) => {
-        recordDiagnosticEvent({ level: "info", category: "task", message: "任务已创建", taskId: task.id, projectId: task.projectId });
+        recordDiagnosticEvent({ level: "info", category: "task", code: "task_created", message: "任务已创建", taskId: task.id, projectId: task.projectId, canvasId: task.projectId, nodeId: task.clientContext?.nodeId, clientOperationId: task.clientOperationId, traceId: task.traceId || getDiagnosticTraceId(task.id) });
         notifyCanvasTaskCreated(task);
         return task;
     });

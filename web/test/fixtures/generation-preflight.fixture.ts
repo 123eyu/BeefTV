@@ -15,13 +15,15 @@ let hydrate: (context: any) => Promise<any> = async (context) => context;
 let compatible = true;
 let executeVideo = async (input: any) => { dispatched++; input.bindGenerationTask(input.nodeId, { id: "task" }); };
 const react = await import("react");
+const clientDiagnostics = await import("@/services/diagnostics/client-diagnostics");
 mock.module("@/lib/canvas/canvas-generation-config", () => ({ resolvedCanvasGenerationRequirements: (config: any, node: any, capability: string, input: any) => ({ capability, input, videoSeconds: config.videoSeconds, videoOperation: node?.metadata?.videoEditOperation }) }));
 mock.module("react", () => ({ ...react, default: react.default, useCallback: (fn: any) => fn, useRef: (value: any) => ({ current: value }) }));
 mock.module("antd", () => ({ App: { useApp: () => ({ modal: { confirm: (input: any) => { confirmations.push(input); return { destroy: () => input.afterClose() }; } }, message: {
     error: (x: string) => errors.push(x), info() {}, warning() {},
     loading: ({ key }: any) => loading.add(key), destroy: (key: string) => loading.delete(key),
 } }) } }));
-mock.module("@/services/diagnostics/client-diagnostics", () => ({ recordDiagnosticEvent: (event: any) => diagnostics.push(event) }));
+// Keep the real trace helpers used by transitive task/operation imports.
+mock.module("@/services/diagnostics/client-diagnostics", () => ({ ...clientDiagnostics, recordDiagnosticEvent: (event: any) => diagnostics.push(event) }));
 mock.module("@/stores/use-config-store", () => ({ useEffectiveConfig: () => ({}), useConfigStore: (select: any) => select({ isAiConfigReady: () => true }), resolveModelRequestConfig: () => ({}) }));
 mock.module("@/components/canvas/canvas-node-generation", () => ({ buildNodeGenerationContext: (_id: any, _nodes: any, _edges: any, prompt: string) => ({ prompt, referenceImages: [], referenceVideos: [], referenceAudios: [], characterReferences: [], resolvedCharacterVersions: [], resolvedCharacterVoices: [] }), hydrateNodeGenerationContext: (context: any) => hydrate(context) }));
 mock.module("@/pages/canvas/canvas-assistant-proposal-execution", () => ({ buildConfirmedGenerationConfig: () => ({ model: "fixture", taskWorkflowProvider: "model", size: "1:1" }) }));

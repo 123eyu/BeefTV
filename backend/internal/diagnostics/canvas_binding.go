@@ -111,6 +111,7 @@ func (s *Service) collectCanvasBindings(userID string, tasks []model.Task, colle
 				read.project, read.err = s.store.CanvasProjectForUser(userID, task.ProjectID)
 				cache[task.ProjectID] = read
 			}
+			collected.recordAuthError(read.err)
 			record := canvasBindingRecord{TaskID: task.ID, CanvasID: sanitizeIdentifier(task.ProjectID), SampledAt: s.now().UTC(), CanvasStatus: "available",
 				CanvasBindingEvidence: CanvasBindingEvidence{Source: "server", NodeID: nodeID, OutputIndex: &outputIndex}}
 			if task.ClientOperationID != nil {

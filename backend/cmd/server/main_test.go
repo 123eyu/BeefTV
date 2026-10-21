@@ -1,7 +1,9 @@
 package main
 
 import (
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,6 +75,66 @@ func TestAllowedOriginConfiguredListDoesNotFallbackToArbitraryLocalhost(t *testi
 	context.Request = httptest.NewRequest("GET", "http://backend/api/health", nil)
 	if allowedOrigin(context, "http://localhost:3000") {
 		t.Fatal("configured CORS list should disable the implicit localhost fallback")
+	}
+}
+
+func TestCORSPreflightTraceHeadersRespectConfiguredOrigins(t *testing.T) {
+	t.Setenv("CANVAS_CORS_ORIGINS", "https://app.example.com")
+	for _, tc := range []struct {
+		name   string
+		origin string
+		status int
+	}{
+		{name: "configured origin", origin: "https://app.example.com", status: http.StatusNoContent},
+		{name: "unconfigured remote origin", origin: "https://blocked.example.com", status: http.StatusForbidden},
+		{name: "unconfigured localhost origin", origin: "http://localhost:3000", status: http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			middleware, err := cors()
+			if err != nil {
+				t.Fatal(err)
+			}
+			called := false
+			router := gin.New()
+			router.Use(middleware)
+			router.Any("/api/projects", func(c *gin.Context) {
+				called = true
+				c.Status(http.StatusOK)
+			})
+			request := httptest.NewRequest(http.MethodOptions, "http://backend/api/projects", nil)
+			request.Header.Set("Origin", tc.origin)
+			request.Header.Set("Access-Control-Request-Method", http.MethodPost)
+			request.Header.Set("Access-Control-Request-Headers", "traceparent, x-canvas-trace-id")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != tc.status {
+				t.Fatalf("preflight status = %d, want %d", response.Code, tc.status)
+			}
+			if called {
+				t.Fatal("preflight executed the business handler")
+			}
+			if tc.status == http.StatusForbidden {
+				if response.Header().Get("Access-Control-Allow-Origin") != "" {
+					t.Fatal("forbidden origin received CORS authorization")
+				}
+				return
+			}
+			if got := response.Header().Get("Access-Control-Allow-Origin"); got != tc.origin {
+				t.Fatalf("allowed origin = %q, want %q", got, tc.origin)
+			}
+			for _, requested := range []string{"traceparent", "x-canvas-trace-id"} {
+				found := false
+				for _, allowed := range strings.Split(response.Header().Get("Access-Control-Allow-Headers"), ",") {
+					if strings.EqualFold(strings.TrimSpace(allowed), requested) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Fatalf("preflight does not allow requested header %q", requested)
+				}
+			}
+		})
 	}
 }
 

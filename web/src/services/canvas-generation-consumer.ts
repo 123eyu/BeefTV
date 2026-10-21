@@ -350,6 +350,7 @@ export async function bindBackendCanvasGenerationResult(input: {
                 operationId,
                 canvasId: capturedCanvasId,
                 taskId: task.id,
+                traceId: task.traceId,
                 nodeId: input.nodeId,
                 outputIndex,
                 signal: input.signal,

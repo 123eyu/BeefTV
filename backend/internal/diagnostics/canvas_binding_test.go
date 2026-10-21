@@ -91,7 +91,7 @@ func TestZIPIncludesPersistedExecutionAndOwnedNodeBindingEvidence(t *testing.T) 
 	if foreign.CanvasStatus != "missing" || foreign.NodePresent != nil {
 		t.Fatalf("foreign = %+v", foreign)
 	}
-	if !strings.Contains(files["manifest.json"], `"schemaVersion": 2`) || !strings.Contains(files["manifest.json"], `"canvasBindings": 4`) {
+	if !strings.Contains(files["manifest.json"], `"schemaVersion": 3`) || !strings.Contains(files["manifest.json"], `"canvasBindings": 4`) {
 		t.Fatal("manifest missing binding schema/count")
 	}
 }

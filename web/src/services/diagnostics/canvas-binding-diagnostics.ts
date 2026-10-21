@@ -1,7 +1,7 @@
 import type { GenerationTask } from "@/services/api/task-center";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { ApiError } from "@/services/api/request";
-import { recordDiagnosticEvent, sanitizeCanvasBindingEvidence } from "./client-diagnostics";
+import { getDiagnosticTraceId, recordDiagnosticEvent, sanitizeCanvasBindingEvidence } from "./client-diagnostics";
 
 export function recordCanvasBindingDiagnostic(input: {
     phase: "requested" | "refused" | "confirmed";
@@ -19,6 +19,8 @@ export function recordCanvasBindingDiagnostic(input: {
         category: "task", level: input.phase === "refused" ? "error" : "info",
         code: `generation_bind_${input.phase}`, message: `画布结果绑定：${input.phase}`,
         canvasId: input.canvasId, taskId: input.task.id,
+        nodeId: input.nodeId, clientOperationId: input.task.clientOperationId,
+        traceId: input.task.traceId || getDiagnosticTraceId(input.task.id),
         reason: input.error instanceof ApiError ? input.error.reason : undefined,
         requestId: input.error instanceof ApiError ? input.error.requestId : undefined,
         canvasBinding: server ? { ...server, clientOperationId: input.task.clientOperationId } : {

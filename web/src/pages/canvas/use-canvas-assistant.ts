@@ -36,6 +36,8 @@ import {
 import { assistantChangedNodeIds, assistantLifecycleText } from "./canvas-assistant-copy";
 import { waitForAssistant } from "./assistant-readiness";
 import { findRecoveredAssistantTurn, type PendingAssistantRecovery } from "./canvas-assistant-recovery";
+import { recordAssistantInterruption } from "@/services/diagnostics/assistant-diagnostics";
+import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
 
 export const ASSISTANT_MIN_WIDTH = 320;
 export const ASSISTANT_MAX_WIDTH = 560;
@@ -192,6 +194,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
     const preferredPermissionMode = permissionPreference.accountIdentity === accountIdentity ? permissionPreference.mode : assistantPermissionMode(scopedLocalStorage.getItem(PERMISSION_STORAGE_KEY));
     const runPrefix = `${accountIdentity}:`;
     const runsRef = useRef<Map<string, CanvasRun>>(new Map());
+    const observedInterruptions = useRef(new Set<string>());
     const activeCanvasRef = useRef(canvasId);
     activeCanvasRef.current = canvasId;
     const onCanvasChangedRef = useRef(onCanvasChanged);
@@ -318,6 +321,12 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             if (run.plan === planAtRequest) run.plan = recent.length ? recent.at(-1)!.plan ?? null : history.plan ?? null;
             for (const turn of history.turns) {
                 if (turn.undone) run.turnStatus[turn.turnId] = { undone: true };
+                const key = `${runPrefix}:${targetCanvas}:${nextSession}:${turn.turnId}`;
+                if (turn.errorReason === "turn_interrupted" && !observedInterruptions.current.has(key)) {
+                    observedInterruptions.current.add(key);
+                    if (observedInterruptions.current.size > 500) observedInterruptions.current.delete(observedInterruptions.current.values().next().value!);
+                    recordAssistantInterruption(turn, { canvasId: targetCanvas, assistantSessionId: nextSession || undefined });
+                }
             }
             run.historyLoaded = true;
             run.historyError = null;
@@ -425,6 +434,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             controller.signal.throwIfAborted();
             run.recovery = { sessionId: run.sessionId, knownTurnIds: run.turns.map((turn) => turn.turnId), text: message, selectedNodeIds: selectedSnapshot };
             run.dispatched = true;
+            if (!input.continuation && run.turns.at(-1)?.errorReason === "turn_interrupted") recordDiagnosticEvent({ category: "task", level: "info", code: "assistant_continue_requested", reason: "manual_followup", message: "用户在助手中断后发送了新的处理请求", requestId, canvasId: targetCanvas, assistantSessionId: run.sessionId || undefined, assistantTurnId: run.turns.at(-1)?.turnId });
             await streamAgentChat(targetCanvas, message, {
                 onSession: (sessionId) => {
                     if (!userScopeMatches(expectedScope)) return;
@@ -481,6 +491,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                         createdAt: new Date().toISOString(),
                     };
                     current.turns = [...current.turns, turn];
+                    recordDiagnosticEvent({ category: "task", level: turn.error ? "warning" : "info", code: "assistant_turn_settled", reason: turn.errorReason || undefined, message: "助手执行回执已记录", requestId, canvasId: targetCanvas, assistantSessionId: end.sessionId || current.sessionId || undefined, assistantTurnId: turn.turnId });
                     current.plan = end.plan ?? null;
                     current.recovery = null;
                     // 旧 JSONL 会话首次发消息会交接给新的 Durable 会话：后续回合都走它。

@@ -1,6 +1,9 @@
 package app
 
-import "infinite-canvas/backend/internal/diagnostics"
+import (
+	"infinite-canvas/backend/internal/assistantdiagnostics"
+	"infinite-canvas/backend/internal/diagnostics"
+)
 
 type DiagnosticClientEvent = diagnostics.ClientEvent
 type DiagnosticRuntime = diagnostics.Runtime
@@ -28,6 +31,8 @@ func (s *Service) DiagnosticsDomain() *diagnostics.Service {
 		if s.mode == serviceModeLocal {
 			deps.DataDir = s.dataDir
 			deps.UpdateLogDir = s.dataDir
+			deps.TraceSource = runtimeTraceSource{service: s}
+			deps.AssistantEvidence = assistantdiagnostics.New(s.dataDir)
 		}
 		s.diagnostics = diagnostics.New(deps)
 	})

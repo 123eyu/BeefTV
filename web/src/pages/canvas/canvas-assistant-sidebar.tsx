@@ -235,6 +235,8 @@ export function CanvasAssistantSidebar(props: Props) {
                     <CanvasAssistantTurnView
                         key={turn.turnId}
                         turn={turn}
+                        canvasId={assistant.canvasId}
+                        sessionId={assistant.sessionId}
                         status={assistant.turnStatus[turn.turnId]}
                         handledProposals={assistant.handledProposals}
                         proposalFeedback={props.proposalFeedback}

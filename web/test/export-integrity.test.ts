@@ -2,7 +2,8 @@ import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import { unzipSync } from "fflate";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import type { Asset } from "@/stores/use-asset-store";
-import { getClientDiagnosticEvents, recordDiagnosticEvent, setDiagnosticUserScope } from "@/services/diagnostics/client-diagnostics";
+import { getClientDiagnosticSnapshot, recordDiagnosticEvent, setDiagnosticUserScope } from "@/services/diagnostics/client-diagnostics";
+import { installLocalForageStoreFactoryForTests } from "@/lib/localforage-storage";
 
 const blobs = new Map<string, Blob>();
 const unreadable = new Set<string>();
@@ -32,9 +33,18 @@ const { reportOwnedMediaSave } = await import("@/services/desktop-media-save");
 const { http } = await import("@/services/api/request");
 const originalWindow = globalThis.window;
 const saved: { name: string; data: string }[] = [];
+const diagnosticRecords = new Map<string, unknown>();
 let acceptSave = true;
 
 beforeEach(() => {
+    // This shell fixture has a window but no IndexedDB. Preserve diagnostic
+    // writes with an async memory store; swallowing ready()'s missing-driver
+    // error would leave localforage repeatedly waiting for an installed method.
+    installLocalForageStoreFactoryForTests(storeName => ({
+        ready: async () => {},
+        getItem: async (key: string) => diagnosticRecords.get(`${storeName}:${key}`) ?? null,
+        setItem: async (key: string, value: unknown) => { diagnosticRecords.set(`${storeName}:${key}`, value); return value; },
+    }) as LocalForage);
     blobs.clear();
     restored.clear();
     unreadable.clear();
@@ -52,7 +62,13 @@ beforeEach(() => {
         },
     });
 });
-afterEach(() => { globalThis.window = originalWindow; });
+afterEach(async () => {
+    try { await getClientDiagnosticSnapshot(); }
+    finally {
+        globalThis.window = originalWindow;
+        installLocalForageStoreFactoryForTests();
+    }
+});
 
 function project(keys: string[]): CanvasProject {
     return {
@@ -85,7 +101,10 @@ test("per-file export progress cannot evict a real bind failure", async () => {
     const keys = Array.from({ length: 600 }, (_, index) => `video:retention-${index}`);
     for (const key of keys) blobs.set(key, new Blob(["x"]));
     await exportCanvasProjects([project(keys)]);
-    const events = getClientDiagnosticEvents();
+    const { events, coverage } = await getClientDiagnosticSnapshot();
+    expect(coverage.persisted).toBe(true);
+    expect(coverage.writeErrorCount).toBe(0);
+    expect([...diagnosticRecords.values()].some(value => String(value).includes("retained-bind-failure"))).toBe(true);
     expect(events.some(event => event.code === "retained-bind-failure")).toBe(true);
     expect(events.filter(event => event.code?.startsWith("canvas_export_")).length).toBeLessThanOrEqual(4);
 });

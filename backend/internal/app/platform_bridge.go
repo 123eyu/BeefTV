@@ -204,6 +204,7 @@ func (s *Service) RecordChannelResult(ctx context.Context, channelID string, fai
 
 func (s *Service) Close() error {
 	s.stopGenerationDownloads()
+	s.closeSupportTrace()
 	return nil
 }
 

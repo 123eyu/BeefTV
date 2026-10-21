@@ -13,7 +13,9 @@ import (
 
 // processTask 是任务执行阶段唯一的类型分派入口。
 // 任务已经在 CreateTask 阶段完成 admission；这里不把无效视频任务降级成内部工作流成功。
-func (s *Service) processTask(ctx context.Context, task model.Task) (map[string]interface{}, []map[string]interface{}, error) {
+func (s *Service) processTask(ctx context.Context, task model.Task) (result map[string]interface{}, canvasOps []map[string]interface{}, err error) {
+	ctx, finishTrace := s.SupportTrace().Start(taskSupportContext(ctx, task), "generation.execute", taskSupportFields(task))
+	defer func() { finishTrace(supportFailureReason(err)) }()
 	if err := validateTaskType(task.Type); err != nil {
 		return nil, nil, err
 	}

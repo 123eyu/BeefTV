@@ -4,7 +4,7 @@ import { Download, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { exportDiagnosticBundle, downloadDiagnosticBundle, previewDiagnosticBundle, type DiagnosticExportInput, type DiagnosticPreview } from "@/services/diagnostics/diagnostics-api";
-import { getClientDiagnosticEvents, getDiagnosticRuntime } from "@/services/diagnostics/client-diagnostics";
+import { getClientDiagnosticSnapshot, getDiagnosticRuntime } from "@/services/diagnostics/client-diagnostics";
 import { clearVideoPreviewCache } from "@/services/api/resources";
 import { AppModal } from "@/components/ui/product/app-modal";
 import { getDesktopAppBinding } from "@/services/desktop-runtime";
@@ -42,7 +42,7 @@ export default function DiagnosticsPanel({ taskId, projectId, open, onClose }: D
         if (!open) return;
         let cancelled = false;
         setLoadingPreview(true);
-        void previewDiagnosticBundle(buildInput(range, undefined, taskId, projectId))
+        void buildInput(range, undefined, taskId, projectId).then(previewDiagnosticBundle)
             .then((result) => {
                 if (!cancelled) setPreview(result);
             })
@@ -60,7 +60,7 @@ export default function DiagnosticsPanel({ taskId, projectId, open, onClose }: D
     const handleExport = async () => {
         setExporting(true);
         try {
-            const download = await exportDiagnosticBundle(buildInput(range, description, taskId, projectId));
+            const download = await exportDiagnosticBundle(await buildInput(range, description, taskId, projectId));
             const saved = await downloadDiagnosticBundle(download);
             if (saved !== "saved") return;
             setBundleId(download.bundleId);
@@ -107,8 +107,9 @@ export default function DiagnosticsPanel({ taskId, projectId, open, onClose }: D
                         />
                     </div>
                     <p className="mt-3 text-xs leading-5 text-foreground/55" aria-live="polite">
-                        {loadingPreview ? "正在读取日志…" : preview ? `包含 ${preview.taskCount} 个任务、${preview.apiCallCount} 次模型调用及前端日志。` : "暂时无法读取记录数量，可继续尝试导出。"}
+                        {loadingPreview ? "正在读取日志…" : preview ? `包含 ${preview.taskCount} 个生成任务、${preview.apiCallCount} 次媒体请求${preview.assistantTurnCount === undefined ? "" : `、${preview.assistantTurnCount} 轮助手记录`}及前端日志。` : "暂时无法读取记录数量，可继续尝试导出。"}
                     </p>
+                    {preview && (preview.willTruncate || Object.values(preview.collectors || {}).some(collector => collector.status !== "complete")) ? <p className="mt-1 text-xs leading-5 text-foreground/55" role="status">部分记录缺失或已达保留上限，诊断包会注明缺失范围；无法保证还原全部经过。</p> : null}
                 </div>
                 {openUpdateLogs ? <div>
                     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -150,9 +151,10 @@ export default function DiagnosticsPanel({ taskId, projectId, open, onClose }: D
     );
 }
 
-function buildInput(range: DiagnosticRange, description: string | undefined, taskId?: string, projectId?: string): DiagnosticExportInput {
+async function buildInput(range: DiagnosticRange, description: string | undefined, taskId?: string, projectId?: string): Promise<DiagnosticExportInput> {
     const to = new Date();
     const from = new Date(to.getTime() - rangeMilliseconds(range));
+    const snapshot = await getClientDiagnosticSnapshot({ from, to });
     return {
         from: from.toISOString(),
         to: to.toISOString(),
@@ -160,7 +162,8 @@ function buildInput(range: DiagnosticRange, description: string | undefined, tas
         projectId: projectId || undefined,
         description: description || undefined,
         runtime: getDiagnosticRuntime(),
-        clientEvents: getClientDiagnosticEvents({ from, to }),
+        clientEvents: snapshot.events,
+        clientCoverage: snapshot.coverage,
     };
 }
 

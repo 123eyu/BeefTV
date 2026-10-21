@@ -1,4 +1,5 @@
-import { Button } from "antd";
+import { App, Button } from "antd";
+import copy from "copy-to-clipboard";
 import { Crosshair, Undo2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -13,8 +14,11 @@ import { portraitGenerationError } from "@/lib/model-selection";
 import { CanvasAssistantAttachments } from "./canvas-assistant-attachments";
 import { CanvasAssistantOutputs } from "./canvas-assistant-outputs";
 import { CanvasAssistantMediaFacts } from "./canvas-assistant-media-facts";
+import { formatAssistantDiagnostics } from "@/services/diagnostics/assistant-diagnostics";
 
 type Props = {
+    canvasId?: string;
+    sessionId?: string | null;
     turn: AssistantTurn;
     status?: AssistantTurnStatus;
     handledProposals: Set<string>;
@@ -54,7 +58,8 @@ export function CanvasAssistantUserMessage({ text, selectedCount, continuationId
     );
 }
 
-export function CanvasAssistantTurnView({ turn, status, handledProposals, proposalFeedback, runningProposalIds, generationDisabled, onLocate, onUndo, onRunProposal, onDismissProposal, onContinue, nodes, onCheckResults }: Props) {
+export function CanvasAssistantTurnView({ turn, canvasId, sessionId, status, handledProposals, proposalFeedback, runningProposalIds, generationDisabled, onLocate, onUndo, onRunProposal, onDismissProposal, onContinue, nodes, onCheckResults }: Props) {
+    const { message } = App.useApp();
     const config = useEffectiveConfig();
     const summary = assistantChangeSummary(turn.change);
     const changedNodeIds = assistantChangedNodeIds(turn.change);
@@ -64,6 +69,12 @@ export function CanvasAssistantTurnView({ turn, status, handledProposals, propos
     const canContinue = Boolean(turn.error && assistantTurnCanContinue(turn.errorReason));
     // 停下前已经改了画布：保留改动，可在输入框确认后接着做；不自动重发。
     const stoppedWithChanges = Boolean(turn.cancelled && !turn.error && summary && !undone);
+    const copyDiagnostics = async () => {
+        try {
+            const text = formatAssistantDiagnostics(turn, { canvasId, assistantSessionId: sessionId || undefined });
+            if (await copy(text)) message.success("排查信息已复制"); else message.error("复制失败，请导出诊断包");
+        } catch { message.error("复制失败，请导出诊断包"); }
+    };
 
     return (
         <div className="canvas-assistant-turn">
@@ -97,6 +108,7 @@ export function CanvasAssistantTurnView({ turn, status, handledProposals, propos
                     </> : null}
                 </div>
             ) : null}
+            {turn.error || turn.cancelled ? <Button size="small" onClick={() => void copyDiagnostics()}>复制排查信息</Button> : null}
 
             {failedActions.length > 0 ? (
                 <div className="canvas-assistant-feedback" role="status">

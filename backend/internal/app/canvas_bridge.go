@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -583,7 +584,7 @@ func (s *operationSession) OwnedAsset(userID, assetID string) (*model.Asset, err
 	return nil, &taskbinding.Error{Status: 412, Reason: "output_not_ready", Message: "任务素材尚未就绪"}
 }
 
-func (s *operationSession) BindExistingCanvasNode(userID string, patch canvas.TaskOutputBind) (canvas.TaskOutputBindResult, error) {
+func (s *operationSession) BindExistingCanvasNode(userID string, patch canvas.TaskOutputBind) (result canvas.TaskOutputBindResult, err error) {
 	patch.AllowEmptyVideo = false
 	patch.PendingClientOperationID = ""
 	patch.TaskType = ""
@@ -593,6 +594,10 @@ func (s *operationSession) BindExistingCanvasNode(userID string, patch canvas.Ta
 	}
 	if task != nil {
 		patch.TaskType = task.Type
+		fields := taskSupportFields(*task)
+		fields.NodeID, fields.CanvasID = patch.NodeID, patch.CanvasID
+		_, finishTrace := s.service.SupportTrace().Start(taskSupportContext(context.Background(), *task), "canvas.bind", fields)
+		defer func() { finishTrace(supportFailureReason(err)) }()
 	}
 	if task != nil && task.UserID == userID && task.ProjectID == patch.CanvasID && task.Type == model.TaskTypeTimelineRender && task.Provider == "local" && task.Model == "ffmpeg" && task.Status == model.TaskStatusSucceeded {
 		patch.AllowEmptyVideo = true

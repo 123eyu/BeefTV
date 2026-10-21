@@ -48,6 +48,7 @@ func registerDesktopCanvasAPI(api *gin.RouterGroup, svc *app.Service, dependenci
 	// root supplies it; standalone route registration must not create a child
 	// whose lifetime has no owner.
 	api.Use(RuntimeDependenciesMiddleware(dependencies))
+	api.Use(SupportTracingMiddleware(svc))
 	RegisterOpenAPIRoutes(api)
 	RegisterWorkspaceRoutes(api, svc)
 	RegisterBeefAPIConnectionRoutes(api, svc)

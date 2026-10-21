@@ -68,7 +68,9 @@ mock.module("@/lib/user-scope", () => ({
     scopedLocalStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
 }));
 
+const actualRequest = await import("@/services/api/request");
 mock.module("@/services/api/request", () => ({
+    ...actualRequest,
     ApiError,
     apiBaseURL: "/api",
     compactApiParams: (params: Record<string, unknown>) => params,

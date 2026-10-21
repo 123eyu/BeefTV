@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"infinite-canvas/backend/internal/assistantturns"
 	"infinite-canvas/backend/internal/canvas"
 	"infinite-canvas/backend/internal/operations"
+	"infinite-canvas/backend/internal/supporttrace"
 
 	"gorm.io/gorm"
 )
@@ -55,7 +57,11 @@ func (s *Service) assistantTurnsOrInit() *assistantturns.Service {
 }
 
 func (s *Service) BeginAssistantTurn(userID, canvasID, turnID string, input AssistantTurnInput) (int64, error) {
-	return s.assistantTurnsOrInit().Begin(userID, canvasID, turnID, input)
+	revision, err := s.assistantTurnsOrInit().Begin(userID, canvasID, turnID, input)
+	if err == nil {
+		s.SupportTrace().Event(context.Background(), "assistant.turn", supporttrace.Fields{UserID: userID, CanvasID: canvasID, TurnID: turnID, Reason: "turn_opened"})
+	}
+	return revision, err
 }
 
 func (s *Service) AssistantTurnScopeForHost(userID, turnID string) (AssistantTurnScope, bool, error) {
@@ -63,7 +69,13 @@ func (s *Service) AssistantTurnScopeForHost(userID, turnID string) (AssistantTur
 }
 
 func (s *Service) FinalizeAssistantTurn(turnID string) error {
-	return s.assistantTurnsOrInit().Finalize(turnID)
+	err := s.assistantTurnsOrInit().Finalize(turnID)
+	if err == nil && s.repo != nil {
+		if row, readErr := s.repo.AssistantTurnByID(nil, turnID); readErr == nil {
+			s.SupportTrace().Event(context.Background(), "assistant.turn", supporttrace.Fields{UserID: row.UserID, CanvasID: row.CanvasID, TurnID: turnID, SessionID: row.DurableSessionID, Reason: "turn_settled"})
+		}
+	}
+	return err
 }
 
 func (s *Service) AssistantTurnRuntimeState(userID, turnID string) (*assistantturns.RuntimeState, error) {

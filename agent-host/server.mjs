@@ -21,6 +21,7 @@ import { adaptMediaRequest, trustedMediaSources, mediaCapabilityContext } from '
 import {nativeSourceKey} from './native-history.mjs';
 import { createNativePartStore } from './native-part-store.mjs';
 import { fetchModelWithProgressIdle } from './model-stream-idle.mjs';
+import { createDispatchDiagnostics } from './dispatch-diagnostics.mjs';
 
 // SDK imports install npm undici's direct dispatcher. Restore Node's public env
 // proxy support after imports, before any SDK/ops request or fetch wrapper runs.
@@ -92,6 +93,7 @@ async function initializeModel() {
 
 const outbound = [];
 const ledgerPath = path.join(DATA_DIR, 'agent-requests.jsonl');
+const dispatchDiagnostics = createDispatchDiagnostics(ledgerPath, RUN_ID);
 let dispatched = 0;
 
 const lifetimeBudgetPath = path.join(DATA_DIR, 'agent-request-budget.json');
@@ -155,9 +157,11 @@ globalThis.fetch = async (input, options = {}) => {
     dispatched += 1;
     let bodyModel = null;
     try { bodyModel = JSON.parse(options.body || '{}').model || null; } catch { /* 非 JSON body */ }
-    const entry = { at: new Date().toISOString(), dispatchIndex: dispatched, origin: parsed.origin, path: parsed.pathname, model: bodyModel };
+    const entry = { at: new Date().toISOString(), dispatchIndex: dispatched, origin: parsed.origin, path: parsed.pathname, model: bodyModel,
+      turnId: budget?.turnId, canvasId: budget?.canvasId, sessionId: budget?.sessionId, requestId: budget?.requestId };
     outbound.push(entry);
-    fs.appendFileSync(ledgerPath, JSON.stringify(entry) + '\n');
+    if (outbound.length > 200) outbound.shift();
+    dispatchDiagnostics.record(entry);
   }
   return isModelCall ? fetchModelWithProgressIdle(input, options, {fetch: realFetch}) : realFetch(input, options);
 };
@@ -183,6 +187,7 @@ const durable = createDurableSessionStore({
       entry.budget.sessionId=entry.sessionId; entry.budget.nativeHistory=entry.nativeHistory;
     entry.budget.generation = entry.generation;
       entry.budget.turnId = entry.turn.turnId; entry.budget.canvasId = entry.canvasId;
+      entry.budget.requestId = entry.input?.requestId;
       return turnBudgetContext.run(entry.budget,()=>fn.call(provider,...args));
     };
     models.setProvider({...provider,stream:budgeted(provider.stream),streamSimple:budgeted(provider.streamSimple)});
@@ -212,6 +217,7 @@ const durable = createDurableSessionStore({
     entry.budget.sessionId=entry.sessionId; entry.budget.nativeHistory=entry.nativeHistory;
     entry.budget.generation = entry.generation;
     entry.budget.turnId = entry.turn.turnId; entry.budget.canvasId = entry.canvasId;
+    entry.budget.requestId = entry.input?.requestId;
     return turnBudgetContext.run(entry.budget, fn);
   },
 });

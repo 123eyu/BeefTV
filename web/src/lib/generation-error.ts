@@ -2,6 +2,7 @@ import { isLocalRuntimeMode } from "@/lib/runtime-mode";
 import { moderationErrorCopy, persistedModerationCopy } from "./moderation-error";
 import { vodImageErrorCopy } from "./vod-image-error";
 import { taskConstraintCopy, persistedTaskConstraintCopy } from "./task-constraint-error";
+import { supportDiagnosticIdentity, type SupportDiagnosticContext } from "./support-diagnostics";
 
 export const CONTENT_MODERATION_ERROR_CODE = "sensitive_words_detected";
 
@@ -71,7 +72,7 @@ export type GenerationFailureMetadata = {
     failedInputFingerprint?: string;
 };
 
-export type GenerationFailureContext = {
+export type GenerationFailureContext = SupportDiagnosticContext & {
     errorSummary?: string;
     failureDiagnostics?: GenerationFailureDiagnostics;
     completedAt?: string;
@@ -399,7 +400,8 @@ export function formatGenerationDiagnostics(explanation: GenerationFailureExplan
     const model = sanitizeProviderCode(evidence?.input?.model || context.model || "");
     const createdAt = context.createdAt && /^\d{4}-\d{2}-\d{2}[T ][\d:.+Z-]{5,35}$/.test(context.createdAt) ? context.createdAt : "";
     const lines = [
-        "排查信息版本：2",
+        "排查信息版本：3",
+        ...supportDiagnosticIdentity(context, { appVersion: import.meta.env.VITE_APP_VERSION, buildCommit: import.meta.env.VITE_BUILD_COMMIT }),
         `原因：${sanitizeProviderText(explanation.reason)}`,
         explanation.action ? `下一步：${sanitizeProviderText(explanation.action)}` : "",
         `类别：${explanation.category}`,

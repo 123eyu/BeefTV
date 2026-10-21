@@ -4,7 +4,8 @@ import type { GenerationTask } from "@/services/api/task-center";
 import { getClientDiagnosticEvents, recordDiagnosticEvent, setDiagnosticUserScope } from "@/services/diagnostics/client-diagnostics";
 import { recordCanvasBindingDiagnostic } from "@/services/diagnostics/canvas-binding-diagnostics";
 
-beforeEach(() => { setDiagnosticUserScope("reset"); setDiagnosticUserScope("binding-test"); });
+let scopeNumber = 0;
+beforeEach(() => { setDiagnosticUserScope(`binding-test-${++scopeNumber}`); });
 
 test("binding refusal retains the actual server task instead of borrowing the latest request trace", () => {
     const task = { id: "paid-video", clientOperationId: "canvas:" + "a".repeat(110) } as GenerationTask;

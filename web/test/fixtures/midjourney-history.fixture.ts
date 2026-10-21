@@ -1,4 +1,4 @@
-import "../helpers/localforage-bun-ready";
+import "../helpers/localforage-bun-memory";
 import { mock } from "bun:test";
 import { strict as assert } from "node:assert";
 
