@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { ModelRuntime, SessionManager } from '@earendil-works/pi-coding-agent';
 import { createModels } from '@earendil-works/pi-ai/models';
-import { createDurableSessionStore, durableLifecycleState, durableStreamEvents, isDurableSessionId } from './durable-session-owner.mjs';
+import { createDurableSessionStore, durableLifecycleState, durableStreamEvents, isDurableSessionId, publicDurableTurn } from './durable-session-owner.mjs';
 import { createDurableTextProjection } from './durable-stream-text.mjs';
 import { createDurableTurnBudget } from './durable-turn-budget.mjs';
 import { providerRegistration, providerUnavailableReason,
@@ -593,7 +593,7 @@ const server = http.createServer(async (req, res) => {
       if (entry.lifecycle) listener(entry.lifecycle);
       try {
         const record = await result;
-        if (!res.destroyed) { sendLine(res,{...record,type:'turn_end',persistence:entry.persistence,sessionId:entry.sessionId}); res.end(); }
+        if (!res.destroyed) { sendLine(res,{...publicDurableTurn(record),type:'turn_end',persistence:entry.persistence,sessionId:entry.sessionId}); res.end(); }
       } finally { entry.listeners.delete(listener); }
       return;
     }

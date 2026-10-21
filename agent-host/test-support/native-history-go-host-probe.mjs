@@ -7,7 +7,7 @@ import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 const config = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-let child, log = '', modelCalls = 0, mainCalls = 0; const summarizations = [];
+let child, log = '', modelCalls = 0, mainCalls = 0, continuationCalls = 0, continuing = false, releaseContinuation; const summarizations = [];
 const readBody = async (req) => { let raw = ''; for await (const chunk of req) raw += chunk; return JSON.parse(raw || '{}'); };
 const listen = (server) => new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
 function send(res, model, tool, args = {}) {
@@ -20,14 +20,23 @@ const captured = []; let expected;
 const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 function nativeParts(request) {
   return request.messages.flatMap(message => Array.isArray(message.content) ? message.content : [])
-    .filter(part => part.type === 'image_url' && part.image_url?.url?.startsWith('data:'))
-    .map(part => { const match = /^data:([^;]+);base64,(.+)$/.exec(part.image_url.url); assert(match); return { mime: match[1], bytes: Buffer.from(match[2], 'base64') }; });
+    .flatMap(part => {
+      if (part.type === 'input_audio') {
+        assert.equal(part.input_audio?.format, 'wav');
+        assert.deepEqual(Object.keys(part.input_audio).sort(), ['data', 'format']);
+        return [{ mime: 'audio/wav', wireType: part.type, bytes: Buffer.from(part.input_audio.data, 'base64') }];
+      }
+      if (part.type !== 'image_url' || !part.image_url?.url?.startsWith('data:')) return [];
+      const match = /^data:([^;]+);base64,(.+)$/.exec(part.image_url.url); assert(match);
+      assert(!match[1].startsWith('audio/'), 'audio must use input_audio, never image_url');
+      return [{ mime: match[1], wireType: part.type, bytes: Buffer.from(match[2], 'base64') }];
+    });
 }
 function assertPart(parts, mime, expectedPart) {
   const part = parts.find(part => part.mime === mime && sha(part.bytes) === expectedPart.sha256);
   assert(part, 'missing or changed actual dispatch '+mime+' expected='+expectedPart.sha256+' actual='+JSON.stringify(parts.map(p=>({mime:p.mime,bytes:p.bytes.length,sha256:sha(p.bytes)}))));
   assert.equal(part.bytes.toString('base64'), expectedPart.data, 'dispatch differs from real Go media bytes');
-  captured.push({ mime, sha256: sha(part.bytes), bytes: part.bytes.length });
+  captured.push({ mime, wireType: part.wireType, sha256: sha(part.bytes), bytes: part.bytes.length });
 }
 const provider = createServer(async (req, res) => {
   try {
@@ -41,6 +50,18 @@ const provider = createServer(async (req, res) => {
     }
     mainCalls++;
     const parts = nativeParts(request);
+    if (continuing) {
+      continuationCalls++;
+      assertPart(parts, 'audio/wav', expected.audio);
+      assertPart(parts, 'video/mp4', expected.video);
+      if (continuationCalls === 1) await new Promise(resolve => { releaseContinuation = resolve; });
+      else {
+        assert.equal(continuationCalls, 2);
+        assert(request.messages.some(message => message.role === 'user' &&
+          JSON.stringify(message.content).includes('BEEFTV_INPUT:audio-supplement')));
+      }
+      return send(res, request.model, null, { finalText: '同一会话历史音频保留，补充要求已收到。' });
+    }
     if (mainCalls === 1) assertPart(parts, 'image/jpeg', expected.image);
     const toolResults = request.messages.filter(message => message.role === 'tool');
     const stage = mainCalls;
@@ -60,7 +81,6 @@ const provider = createServer(async (req, res) => {
       assert.equal(version, expected.video.source.version);
       return send(res, request.model, 'media_inspect', { assetId: config.video.assetId, expectedVersion: version, mode: 'video', startMs: 0, endMs: 15000 });
     }
-    if(stage===6){assertPart(parts,'audio/wav',expected.audio);assertPart(parts,'video/mp4',expected.video);return send(res,request.model,null,{finalText:'同一会话历史音频和视频仍可读，当前画布权限未扩大。'})}
     assert.equal(stage, 5); assertPart(parts, 'video/mp4', expected.video);
     if(config.failAfterMedia) assertPart(parts,'audio/wav',expected.audio);
     send(res, request.model);
@@ -140,14 +160,22 @@ try {
     const restored = await (await api('/history?canvasId='+config.canvasId)).json();
     assert.deepEqual(restored.turns[0].toolCalls.filter(call=>call.tool==='media.inspect').map(call=>call.mediaFacts),recordedFacts);
   }
+  continuing = true;
   await api('/chat',{canvasId:config.canvasId,sessionId:history.sessionId,turnId:config.nextTurnId,message:'在当前画布权限继续讨论已有素材',revisionBefore:1});
+  await until(() => releaseContinuation);
+  const steer = await api('/steer', {canvasId:config.canvasId,sessionId:history.sessionId,
+    requestId:'audio-supplement',message:'请保留声音中的提示音顺序。',attachments:[config.audio]});
+  assert.equal(steer.status,202,await steer.text());
+  releaseContinuation();
   await until(async()=>{history=await(await api('/history?canvasId='+config.canvasId)).json();return history.turns?.length===2});
-  assert.equal(history.turns[1].permissionMode,'canvas');assert.equal(history.turns[1].error,null,JSON.stringify(history));assert.equal(mainCalls,config.failAfterMedia ? 5 : 6);
+  assert.equal(history.turns[1].permissionMode,'canvas');assert.equal(history.turns[1].error,null,JSON.stringify(history));assert.equal(mainCalls,config.failAfterMedia ? 6 : 7);
+  assert.equal(continuationCalls,2);
+  assert.equal(history.turns[1].supplementInputs[0].attachments[0].resourceId,config.audio.resourceId);
   assert(captured.some(part=>part.mime==='video/mp4'));
   assert.equal((await backend('/__fixture/invalidate-audio',{})).status,200);
   await api('/chat',{canvasId:config.canvasId,sessionId:history.sessionId,turnId:config.invalidTurnId,message:'继续',revisionBefore:1});
   await until(async()=>{history=await(await api('/history?canvasId='+config.canvasId)).json();return history.turns?.length===3});
-  assert.match(history.turns[2].error,/历史音频.*重新添加/);assert.doesNotMatch(history.turns[2].error,/Connection error/);assert.equal(mainCalls,config.failAfterMedia ? 5 : 6,'SDK deterministic history failure must not dispatch or retry provider');
-  const ledger=fs.readFileSync(path.join(config.directory,'agent-requests.jsonl'),'utf8').trim().split('\n');assert.equal(ledger.length,config.failAfterMedia ? 5 : 6);
-  fs.writeFileSync(path.join(config.directory, 'host-result.json'), JSON.stringify({ modelCalls, mainCalls, summarizations, sessionId:history.sessionId, captured,historyError:history.turns[2].error,noFailureDispatch:true, passed:true }));
-} finally { await kill('SIGTERM'); provider.closeAllConnections(); await new Promise((resolve) => provider.close(resolve)); }
+  assert.match(history.turns[2].error,/历史音频.*重新添加/);assert.doesNotMatch(history.turns[2].error,/Connection error/);assert.equal(mainCalls,config.failAfterMedia ? 6 : 7,'SDK deterministic history failure must not dispatch or retry provider');
+  const ledger=fs.readFileSync(path.join(config.directory,'agent-requests.jsonl'),'utf8').trim().split('\n');assert.equal(ledger.length,config.failAfterMedia ? 6 : 7);
+  fs.writeFileSync(path.join(config.directory, 'host-result.json'), JSON.stringify({ modelCalls, mainCalls, continuationCalls, audioSteer:true, summarizations, sessionId:history.sessionId, captured,historyError:history.turns[2].error,noFailureDispatch:true, passed:true }));
+} finally { releaseContinuation?.(); await kill('SIGTERM'); provider.closeAllConnections(); await new Promise((resolve) => provider.close(resolve)); }

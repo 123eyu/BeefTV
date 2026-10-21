@@ -90,12 +90,18 @@ test("external links use the desktop browser bridge but retain normal browser na
     const root = fixture(t);
     const html = distributionNotices({ root, version: "v1.7.28" }).get("index.html").toString();
     const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
-    for (const mode of ["iframe-runtime", "parent-runtime", "browser", "cross-origin-browser"]) {
+    for (const mode of ["iframe-runtime", "parent-runtime", "both-runtime", "browser", "cross-origin-browser"]) {
         const opened = [];
         const runtime = { BrowserOpenURL(url) { opened.push(url); } };
         const window = { parent: {} };
         if (mode === "iframe-runtime") window.runtime = runtime;
         if (mode === "parent-runtime") window.parent.runtime = runtime;
+        if (mode === "both-runtime") {
+            // Wails injects its runtime into HTML iframes, but macOS rejects
+            // their native messages. Only the main frame may open the browser.
+            window.runtime = { BrowserOpenURL() { throw Error("Blocked request from not main frame"); } };
+            window.parent.runtime = runtime;
+        }
         if (mode === "cross-origin-browser") Object.defineProperty(window, "parent", { get() { throw Error("cross origin"); } });
         let click;
         runInNewContext(script, { window, document: { addEventListener(name, handler) { assert.equal(name, "click"); click = handler; } } });

@@ -88,7 +88,9 @@ async function scenario(name, fn) {
   }
   catch (error) { results.push({ name, passed: false, error: error.message }); console.log('FAIL', name, error.message); }
 }
-const nativeURLs = body => (body.messages || []).flatMap(m => Array.isArray(m.content) ? m.content.filter(p => p.type === 'image_url').map(p => p.image_url.url) : []);
+const nativeURLs = body => (body.messages || []).flatMap(m => Array.isArray(m.content) ? m.content.flatMap(p =>
+  p.type === 'image_url' ? [p.image_url.url] :
+  p.type === 'input_audio' ? [`data:audio/${p.input_audio.format};base64,${p.input_audio.data}`] : []) : []);
 try {
   execFileSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'color=red:s=64x48', '-frames:v', '1', path.join(scratch, 'frame.jpg')]);
   execFileSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=24000:duration=0.25', '-ac', '1', '-c:a', 'pcm_s16le', path.join(scratch, 'clip.wav')]);
@@ -136,6 +138,10 @@ try {
     const jpegURL = 'data:image/jpeg;base64,' + jpeg.toString('base64'), wavURL = 'data:audio/wav;base64,' + wav.toString('base64');
     assert(nativeURLs(requests[1]).includes(jpegURL), 'real JPEG must enter actual SDK HTTP');
     assert(nativeURLs(requests[2]).includes(wavURL), 'real WAV must enter actual SDK HTTP');
+    assert.deepEqual(requests[2].messages.flatMap(m => Array.isArray(m.content) ? m.content : [])
+      .filter(p => p.type === 'input_audio'), [{ type: 'input_audio', input_audio: { data: wav.toString('base64'), format: 'wav' } }]);
+    assert(!requests[2].messages.some(m => Array.isArray(m.content) &&
+      m.content.some(p => p.type === 'image_url' && p.image_url.url.startsWith('data:audio/'))));
     const messages = requests[2].messages;
     const overviewResult = messages.findIndex(m => m.role === 'tool' && /media_overview/.test(messages.find(a => a.tool_calls?.some(c => c.id === m.tool_call_id))?.tool_calls?.[0]?.function?.name || ''));
     const jpegIndex = messages.findIndex(m => nativeURLs({ messages: [m] }).includes(jpegURL));

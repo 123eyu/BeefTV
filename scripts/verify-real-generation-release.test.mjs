@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { validateTeamRelease } from './team-release-contract.mjs';
 import {
   THEME_AGENT_CONTRACT_VERSION,
@@ -16,6 +17,8 @@ import {
   findCopiedPriorTheme,
   releaseContractVersion,
   DURABLE_AGENT_CHECK_IDS,
+  validateTargetedV200,
+  targetedV200SourceProof,
 } from './real-generation-release-contract.mjs';
 
 const PATHS = ['text-image', 'image-image', 'image-video', 'text-video', 'video-video', 'multi-video'];
@@ -28,7 +31,7 @@ const BUNNY_FIXTURES = {
 function copyGate(dir) {
   mkdirSync(join(dir, 'scripts'), { recursive: true });
   mkdirSync(join(dir, 'docs/release-evidence'), { recursive: true });
-  for (const name of ['verify-real-generation-release.mjs', 'real-generation-release-contract.mjs', 'h3-family-release-contract.mjs', 'video-direct-delivery-release-contract.mjs', 'team-release-contract.mjs', 'image-preparation-release-contract.mjs']) {
+  for (const name of ['verify-real-generation-release.mjs', 'real-generation-release-contract.mjs', 'h3-family-release-contract.mjs', 'video-direct-delivery-release-contract.mjs', 'team-release-contract.mjs', 'image-preparation-release-contract.mjs', 'music3-release-contract.mjs']) {
     writeFileSync(join(dir, 'scripts', name), readFileSync(new URL(`./${name}`, import.meta.url)));
   }
 }
@@ -50,6 +53,280 @@ function setupRepo(version) {
   };
   return { dir, git, run, save, commitVersion };
 }
+
+// These receipts are synthetic cash/acceptance fixtures; they never write the
+// real release receipt or claim that an unresolved supplier bill is free.
+const originalV200Bytes = readFileSync(new URL('../docs/release-evidence/v2.0.0-original-execution.json', import.meta.url));
+const originalV200 = JSON.parse(originalV200Bytes);
+const audioV200Paths = ['agent-host/media-content.mjs', 'agent-host/operation-descriptors.fixture.json', 'agent-host/operation-policy.test.mjs',
+  'backend/internal/app/operations_media_review.go', 'backend/internal/app/operations_media_review_audio_test.go', 'backend/internal/operations/media_review.go',
+  'scripts/real-generation-release-contract.mjs', 'scripts/verify-real-generation-release.mjs', 'scripts/verify-real-generation-release.test.mjs'];
+function makeTargetedV200() {
+  const sourceDigest = 'c'.repeat(64), proof = ['synthetic current-source fixture; not real acceptance'];
+  const bound = { sourceDigest, evidence: proof };
+  const passed = { status: 'passed', method: 'native', ...bound };
+  const review = { result: 'approved', independent: true, reviewer: 'synthetic independent reviewer', ...bound };
+  const cases = structuredClone(originalV200.originalCases);
+  const holdFor = item => item.path.endsWith('image')
+    ? (item.round === 2 ? 'round2-image-batch-approval' : `round1-${item.path === 'text-image' ? 't2i' : 'i2i'}-approval`)
+    : `round${item.round}-video-batch-approval`;
+  const billingAttempts = [];
+  for (const hold of originalV200.originalBillingHolds) {
+    const base = { originalHoldId: hold.id, originalHold: structuredClone(hold), billing: 'settled',
+      settlementEvidenceSHA256: 'd'.repeat(64), evidence: ['synthetic final bill; not a real settlement'] };
+    if (hold.kind === 'media') {
+      for (const item of cases.filter(x => holdFor(x) === hold.id)) billingAttempts.push({ ...base, id: item.taskId,
+        kind: 'media', taskId: item.taskId, requestId: item.gatewayRequestId, costCNY: item.costCNY,
+        executedSourceDigest: originalV200.sourceDigest, executionSourceStatus: 'known_original' });
+    } else billingAttempts.push({ ...base, id: hold.id, kind: hold.kind, requestId: hold.requestId,
+      costCNY: hold.settledCNY ?? 0, executedSourceDigest: null, executionSourceStatus: 'unknown_historical' });
+  }
+  billingAttempts.push({ id: 'synthetic-external-final-bill', kind: 'other', externalReviewJob: originalV200.externalReviewCostUncertainty.job,
+    executedSourceDigest: null, executionSourceStatus: 'unknown_historical', billing: 'settled', costCNY: 0,
+    settlementEvidenceSHA256: 'd'.repeat(64), evidence: ['synthetic only; actual Grok bill still separate'] });
+  return { version: 'v2.0.0', contractVersion: 3, sourceDigest,
+    ownerException: { scope: 'v2.0.0-wand-audio-targeted-retest-20261021', approvedBy: 'Ender', instruction: originalV200.ownerAuthorization.answer,
+      authorizationSHA256: 'eab11b7c3df4187d46a6aaaaa1c11759cd6bcdbee5d304f476fef06eab546758', ...bound },
+    originalExecutionSHA256: createHash('sha256').update(originalV200Bytes).digest('hex'), originalExecutionSourceDigest: originalV200.sourceDigest,
+    budgetCNY: 50, spentCNY: Number(billingAttempts.reduce((s,x) => s+x.costCNY,0).toFixed(6)), pendingCNY: 0,
+    cases, billingAttempts, scenario: structuredClone(originalV200.originalScenario),
+    liveMatrixStatus: 'retained_original_execution', agentAcceptanceStatus: 'passed_with_retained_original_checks',
+    agentChecks: { ...Object.fromEntries([...REQUIRED_AGENT_CHECK_IDS,...DURABLE_AGENT_CHECK_IDS].map(id => [id, structuredClone(passed)])),
+      ...structuredClone(originalV200.retainedAgentChecks) },
+    impactReview: { ...review, changedSourcePaths: audioV200Paths, retainedCheckIds: Object.keys(originalV200.retainedAgentChecks) },
+    review, upgrade: { preservedData: true, generationVerified: true, ...bound },
+    verification: Object.fromEntries(['localReleaseGate','ci','audioOwnershipVersionRange','audioFailureCancellation','opusTextBridge','videoWireRegression'].map(id => [id,structuredClone(passed)])),
+    packages: { sourceDigest, platforms: ['darwin-arm64','darwin-amd64','windows-amd64','linux-amd64'], status: 'pending_release_workflow', archives: null,
+      windowsReleasedUpgradeAndRollbackBeforeUpload: true, finalArchiveSmokeBeforeUpload: true, linuxNativeWindowBeforeUpload: true,
+      signedManifestBeforePublish: true, publicReadbackAfterPublish: true, workflowEvidence: ['.github/workflows/release-desktop.yml'] },
+    releasePublished: false, releaseComplete: false };
+}
+const syntheticV200Proof = { unchangedSourceDigest: originalV200.originalSourceProof.unchangedSourceDigest,
+  allowedEntries: Object.fromEntries(audioV200Paths.map(path => [path, `100644 blob ${'e'.repeat(40)}`])) };
+const validateV200 = (receipt, proofs = {}) => validateTargetedV200(receipt, 'c'.repeat(64), { originalBytes: originalV200Bytes, sourceProof: syntheticV200Proof, ...proofs });
+
+test('v2.0.0 exact targeted authorization retains 12 original cases and 12 checks, but requires 11 current checks', () => {
+  const valid = makeTargetedV200();
+  assert.deepEqual(validateV200(valid), { retainedCases: 12, retainedChecks: 12, currentChecks: 11 });
+  assert.equal(valid.billingAttempts.filter(x => x.executionSourceStatus === 'unknown_historical').length,116);
+  const current = structuredClone(valid);
+  current.agentChecks.cancel = { status: 'passed', method: 'native', sourceDigest: current.sourceDigest, evidence: ['synthetic new actual cancellation'] };
+  current.impactReview.retainedCheckIds = current.impactReview.retainedCheckIds.filter(x => x !== 'cancel');
+  assert.equal(validateV200(current).currentChecks,12);
+});
+
+test('v2.0.0 targeted acceptance rejects relabeling, expanded scope, incomplete cash and missing current evidence', async t => {
+  const mutations = {
+    'later version': r => { r.version = 'v2.0.1'; },
+    'wrong exact approval': r => { r.ownerException.instruction = '发布吧'; },
+    'changed approval hash': r => { r.ownerException.authorizationSHA256 = 'a'.repeat(64); },
+    'different original source': r => { r.originalExecutionSourceDigest = r.sourceDigest; },
+    'original baseline rewrite': r => { r.originalExecutionSHA256 = 'a'.repeat(64); },
+    'matrix claimed current': r => { r.liveMatrixStatus = 'passed'; },
+    'case source relabeled': r => { r.cases[0].executedSourceDigest = r.sourceDigest; },
+    'case task replaced': r => { r.cases[0].taskId = 'new-task'; },
+    'case request replaced': r => { r.cases[0].gatewayRequestId = 'different-request'; },
+    'case evidence changed': r => { r.cases[0].evidence = ['different']; },
+    'frozen failed continuation hidden': r => { r.cases[0].autoDeliveryPassed = true; },
+    'case omitted': r => { r.cases.pop(); },
+    'old native audio': r => { r.agentChecks.native_audio.sourceDigest = originalV200.sourceDigest; },
+    'fixture native audio': r => { r.agentChecks.native_audio.method = 'deterministic'; },
+    'video pending': r => { r.agentChecks.native_video.status = 'pending'; },
+    'film review missing': r => { delete r.agentChecks.media_film_review; },
+    'old passed check resigned': r => { r.agentChecks.cancel.sourceDigest = r.sourceDigest; r.impactReview.retainedCheckIds = r.impactReview.retainedCheckIds.filter(x=>x!=='cancel'); },
+    'retained check evidence rewritten': r => { r.agentChecks.cancel.evidence = ['new']; },
+    'impact review hides retained check': r => { r.impactReview.retainedCheckIds.pop(); },
+    'remaining assistant check pending': r => { r.agentChecks.canvas_mutation.status = 'pending'; },
+    'unsettled final bill': r => { r.billingAttempts[0].billing = 'pending'; },
+    'pending total hidden': r => { r.pendingCNY = 1; },
+    'old source fabricated': r => { r.billingAttempts[0].executedSourceDigest = r.sourceDigest; },
+    'old request changed': r => { r.billingAttempts[0].requestId = 'different'; },
+    'original hold rewritten': r => { r.billingAttempts[0].originalHold.at = 'different'; },
+    'old failed attempt omitted': r => { const x=r.billingAttempts.findIndex(x=>x.kind==='chat' && x.costCNY===0); assert.ok(x>=0);r.billingAttempts.splice(x,1); },
+    'old known fee changed': r => { r.billingAttempts[0].costCNY=0;r.spentCNY=37.415623; },
+    'external unknown omitted': r => { r.billingAttempts.pop(); },
+    'over original 50': r => { r.budgetCNY = 51; },
+    'old review': r => { r.review.sourceDigest=originalV200.sourceDigest; },
+    'old upgrade': r => { r.upgrade.sourceDigest=originalV200.sourceDigest; },
+    'audio cancellation regression missing': r => { delete r.verification.audioFailureCancellation; },
+    'old package source': r => { r.packages.sourceDigest=originalV200.sourceDigest; },
+    'Windows rollback waived': r => { r.packages.windowsReleasedUpgradeAndRollbackBeforeUpload=false; },
+    'preflight claims completed publish': r => { r.releaseComplete=true; },
+  };
+  for (const [name, mutate] of Object.entries(mutations)) await t.test(name, () => {
+    const invalid=makeTargetedV200();mutate(invalid);assert.throws(()=>validateV200(invalid));
+  });
+  assert.throws(()=>validateV200(makeTargetedV200(),{originalBytes:Buffer.from('{}')}),/original execution evidence changed/);
+  assert.throws(()=>validateV200(makeTargetedV200(),{sourceProof:{...syntheticV200Proof,unchangedSourceDigest:'a'.repeat(64)}}),/source changes/);
+  const missing=structuredClone(syntheticV200Proof);delete missing.allowedEntries[audioV200Paths[0]];
+  assert.throws(()=>validateV200(makeTargetedV200(),{sourceProof:missing}),/source changes/);
+  const unmodified=structuredClone(syntheticV200Proof);unmodified.allowedEntries[audioV200Paths[0]]=originalV200.originalSourceProof.allowedEntries[audioV200Paths[0]];
+  assert.throws(()=>validateV200(makeTargetedV200(),{sourceProof:unmodified}),/source changes/);
+});
+
+test('v2.0.0 source proof works with current HEAD alone and detects unrelated source changes', () => {
+  const {dir,git}=setupRepo('v2.0.0');
+  try {
+    assert.throws(()=>git('cat-file','-e','3d080c9a470e62372676af4cf7cb4c1a43850fdb'));
+    const tree=()=>git('ls-tree','-r','HEAD','--','scripts','VERSION').toString();
+    const before=targetedV200SourceProof(tree());
+    writeFileSync(join(dir,'scripts/verify-real-generation-release.mjs'),'synthetic allowed change\n');
+    git('add','.');git('-c','user.name=Test','-c','user.email=test@example.invalid','commit','-m','allowed');
+    const after=targetedV200SourceProof(tree());
+    assert.equal(after.unchangedSourceDigest,before.unchangedSourceDigest);
+    assert.notEqual(after.allowedEntries['scripts/verify-real-generation-release.mjs'],before.allowedEntries['scripts/verify-real-generation-release.mjs']);
+    writeFileSync(join(dir,'scripts/unrelated.mjs'),'synthetic unrelated change\n');
+    git('add','.');git('-c','user.name=Test','-c','user.email=test@example.invalid','commit','-m','unrelated');
+    assert.notEqual(targetedV200SourceProof(tree()).unchangedSourceDigest,after.unchangedSourceDigest);
+  } finally {rmSync(dir,{recursive:true,force:true});}
+});
+
+test('v2.0.0 new app/direct costs retain actual provenance and cannot repeat the media matrix', () => {
+  const value=makeTargetedV200();
+  const item={id:'synthetic-new-chat',kind:'chat',billing:'settled',costCNY:0.01,executedSourceDigest:value.sourceDigest,executionSourceStatus:'current',settlementEvidenceSHA256:'e'.repeat(64),evidence:['synthetic new bill']};
+  value.billingAttempts.push(item);value.spentCNY=Number((value.spentCNY+0.01).toFixed(6));validateV200(value);
+  item.executionSourceStatus='not_app_execution';item.executedSourceDigest=null;assert.throws(()=>validateV200(value));
+  item.executorSHA256='f'.repeat(64);validateV200(value);
+  item.kind='media';assert.throws(()=>validateV200(value));
+  item.kind='chat';item.executionSourceStatus='superseded_candidate';item.executedSourceDigest=originalV200.sourceDigest;
+  assert.throws(()=>validateV200(value));
+  item.acceptanceCredit=false;item.executionSourceEvidenceSHA256='e'.repeat(64);validateV200(value);
+  item.acceptanceCredit=true;assert.throws(()=>validateV200(value));
+  item.acceptanceCredit=false;item.executedSourceDigest='a'.repeat(64);assert.throws(()=>validateV200(value));
+});
+
+test('v2.0.0 published package receipts require actual source-bound archives, upgrade/rollback and readback', () => {
+  const value=makeTargetedV200();value.releasePublished=true;value.releaseComplete=true;value.packages.status='verified';
+  value.packages.archives=value.packages.platforms.map(platform=>({platform,sha256:'e'.repeat(64),sourceDigest:value.sourceDigest,evidence:['synthetic final archive']}));
+  for(const id of ['signature','publicReadback','windowsReleasedUpgradeAndRollback','finalArchiveSmoke','linuxNativeWindow']) value.packages[id]={status:'passed',sourceDigest:value.sourceDigest,evidence:['synthetic package verification']};
+  validateV200(value);
+  for(const mutate of [r=>r.packages.archives.pop(),r=>r.packages.archives[0].sourceDigest=originalV200.sourceDigest,r=>r.packages.windowsReleasedUpgradeAndRollback.status='pending',r=>r.packages.publicReadback.sourceDigest=originalV200.sourceDigest]) {
+    const invalid=structuredClone(value);mutate(invalid);assert.throws(()=>validateV200(invalid));
+  }
+});
+
+const postchecksV200Bytes = readFileSync(new URL('../docs/release-evidence/v2.0.0-owner-postchecks-snapshot.json', import.meta.url));
+const postchecksV200 = JSON.parse(postchecksV200Bytes);
+function makePostchecksV200() {
+  const value = makeTargetedV200();
+  value.ownerException = { ...value.ownerException, scope: 'v2.0.0-owner-release-with-postchecks-20261021', ...postchecksV200.ownerAuthorization };
+  value.postchecksSnapshotSHA256 = createHash('sha256').update(postchecksV200Bytes).digest('hex');
+  value.additionalPaidTestsStopped = true;
+  value.acceptanceComplete = false;
+  value.throughLedger = structuredClone(postchecksV200.throughLedger);
+  value.agentAcceptanceStatus = 'incomplete_owner_deferred';
+  value.agentChecks = structuredClone(postchecksV200.agentChecks);
+  value.postReleaseChecks = structuredClone(postchecksV200.postReleaseChecks);
+  value.billingAttempts.pop();
+  for (const item of value.billingAttempts.filter(x => x.originalHold?.settledCNY === null)) {
+    item.billing = 'pending'; item.costCNY = null; item.settlementEvidenceSHA256 = null;
+    item.heldCNY = Number(item.originalHold.amount) / 1000000;
+  }
+  value.billingAttempts.push(...structuredClone(postchecksV200.additionalBillingAttempts), structuredClone(postchecksV200.externalCash));
+  refreshPostchecksCash(value);
+  return value;
+}
+function refreshPostchecksCash(value) {
+  value.spentCNY = Number(value.billingAttempts.reduce((s,x) => s+(x.costCNY ?? 0),0).toFixed(6));
+  const pending = value.billingAttempts.filter(x => x.billing === 'pending');
+  value.pendingCNY = Number(pending.reduce((s,x) => s+x.heldCNY,0).toFixed(6));
+  value.postReleaseBilling = pending.map(x => ({ id: x.id, requestId: x.requestId, heldCNY: x.heldCNY, costCNY: null,
+    status: 'pending', owner: 'Ender', nextAction: 'Read final supplier bill; preserve unknown until verified.', evidence: x.evidence }));
+}
+const postchecksV200Proof = { ...syntheticV200Proof, unchangedProductSourceDigest: postchecksV200.unchangedProductSourceDigest };
+const validatePostchecksV200 = (value, options = {}) => validateV200(value, { postchecksBytes: postchecksV200Bytes, sourceProof: postchecksV200Proof, ...options });
+
+test('v2.0.0 owner postchecks preserves exact 16/3/4, original 120 plus 33 costs and six full pending holds', () => {
+  const value = makePostchecksV200();
+  assert.deepEqual(validatePostchecksV200(value), { retainedCases: 12, retainedChecks: 12, retainedProductChecks: 4, postReleaseChecks: 7, pendingBills: 6 });
+  assert.equal(value.spentCNY,42.796765); assert.equal(value.pendingCNY,3.506822);
+  assert.equal(value.billingAttempts.length,161);
+  assert.equal(value.agentChecks.native_audio.status,'failed');
+  assert.equal(value.agentChecks.native_audio.earlierPass.status,'passed');
+  assert.equal(value.agentChecks.native_audio.earlierPass.sourceDigest,postchecksV200.executedSourceDigest);
+  assert.equal(value.billingAttempts.filter(x=>x.executionSourceStatus==='unknown_historical').length,116);
+  assert.equal(value.agentChecks.session_history.sourceDigest,null);
+});
+
+test('v2.0.0 owner postchecks rejects concealed failures, costs, authorization or final-source gates', async t => {
+  const mutations = {
+    'future version': r=>{r.version='v2.0.1';},
+    'generic skip scope': r=>{r.ownerException.scope='release-with-postchecks';},
+    'different owner quote': r=>{r.ownerException.instruction='直接发布吧';},
+    'old owner only': r=>{r.ownerException.authorizationSHA256=r.ownerException.previousAuthorizationSHA256;},
+    'snapshot changed': r=>{r.postchecksSnapshotSHA256='a'.repeat(64);},
+    'live ledger cutoff relabeled': r=>{r.throughLedger.prefixBytes++;},
+    'additional paid calls allowed': r=>{r.additionalPaidTestsStopped=false;},
+    'acceptance complete': r=>{r.acceptanceComplete=true;},
+    'checks all claimed passed': r=>{r.agentAcceptanceStatus='passed_with_retained_original_checks';},
+    'real audio failure hidden': r=>{r.agentChecks.native_audio.status='passed';},
+    'earlier audio pass deleted': r=>{delete r.agentChecks.native_audio.earlierPass;},
+    'video failure changed to pending': r=>{r.agentChecks.native_video.status='pending';},
+    'pending source invented': r=>{r.agentChecks.skill_files.sourceDigest=r.sourceDigest;},
+    '667 pass resigned': r=>{r.agentChecks.canvas_read.sourceDigest=r.sourceDigest;},
+    'old 3d check resigned': r=>{r.agentChecks.cancel.sourceDigest=r.sourceDigest;},
+    'postcheck omitted': r=>{r.postReleaseChecks.pop();},
+    'postcheck marked passed': r=>{r.postReleaseChecks[0].status='passed';},
+    'postcheck reason hidden': r=>{r.postReleaseChecks[0].reason='';},
+    'original task omitted': r=>{r.cases.pop();},
+    'original task resigned': r=>{r.cases[0].executedSourceDigest=r.sourceDigest;},
+    'original failed cost omitted': r=>{r.billingAttempts.splice(r.billingAttempts.findIndex(x=>x.originalHoldId&&x.costCNY===0),1);refreshPostchecksCash(r);},
+    'new settled cost omitted': r=>{r.billingAttempts.splice(r.billingAttempts.findIndex(x=>!x.originalHoldId&&x.costCNY>0),1);refreshPostchecksCash(r);},
+    'new pending cost omitted': r=>{r.billingAttempts.splice(r.billingAttempts.findIndex(x=>!x.originalHoldId&&x.billing==='pending'),1);refreshPostchecksCash(r);},
+    'new settled amount altered': r=>{r.billingAttempts.find(x=>!x.originalHoldId&&x.costCNY>0).costCNY=0;refreshPostchecksCash(r);},
+    'new source resigned': r=>{r.billingAttempts.find(x=>x.executionSourceStatus==='current').executedSourceDigest=r.sourceDigest;},
+    'direct executor invented': r=>{r.billingAttempts.find(x=>x.executionSourceStatus==='not_app_execution').executorSHA256='a'.repeat(64);},
+    'new unknown cost outside frozen index': r=>{r.billingAttempts.push({...r.billingAttempts.at(-2),id:'extra'});refreshPostchecksCash(r);},
+    'pending reported zero cash': r=>{r.billingAttempts.find(x=>x.billing==='pending').costCNY=0;},
+    'pending hold reduced': r=>{r.billingAttempts.find(x=>x.billing==='pending').heldCNY=0.01;refreshPostchecksCash(r);},
+    'pending marked settled without bill': r=>{const x=r.billingAttempts.find(x=>x.billing==='pending');x.billing='settled';x.costCNY=0;refreshPostchecksCash(r);},
+    'settled changed to pending': r=>{const x=r.billingAttempts.find(x=>x.costCNY>0);x.billing='pending';x.costCNY=null;x.settlementEvidenceSHA256=null;refreshPostchecksCash(r);},
+    'postrelease bill omitted': r=>{r.postReleaseBilling.pop();},
+    'postrelease bill has no owner': r=>{r.postReleaseBilling[0].owner='';},
+    'pending total hidden': r=>{r.pendingCNY=0;},
+    'budget raised': r=>{r.budgetCNY=51;},
+    'current review resigned old': r=>{r.review.sourceDigest=postchecksV200.executedSourceDigest;},
+    'CI skipped': r=>{r.verification.ci.status='pending';},
+    'upgrade removed': r=>{delete r.upgrade;},
+    'four platform dropped': r=>{r.packages.platforms.pop();},
+    'rollback waived': r=>{r.packages.windowsReleasedUpgradeAndRollbackBeforeUpload=false;},
+    'signature waived': r=>{r.packages.signedManifestBeforePublish=false;},
+    'public readback waived': r=>{r.packages.publicReadbackAfterPublish=false;},
+    'published without archives': r=>{r.releasePublished=true;r.releaseComplete=true;},
+  };
+  for(const [name,mutate] of Object.entries(mutations)) await t.test(name,()=>{
+    const invalid=makePostchecksV200();mutate(invalid);assert.throws(()=>validatePostchecksV200(invalid));
+  });
+  assert.throws(()=>validatePostchecksV200(makePostchecksV200(),{postchecksBytes:Buffer.from('{}')}),/frozen postchecks/);
+  assert.throws(()=>validatePostchecksV200(makePostchecksV200(),{sourceProof:{...postchecksV200Proof,unchangedProductSourceDigest:'a'.repeat(64)}}),/unchanged product/);
+});
+
+test('v2.0.0 pending billing may become final only with final cash evidence, original hold retained and cap enforced', () => {
+  const value=makePostchecksV200();
+  const item=value.billingAttempts.find(x=>!x.originalHoldId&&x.billing==='pending');
+  const original=structuredClone(item);
+  item.billing='settled';item.costCNY=0.1;item.settlementEvidenceSHA256='d'.repeat(64);refreshPostchecksCash(value);
+  assert.equal(validatePostchecksV200(value).pendingBills,5);
+  assert.equal(item.heldCNY,original.heldCNY);assert.equal(item.requestId,original.requestId);
+  item.costCNY=10;refreshPostchecksCash(value);assert.throws(()=>validatePostchecksV200(value),/CNY 50/);
+  item.costCNY=-1;refreshPostchecksCash(value);assert.throws(()=>validatePostchecksV200(value));
+});
+
+test('v2.0.0 postchecks product proof excludes only the three acceptance scripts and needs no old git objects', () => {
+  const {dir,git}=setupRepo('v2.0.0');
+  try {
+    assert.throws(()=>git('cat-file','-e',postchecksV200.executedCommit));
+    const tree=()=>git('ls-tree','-r','HEAD','--','scripts','VERSION','backend').toString();
+    const before=targetedV200SourceProof(tree());
+    writeFileSync(join(dir,'scripts/verify-real-generation-release.mjs'),'synthetic acceptance only\n');
+    git('add','.');git('-c','user.name=Test','-c','user.email=test@example.invalid','commit','-m','acceptance');
+    assert.equal(targetedV200SourceProof(tree()).unchangedProductSourceDigest,before.unchangedProductSourceDigest);
+    mkdirSync(join(dir,'backend/internal/app'),{recursive:true});
+    writeFileSync(join(dir,'backend/internal/app/operations_media_review.go'),'synthetic product change\n');
+    git('add','.');git('-c','user.name=Test','-c','user.email=test@example.invalid','commit','-m','product');
+    assert.notEqual(targetedV200SourceProof(tree()).unchangedProductSourceDigest,before.unchangedProductSourceDigest);
+  } finally {rmSync(dir,{recursive:true,force:true});}
+});
 
 test('v1.7.25 defers #176 and keeps source-bound checks, financial uncertainty and package gates', () => {
   const { dir, run, save, commitVersion } = setupRepo('v1.7.25');

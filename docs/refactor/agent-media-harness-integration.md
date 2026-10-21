@@ -16,7 +16,8 @@
 - 官方 `AgentSession.steer()` 接收文字补充；产品用意图版本阻止旧响应继续写入，不另建 Agent 循环。
 - `media.overview / inspect / check` 只打开归属验证通过、已就绪的资源。模型不能传任意 URL 或文件路径给 FFmpeg。素材版本是实际打开字节的 SHA256，后续检查必须匹配。
 - `overview` 返回概况和真实 JPEG；`inspect` 返回有界 JPEG、MP4 或 WAV；`check` 返回黑场区间、平均和峰值音量。采样时间标记为请求的 seek 时间，不能当作逐帧精确 PTS。
-- JPEG 使用官方 ImageContent；新 Durable 会话在官方工具历史中保存音视频短引用，原字节由受校验的本地媒体存储持有；宿主在实际 HTTP dispatch 前重新验证权限与版本，再转换为带 MIME 的 data URI。原生音视频仅开放给已验证的 Gemini `openai-completions` 连接；其他连接收到明确工具错误，仍可用画面与客观检测。
+- JPEG 使用官方 ImageContent；新 Durable 会话在官方工具历史中保存音视频短引用，原字节由受校验的本地媒体存储持有；宿主在实际 HTTP dispatch 前重新验证权限与版本。Gemini `openai-completions` 的 WAV 使用 `input_audio: {data: "<纯 base64>", format: "wav"}`，不得放入 `image_url`；这是 [Google 官方兼容协议](https://ai.google.dev/gemini-api/docs/openai#audio-understanding) 的音频格式。已有 MP4 编码路径保持不变，不能据音频协议修复宣称视频输入或模型理解质量通过。当前原生音视频入口仅开放给 Gemini `openai-completions` 连接；其他连接收到明确工具错误，仍可用画面与客观检测。实际协议接收、听音与看视频质量均须另做真实验收。
+- 独立审查走 `media.review`，不改变主模型：默认 `mode: "video"` 保留 MP4 及原音轨；`mode: "audio"` 将已授权 WAV/MP3 素材的指定区间归一化为 WAV，通过 WAND `input_audio: {data, format: "wav"}` 检查。主模型（包括不能直接接收音频的 Opus）只收到工具的文字观察、来源、片段哈希、请求号与用量。两种模式都复用 `media.inspect` 的归属、版本与区间限制，保持 `replay: "unsafe"`，失败或中断不自动重发。[腾讯 WAND 接口合同](https://page.weixin.qq.com/smartpage/p/b1_AT4ACga-AMYijMx5JsNSiWGK6lP?p=QEm9pe) 列出 `input_audio` 的 mp3/wav 格式；协议合同及本地模拟服务测试不能证明真实供应商的听音准确度，该项仍需单独原生验收。
 - `canvas.timeline.update` 复用既有编译与画布提交，验证素材/资源归属及 revision。规范化时保留可信 `assetId`，其他画布字段不变。
 - `canvas.timeline.render` 在操作事务内复用既有本地任务服务。操作回执与任务一起提交，重复操作返回同一任务，回执失败时任务回滚；渲染任务的查询权限从后端成功回执构造。
 - 撤销复用整轮前快照。既检查改动范围，也检查连续操作回执；用户后续修改或未声明字段变化时拒绝覆盖。

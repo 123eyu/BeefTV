@@ -24,9 +24,27 @@ test('official images and bounded native media keep source evidence', () => {
   const text = native.content.filter(p => p.type === 'text').map(p => p.text).join('\n');
   const request = adaptMediaRequest(transcript(text), model);
   expect(request.messages.map(m => m.role)).toEqual(['assistant', 'tool', 'tool', 'user', 'assistant']);
-  expect(request.messages[3].content.at(-1).image_url.url).toStartWith('data:audio/wav;base64,');
+  expect(request.messages[3].content.at(-1)).toEqual({
+    type: 'input_audio', input_audio: { data: part().data, format: 'wav' },
+  });
   expect(request.messages[1].content).not.toContain('BEEFTV_MEDIA_PART_V1:');
   expect(adaptMediaRequest(request, model)).toEqual(request);
+});
+test('unsupported audio MIME fails closed before dispatch adaptation', () => {
+  for (const mime of ['audio/mpeg', 'audio/ogg', 'audio/x-wav']) {
+    const unsupported = part(mime);
+    expect(() => mediaToolResult({ result: { content: [unsupported] } }, 'media.inspect', model)).toThrow('invalid_media_content');
+    expect(() => adaptMediaRequest(transcript('BEEFTV_MEDIA_PART_V1:' + JSON.stringify(unsupported)), model)).toThrow('invalid_media_content');
+  }
+});
+test('Google native inlineData is unchanged by the OpenAI compatibility adapter', () => {
+  const payload = { contents: [{ role: 'user', parts: [
+    { text: 'Listen to the audio.' },
+    { inlineData: { mimeType: 'audio/wav', data: part().data } },
+  ] }] };
+  const before = structuredClone(payload);
+  expect(adaptMediaRequest(payload, { api: 'google-generative-ai', modelId: model.modelId })).toBe(payload);
+  expect(payload).toEqual(before);
 });
 test('unsupported routes, tampered media and untrusted tool markers fail closed', () => {
   expect(() => mediaToolResult({ result: { content: [part()] } }, 'media.inspect', { ...model, modelId: 'claude-opus-5-5' })).toThrow('media_input_unsupported');
@@ -59,10 +77,11 @@ test('one overview tool preserves image, video and audio payload bytes in its ne
     { role: 'assistant', tool_calls: [{ id: 'bundle', function: { name: 'media_overview' } }] },
     { role: 'tool', tool_call_id: 'bundle', content: text },
   ] }, model);
-  const native = request.messages.at(-1).content.filter(p => p.type === 'image_url');
-  expect(native.map(p => p.image_url.url.split(';')[0])).toEqual(['data:video/mp4', 'data:audio/wav']);
-  expect(native.map(p => p.image_url.url)).toEqual(parts.filter(p => p.type === 'media').map(p => `data:${p.mimeType};base64,${p.data}`));
-  expect(native.every(p => Buffer.from(p.image_url.url.split(',')[1], 'base64').length > 0)).toBe(true);
+  const native = request.messages.at(-1).content.filter(p => ['image_url', 'input_audio'].includes(p.type));
+  expect(native).toEqual([
+    { type: 'image_url', image_url: { url: `data:video/mp4;base64,${parts[1].data}` } },
+    { type: 'input_audio', input_audio: { data: parts[2].data, format: 'wav' } },
+  ]);
   expect(converted.content.filter(p => p.type === 'image')).toHaveLength(1);
   expect(request.messages.filter(p => p.role === 'tool')).toHaveLength(1);
   const changed = parts.map(p => ({ ...p })); changed[2].sha256 = 'wrong';

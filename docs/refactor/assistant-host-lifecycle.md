@@ -30,7 +30,15 @@
 - 空闲且供应商指纹变化才重启；忙碌时不打断
 - 随包 Node 路径按 darwin `Contents/Resources/agent-host` 与 Windows 旁路 `agent-host` 解析，不回退 PATH
 - `Ensure` / `Restart` / `Stop` / `Start` / `Launch` 在 Host 生命周期锁上串行，避免互相抢到半回收的子进程
-- 官方 pi SDK 仍为 `@earendil-works/pi-coding-agent` 0.87.1
+- 官方 pi SDK 固定为 `@earendil-works/pi-coding-agent` / `pi-durable` / `pi-ai` 1.2.0
+
+## 模型请求等待与失败
+
+`agent-host/durable-session-owner.mjs` 的默认 `stream.timeoutMs` 为 **180000 ms**；SDK `stream.maxRetries` 与 Durable `retry.maxRetries` 均为 **0**。失败或超时后不自动发送新的模型请求，因为未收到结果不表示上游没有处理或计费。已完成工具与失败记录保留；正常工具执行后的下一次模型请求仍是同一轮的正常执行，不受禁止失败重试影响。用户明确发起的新请求按原权限和预算检查执行。
+
+OpenAI-compatible 路径的 SDK timeout 覆盖到响应头返回。收到成功 SSE 响应头后，`model-stream-idle.mjs` 仍使用独立的 **95000 ms 无进展检测**：实际文字或工具进展重置计时，心跳和空事件不重置。这不是整轮或整段回复的总时限；两个计时器不新增 UI/API 配置项，也不改变媒体工具自身超时。
+
+Stop 继续按请求身份立即取消，不等待上述计时器。取消、断流与超时都不自动证明退款；费用未知时先核对原请求，不盲目重复调用。公开 `turn_end` 和历史中的 `model_error` / `provider_error` 只返回稳定安全文案及原 reason；上游原始错误保留在内部诊断记录，本地预算错误原因保持不变。
 
 ## 依赖
 

@@ -120,6 +120,21 @@ test('history projection excludes native media bytes and replay defaults unknown
   assert.equal(durableToolReplay({ label: 'canvas.nodes.create', replay: 'safe' }), 'safe');
   assert.equal(durableToolReplay({ label: 'future.paid.submit' }), 'unsafe');
 });
+test('public provider failures hide upstream detail while retaining internal diagnostics and budget reasons', () => {
+  const detail = '503 upstream https://example.invalid/private?signature=synthetic-secret';
+  for (const errorReason of ['model_error', 'provider_error']) {
+    const internal = { error: detail, errorReason, cancelled: false, reply: '', turnId: 'failed-turn' };
+    const visible = publicDurableTurn(internal);
+    assert.equal(visible.error, '模型没有完成回复。已经完成的操作会保留，请检查结果后再继续。');
+    assert.equal(visible.errorReason, errorReason);
+    assert.equal(visible.cancelled, false);
+    assert.equal(internal.error, detail, 'projection must not overwrite diagnostic records');
+    assert(!JSON.stringify(visible).includes('synthetic-secret'));
+  }
+  const budget = { error: 'local budget is exhausted', errorReason: 'turn_request_budget_exhausted' };
+  assert.deepEqual(publicDurableTurn(budget), budget);
+  assert.equal(publicDurableTurn({ cancelled: true, error: null }).error, null);
+});
 const run = (directory, phase) => new Promise((resolve, reject) => {
   const child = spawn(process.execPath, [worker, directory, phase], { stdio: ['ignore', 'pipe', 'pipe'] });
   let output = '';

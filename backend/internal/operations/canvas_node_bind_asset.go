@@ -24,15 +24,6 @@ func opCanvasNodeBindAsset(ctx *Context, raw json.RawMessage) (any, error) {
 	if strings.TrimSpace(args.CanvasID) == "" || strings.TrimSpace(args.NodeID) == "" || strings.TrimSpace(args.AssetID) == "" || args.ExpectedRevision == nil || *args.ExpectedRevision < 0 {
 		return nil, InvalidArg("invalid_params", "画布、节点、素材和当前版本必填")
 	}
-	// Binding is also an asset read: canvas mode cannot turn a guessed owned ID
-	// into a new authorization. The scope resolver rechecks project membership.
-	if ctx.Caller.Scope != nil {
-		p, _ := json.Marshal(map[string]string{"assetId": args.AssetID})
-		read := assetGetOperation()
-		if err := ctx.Caller.Scope.Allows(&read, p); err != nil {
-			return nil, err
-		}
-	}
 	asset, err := ctx.Domain.OwnedAsset(ctx.UserID, args.AssetID)
 	if err != nil {
 		return nil, mapDomainError(err)

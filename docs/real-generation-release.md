@@ -152,6 +152,24 @@ v1.7.7 的单版专项验收例外：Owner 明确选择「本版豁免付费矩�
 
 ## 执行和记录
 
+v2.0.0 的音频专项复验例外：在已说明音频补丁改变源码、重跑原十二次生成超出原 ¥50 剩余空间后，Owner 明确选择「允许专项复验，保留原证据，不重复付费生成（推荐）」。此授权仅用于本版音频工具与验收记录改动；原授权问题及答复摘要固定在 `docs/release-evidence/v2.0.0-original-execution.json`，授权原件 SHA256 为 `eab11b7c3df4187d46a6aaaaa1c11759cd6bcdbee5d304f476fef06eab546758`，不扩展到任意源码或下一版。
+
+本版原十二条媒体的 `executedSourceDigest` 必须保留为 `5eed2376d3565325feca3e9221cd261d84e598f00da1513ff9282d20487edbb6`（3d080c9a）。task/request、素材/产物摘要、参数证据、确认操作与费用记录由固定原执行索引校验；`liveMatrixStatus` 使用 `retained_original_execution`，不能写成在新包重新执行。原已通过且未受影响的十二项可保留原摘要和证据：proposal_decline、proposal_stale、proposal_idempotency、session_restart、cancel、conflict_undo、host_recovery、scope_isolation、budget、cli_mcp、durable_resume、external_business。当前独立影响评审必须逐项列明实际保留范围；如重新执行其中某项，另存当前证据，不能只改旧记录的摘要。
+
+按最初专项复验条件，native_audio、native_video、media_film_review 必须在新候选真实复验，其余原未通过的助手项目必须补完并绑定新摘要。新增音频的所有权/版本/区间拒绝、错误及取消不重发、Opus文字观察桥接与原视频协议回归须有新源码测试证据。原故障、未完成续答和质量限制继续保留，原矩阵成功不代表这些附加行为全部成功。
+
+全部费用不超过原 ¥50；所有成功/失败/退款须逐笔核账，财务完成仍要求 pending 为0。固定原120条 hold 的 request、时间、已知账单摘要与金额不能遗漏或篡改；缺少执行源码的旧诊断记为 `unknown_historical`，仅用于成本完整性，不支撑当前验收。新正式应用请求记录真实当前摘要，直连诊断记录实际执行器摘要；若补丁安装前仍产生原3d候选费用，须保留原摘要与安装证据摘要并明确无当前验收效力，不能改签。Grok等原未明现金费用也须有独立最终现金核销证据，可使用订阅合同及同计费周期账户用量证明新增现金为零；不能单凭 usage 或预扣记为结算。十二个原媒体任务各有唯一已结算账单，不新增重复矩阵调用。
+
+当前源码独立 review、CI、本地发布检查、数据升级、四平台最终包、签名、Windows正式旧包升级与回滚、Linux窗口和公开读回均保留。发布前只能写 package workflow pending；发布后必须读回当前摘要的真实最终包及各项结果。最初专项复验条件不接受发布前未结账务；其发布顺序已由下列同版新授权替代，不允许未来版本沿用。
+
+v2.0.0 的后续发布授权：Ender 原话为「直接发布吧 剩下的发布完在验证吧 应该是可以用的 就是细节还需要调整」，授权原件 SHA256 为 `c75a63246f6618df4731361e806cae9081921a26d80aac373e8cbb14e9d71925`。仅本版允许 `ownerException.scope=v2.0.0-owner-release-with-postchecks-20261021`，停止新增付费测试，正常 main 发布流程不变。此决定只调整剩余功能验收和账务核销的先后顺序，不宣称它们已经通过或结清。
+
+固定快照 `docs/release-evidence/v2.0.0-owner-postchecks-snapshot.json` 保留原十二项通过记录，并保留 6670123c/source `1403d515498205c064a5002ec86c86fe867dbf03c4dc7cfa03b5309a1e07df3a` 的四项通过记录。native_audio、native_video、media_film_review 保持 failed；session_history、skill_version、skill_files、permission_modes 保持 pending。七项逐项进入 `postReleaseChecks`，列实际状态、原因、证据、负责人和下一步。音频早先的正确样本仍留在 `earlierPass`，不覆盖后续回归。`agentAcceptanceStatus=incomplete_owner_deferred`、`acceptanceComplete=false`，后续补验另存新证据，不改写这次发布时的记录。
+
+新授权只允许三个现有验收脚本及文档变化；校验当前 HEAD 除这三个脚本以外的源码树摘要与 667 的冻结摘要相同，不依赖 shallow checkout 中存在旧提交。原九文件音频专项约束同时继续检查。产品、依赖、VERSION 或发布 workflow 的额外变化都会拒绝；当前独立 review、CI、测试、升级和最终包仍绑定最终源码摘要，不能只给旧执行记录换摘要。
+
+本次账本索引截至 seq602，187912 bytes，SHA256 `1b71457fa4219857b93bdf87d562c94f72cdd46f62a55f642726f024808cb564`。固定原120条与新增33条 hold、Grok现金核销均必须完整列入 `billingAttempts`；已结 ¥42.796765，六笔未结全额 hold 合计 ¥3.506822。未结项必须保持 `billing=pending`、`costCNY=null`、原 request/source/hold 和证据，逐笔进入 `postReleaseBilling`，不可用 usage 代替费用或写0。只有新的最终账单证据可将对应 pending 核销，原请求、执行来源和保留额不能改写；实扣加剩余全额 hold 必须始终不超过 ¥50。新的请求不属于此冻结发布授权，不得遗漏后继续沿用该快照。公开包完成与功能/财务完成是分开记录的状态。
+
 v1.7.3 的单版专项验收例外：发布人明确说明本版尚无付费预算、历史豁免不得沿用后，Owner 选择「本版豁免付费矩阵，专项验收、独立复审和 CI 通过后发布」。本版包含自带 API 接入和 PR #74 的 Windows 正式旧包升级/回滚门禁。保留接入保存与恢复、凭据加密、助手模型保存屏障、本地发布检查、独立复审和 CI；最终安装包仍须经过发布流水线的三平台包检查及 Windows 旧包实测。付费矩阵记为未执行，本版新费用为零；历史 v1.7.2 两条失败聊天退款终态仍单独保留为未知。此豁免不延续到后续版本。
 
 v1.7.1 的单版专项验收例外：在发布人明确询问「保留专项验收、豁免重新跑十二次媒体生成，并保留上一版两条失败聊天退款终态未明记录」后，Owner 回复「上线吧 1.7.1 值得一个大版本」。该候选原编号 v1.6.24，按 Owner 指令改为 v1.7.1；产品运行源码不因改号变化。保留模型选择、授权默认与恢复、保存屏障、旧数据、CI 和独立复审证据；新付费调用为零，十二条矩阵记为未执行。联合已确认费用 ¥43.74479，未知总预扣仍为 null，两条请求精确限定，既不宣称退款完成，也不沿用到下一版。

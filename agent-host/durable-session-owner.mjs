@@ -55,6 +55,11 @@ export function publicDurableTurn(active, running = false) {
     'references', 'supplements', 'supplementInputs', 'createdAt', 'reply', 'toolCalls', 'change', 'proposals', 'plan',
     'cancelled', 'error', 'errorReason', 'sessionId', 'status'];
   const result = Object.fromEntries(keys.filter((key) => active[key] !== undefined).map((key) => [key, active[key]]));
+  // Keep provider detail in the internal record; streams and old history share
+  // the same public projection so an upstream body cannot become UI copy.
+  if (result.error && ['model_error', 'provider_error'].includes(result.errorReason)) {
+    result.error = '模型没有完成回复。已经完成的操作会保留，请检查结果后再继续。';
+  }
   if (running) { delete result.toolCalls; result.status = 'running'; }
   return result;
 }
@@ -584,7 +589,8 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     },error=>{entry.generation.skillContextFailure={reason:error?.reason || 'skill_context_unavailable',message:error?.message || '技能状态不可用'};});
     entry.harness = await Harness.open(await openNodeSqliteStorage(path.join(dir, `${uuid}.sqlite`)), {
       models, registry,
-      settings: { stream: { timeoutMs: 95000, maxRetries: 0 }, retry: { maxRetries: 2 },
+      // Do not repeat a failed model request: the upstream may already have billed it.
+      settings: { stream: { timeoutMs: 180000, maxRetries: 0 }, retry: { maxRetries: 0 },
         toolExecution: 'sequential', steeringMode: 'all', ...settings },
     }, CTX);
     try {

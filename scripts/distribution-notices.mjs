@@ -67,7 +67,11 @@ document.addEventListener("click", (event) => {
     const link = event.target.closest?.('a[href^="https://"]');
     if (!link) return;
     let runtime = window.runtime;
-    try { runtime ||= window.parent.runtime; } catch { /* A browser may embed this page cross-origin. */ }
+    // Wails also injects a runtime into this iframe, but macOS only accepts
+    // native messages from the main frame.
+    try {
+        if (typeof window.parent.runtime?.BrowserOpenURL === "function") runtime = window.parent.runtime;
+    } catch { /* A browser may embed this page cross-origin. */ }
     if (typeof runtime?.BrowserOpenURL === "function") {
         event.preventDefault();
         runtime.BrowserOpenURL(link.href);

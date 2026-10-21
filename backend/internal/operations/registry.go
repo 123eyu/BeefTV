@@ -242,6 +242,21 @@ func (r *Registry) Execute(req Request) (Result, error) {
 		if err := caller.Scope.Allows(op, params); err != nil {
 			return Result{}, err
 		}
+		if op.ID == "canvas.node.bind_asset" {
+			// Binding also reads an asset. Authorize before opening the write
+			// transaction: project membership uses the shared SQLite connection.
+			var asset struct {
+				AssetID string `json:"assetId"`
+			}
+			if err := json.Unmarshal(params, &asset); err != nil {
+				return Result{}, InvalidArg("invalid_params", "参数必须是 JSON 对象")
+			}
+			readParams, _ := json.Marshal(map[string]string{"assetId": asset.AssetID})
+			read := assetGetOperation()
+			if err := caller.Scope.Allows(&read, readParams); err != nil {
+				return Result{}, err
+			}
+		}
 	}
 	if op.ReadOnly {
 		opID = ""

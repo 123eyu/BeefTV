@@ -78,7 +78,7 @@ async function withHost(run, envExtra = {}, options = {}) {
       return;
     }
     if (options.retryFirstModel && modelCalls === 1) {
-      // Transient upstream failure: the official policy retries it. Its text must never reach the panel.
+      // A transient upstream failure must not silently dispatch another paid request.
       res.writeHead(503, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: { message: `upstream detail ${UPSTREAM_SECRET}`, type: 'server_error' } }));
       return;
@@ -427,31 +427,22 @@ test('真实宿主：冷启动首个历史响应恢复已提交文字，不等�
   } finally { releaseReply(); }
 }, 35000);
 
-test('真实宿主：官方自动重试在流和历史里显示为分类后的进度，不带上游原文', async () => {
-  await withHost(async ({ api, waitFor, getModelCalls }) => {
+test('真实宿主：上游失败直接结束且不自动重发，保留失败历史', async () => {
+  await withHost(async ({ api, getModelCalls }) => {
     const canvasId = 'retry-canvas';
     const created = await api('/sessions', { canvasId });
     const chat = api('/chat', { canvasId, message: 'Retry once.', turnId: 'retryturn1', revisionBefore: 1, sessionId: created.payload.sessionId });
-    let during;
-    await waitFor(async () => {
-      during = await api(`/history?canvasId=${canvasId}`);
-      return during.payload.active?.lifecycle?.phase === 'retry';
-    }, 6000);
-    const progress = during.payload.active.lifecycle;
-    expect(progress).toMatchObject({ type: 'lifecycle', phase: 'retry', reason: 'provider_unavailable' });
-    expect(Object.keys(progress).sort()).toEqual(['attempt', 'phase', 'reason', 'type']);
-    expect(Number.isInteger(progress.attempt) && progress.attempt > 0).toBe(true);
-    expect(during.text).not.toContain(UPSTREAM_SECRET);
     const result = await chat;
     const lines = result.text.trim().split('\n').map((line) => JSON.parse(line));
-    expect(lines).toContainEqual(progress);
-    expect(lines.filter((line) => line.type === 'lifecycle' && line.phase === 'retry_end')).toEqual([{ type: 'lifecycle', phase: 'retry_end', attempt: progress.attempt }]);
-    expect(lines.find((line) => line.type === 'turn_end')).toMatchObject({ reply: 'ok', error: null, cancelled: false });
-    expect(lines.filter((line) => line.type === 'text_snapshot').at(-1)).toEqual({ type: 'text_snapshot', text: 'ok' });
+    expect(lines.filter((line) => line.type === 'lifecycle' && line.phase.startsWith('retry'))).toEqual([]);
+    expect(lines.find((line) => line.type === 'turn_end')).toMatchObject({ reply: '',
+      error: '模型没有完成回复。已经完成的操作会保留，请检查结果后再继续。', errorReason: 'model_error', cancelled: false });
     expect(result.text).not.toContain(UPSTREAM_SECRET);
-    expect(getModelCalls()).toBe(2);
+    expect(getModelCalls()).toBe(1);
     const after = await api(`/history?canvasId=${canvasId}`);
     expect(after.payload.active).toBeNull();
+    expect(after.payload.turns[0]).toMatchObject({ reply: '',
+      error: '模型没有完成回复。已经完成的操作会保留，请检查结果后再继续。', errorReason: 'model_error', cancelled: false });
     expect(after.text).not.toContain(UPSTREAM_SECRET);
   }, {}, { canvasId: 'retry-canvas', slowFirstModel: false, retryFirstModel: true });
 }, 35000);

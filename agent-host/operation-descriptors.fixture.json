@@ -1849,7 +1849,7 @@
   },
   {
     "id": "media.review",
-    "summary": "用单独配置的多模态审片模型检查已关联视频的指定区间（最多15秒，包含原音轨），返回观察和用量，可能收费。先用media.overview取得版本。问题应来自用户要求，不预填正确答案或已知缺陷。结果是模型观察，不是整片合格证明；失败或中断不自动重发。未配置时明确不可用。",
+    "summary": "用单独配置的多模态审片模型检查已关联影音的指定区间（最多15秒），返回观察和用量，可能收费。mode默认video，包含原音轨；独立音频用audio。先用media.overview取得版本。问题应来自用户要求，不预填正确答案或已知缺陷。结果是模型观察，不是整片合格证明；失败或中断不自动重发。未配置时明确不可用。",
     "readOnly": true,
     "scope": "canvas",
     "params": {
@@ -1876,6 +1876,13 @@
         "endMs": {
           "type": "integer",
           "minimum": 1
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "video",
+            "audio"
+          ]
         },
         "question": {
           "type": "string",
