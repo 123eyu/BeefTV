@@ -4,13 +4,21 @@ All notable public changes to BeefTV are documented in this file.
 
 ## Unreleased
 
-- 桌面技能入口支持浏览和安装固定版本、查看文件、启停、历史版本恢复和私人改写，保留原版与辅助文件。
-- 作者可在客户端继续助手准备的投稿，连接投稿账号，分别确认私有上传和公开送审；错误草稿可修改后重新准备，上传中断后核对原包继续处理。
-- 官网技能链接先打开指定版本详情，由用户确认安装；详情显示实际审核摘要，使用前明确提示尚未满足的理解能力，文字技能无需配置多模态模型。
 - Built-in BeefAPI can be connected from the desktop app without pasting a key.
 - Prepared the first audited public source snapshot.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
+
+## v2.0.1
+
+- 新增可复用的画布工作流，可编辑模板、绑定输入、选择多图结果并执行媒体处理；内置账号支持 Topaz 图片和视频超分。
+- 修复任务恢复时的画布更新丢失、多图生成数量匹配和工作流取消后的任务核对，保留已生成结果与后续编辑。
+- 诊断包补充跨启动记录、助手执行和素材检查，支持通过 CLI 离线分析；修复助手退出时的授权错误及跨域请求问题。
+- 技能市场支持固定版本安装、文件查看、启停、回退和私人改写；作者可在客户端继续草稿，分别确认私有上传和公开送审。
+- 技能链接打开指定版本的安装确认页，并显示审核摘要；文字技能无需配置多模态模型。
+- 新版安装包和自动更新改用 Cloudflare R2 下载源，旧客户端保留更新入口，继续校验签名和完整文件。
+
+已知限制：影音模型仍可能漏报剪点或写错同音词，字幕与画面需结合原片核对；助手成片的角标排版和仅修改片尾文字仍需人工检查。
 
 ## v2.0.0
 
