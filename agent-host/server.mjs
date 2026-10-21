@@ -202,8 +202,16 @@ const durable = createDurableSessionStore({
     readCatalog:async (entry,signal,turnId,query={}) => (await ops.opsRequest('POST','/ops/skill.catalog',{params:query},signal,turnId || entry.turn.turnId)).result,
   },
   readCanvas: async (entry, signal, turnId) => {
-    if (!ops.descriptors.has('canvas_get') || !ops.descriptors.has('canvas_nodes_create')) return null;
-    return (await ops.opsRequest('POST', '/ops/canvas.get', { params: { canvasId: entry.canvasId } }, signal, turnId || entry.turn.turnId)).result;
+    if (!ops.descriptors.has('canvas_get')) return null;
+    const { result } = await ops.opsRequest('POST', '/ops/canvas.get', { params: { canvasId: entry.canvasId } }, signal, turnId || entry.turn.turnId);
+    const canvas = result?.canvas;
+    // Read the full Go document, not the operation wrapper or the paged model view.
+    // Stored empty documents may omit/null collections; other shapes are unknown.
+    if (result?.canvasId !== entry.canvasId || !canvas || typeof canvas !== 'object' || Array.isArray(canvas) ||
+        !Number.isSafeInteger(canvas.revision) || canvas.revision < 0 ||
+        (canvas.nodes != null && !Array.isArray(canvas.nodes)) ||
+        (canvas.connections != null && !Array.isArray(canvas.connections))) throw new Error('invalid_canvas_read_result');
+    return { ...canvas, nodes: canvas.nodes ?? [], connections: canvas.connections ?? [] };
   },
   authorizeTurn: async ({canvasId, turnId,sessionId}) => {
     const state = await ops.opsRequest('GET', `/assistant/runtime/turns/${encodeURIComponent(turnId)}`);

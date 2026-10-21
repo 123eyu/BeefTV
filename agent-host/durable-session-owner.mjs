@@ -22,7 +22,7 @@ import { normalizeModelTransportError } from './model-transport-error.mjs';
 // package version. Changing it rejects every existing session as mismatched.
 export const DURABLE_VERSION = '1.0.4';
 const STATE = defineDoc({ kind: 'beeftv.host', version: 1, scope: 'session',
-  initial: () => ({ version: DURABLE_VERSION, canvasId: '', sessionId: '', active: null, turns: [], loadedSkills: [], plan: emptyPlan(), studioDigestText: '', lastStudioSnapshot: null }) });
+  initial: () => ({ version: DURABLE_VERSION, canvasId: '', sessionId: '', active: null, turns: [], loadedSkills: [], plan: emptyPlan(), studioDigestText: '', lastStudioSnapshot: null, lastStudioSnapshotRevision: null }) });
 export const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high'];
 // The root agent's reasoning level; budgets follow pi-ai's DEFAULT_THINKING_BUDGETS.
 export function agentThinkingLevel(env = process.env) {
@@ -216,16 +216,24 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     if (typeof readCanvas !== 'function') return '';
     try {
       const canvas = await readCanvas(entry, signal, turnId);
-      if (!canvas || typeof canvas !== 'object') return '';
+      if (!canvas || typeof canvas !== 'object') throw new Error('canvas_snapshot_unavailable');
       const digest = buildStudioDigest(canvas, { selectedNodeIds });
       let diffText = '';
       await update(entry, (doc) => {
-        if (computeDiff) diffText = describeChangesSince(doc.lastStudioSnapshot, digest.snapshot);
+        // Older hosts could persist the operation wrapper as an empty snapshot.
+        // Only compare against a baseline tied to a successful document read.
+        if (computeDiff && Number.isSafeInteger(doc.lastStudioSnapshotRevision) && doc.lastStudioSnapshotRevision >= 0) {
+          diffText = describeChangesSince(doc.lastStudioSnapshot, digest.snapshot);
+        }
         doc.studioDigestText = digest.text;
         doc.lastStudioSnapshot = digest.snapshot;
+        doc.lastStudioSnapshotRevision = digest.stats.revision;
       });
       return diffText;
     } catch {
+      // Do not present the previous turn's digest as current after a failed read.
+      // Preserve the last successful snapshot so recovery compares real states.
+      await update(entry, (doc) => { doc.studioDigestText = ''; });
       return '';
     }
   }
@@ -295,7 +303,7 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     // Repeating reset after a crash before acknowledgement is safe: no model
     // request can pass until the same Go-owned scope has been acknowledged.
     await entry.root.reset('用户开始一个独立任务。只使用当前明确选择的技能和本轮提供的资源。', CTX);
-    await update(entry, (doc) => { doc.plan = emptyPlan(); doc.lastStudioSnapshot = null; doc.studioDigestText = ''; });
+    await update(entry, (doc) => { doc.plan = emptyPlan(); doc.lastStudioSnapshot = null; doc.lastStudioSnapshotRevision = null; doc.studioDigestText = ''; });
     entry.turn.plan = null;
     return skills.changeContext(entry,{action:'ack_reset',scopeId:context.scopeId,expectedRevision:context.revision},'');
   }

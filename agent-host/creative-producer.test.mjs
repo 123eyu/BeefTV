@@ -5,8 +5,11 @@ import path from 'node:path';
 import { createServer } from 'node:http';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { createModels } from '@earendil-works/pi-ai/models';
+import { defineDoc } from '@earendil-works/pi-durable';
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import { createDurableSessionStore } from './durable-session-owner.mjs';
 import { createDurableTextProjection } from './durable-stream-text.mjs';
+import { fixtureSkillContext } from './test-support/skill-context-fixture.mjs';
 
 const msgText = (message) => typeof message.content === 'string'
   ? message.content
@@ -14,7 +17,7 @@ const msgText = (message) => typeof message.content === 'string'
 const userText = (payload) => payload.messages.filter((m) => m.role === 'user').map(msgText).join('\n');
 const systemText = (payload) => payload.messages.filter((m) => m.role === 'system' || m.role === 'developer').map(msgText).join('\n');
 
-async function createProducerFixture({ canvasState, script = () => null, buildTools = () => [], maxPlanContinuations = 4 } = {}) {
+async function createProducerFixture({ canvasState, script = () => null, buildTools = () => [], maxPlanContinuations = 4, withSkills = false } = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'beeftv-producer-'));
   const payloads = [];
   const server = createServer(async (req, res) => {
@@ -56,6 +59,7 @@ async function createProducerFixture({ canvasState, script = () => null, buildTo
     buildTools,
     authorizeTurn: async () => ({ open: true, canvasId: 'canvas-1', permissionMode: 'canvas' }),
     readCanvas: canvasState ? async () => canvasState.current : null,
+    skills: withSkills ? { ...fixtureSkillContext(directory), readCatalog: async () => ({ items: [] }) } : null,
     maxPlanContinuations,
     settings: { retry: { maxRetries: 0 } },
   });
@@ -72,6 +76,43 @@ async function createProducerFixture({ canvasState, script = () => null, buildTo
 }
 
 describe('creative producer durable host', () => {
+  test('rebuilds legacy unverified baselines and clears snapshot revision on skill task reset', async () => {
+    const canvasState = { current: { revision: 8, nodes: [{ id: 'old-node', type: 'text', title: '已有角色', metadata: { content: '原内容' } }], connections: [] } };
+    const fixture = await createProducerFixture({ canvasState, withSkills: true });
+    try {
+      const entry = await fixture.store.ensureSession('canvas-1');
+      const state = defineDoc({ kind: 'beeftv.host', version: 1, scope: 'session', initial: () => ({}) });
+      expect((await entry.harness.snapshot(state, BACKGROUND_CONTEXT)).lastStudioSnapshotRevision).toBeNull();
+      await entry.harness.commit(async tx => {
+        const doc = await tx.doc(state);
+        doc.lastStudioSnapshot = {};
+        doc.studioDigestText = '[制作现场｜画布版本 ?｜本轮请求前的实际状态]\n概况：画布是空的。';
+        delete doc.lastStudioSnapshotRevision;
+      }, BACKGROUND_CONTEXT);
+      const first = await fixture.store.submit(entry, { turnId: 'legacy-1', requestId: 'legacy-1', content: '看当前画布', userText: '看当前画布', revisionBefore: 8 });
+      await fixture.store.wait(entry, first);
+      expect(systemText(fixture.payloads[0])).toContain('文本 1');
+      expect(systemText(fixture.payloads[0])).not.toContain('画布是空的');
+      expect(userText(fixture.payloads[0])).not.toContain('<canvas_changes>');
+      canvasState.current.revision++;
+      canvasState.current.nodes[0].metadata.content = '用户修改后的内容';
+      const next = await fixture.store.submit(entry, { turnId: 'legacy-2', requestId: 'legacy-2', content: '再次查看', userText: '再次查看', revisionBefore: 9 });
+      await fixture.store.wait(entry, next);
+      expect(userText(fixture.payloads[1])).toContain('用户修改了「已有角色」');
+      expect((await entry.harness.snapshot(state, BACKGROUND_CONTEXT)).lastStudioSnapshotRevision).toBe(9);
+      const context = await fixture.store.skillContext(entry);
+      await fixture.store.changeSkillContext(entry, { action: 'new_scope', pins: [], expectedRevision: context.revision, requestId: 'new-skill-task' });
+      const reset = await entry.harness.snapshot(state, BACKGROUND_CONTEXT);
+      expect(reset.lastStudioSnapshot).toBeNull();
+      expect(reset.lastStudioSnapshotRevision).toBeNull();
+      expect(reset.studioDigestText).toBe('');
+      canvasState.current.revision++;
+      canvasState.current.nodes[0].metadata.content = '新任务内容';
+      const fresh = await fixture.store.submit(entry, { turnId: 'fresh-task', requestId: 'fresh-task', content: '独立新任务', userText: '独立新任务', revisionBefore: 10 });
+      await fixture.store.wait(entry, fresh);
+      expect(userText(fixture.payloads[2])).not.toContain('<canvas_changes>');
+    } finally { await fixture.close(); }
+  });
   test('official watch events restore a one-chunk reply and publish a committed plan before the next model finishes', async () => {
     let releaseReply;
     const planSeen = new Promise(resolve => { releaseReply = resolve; });
