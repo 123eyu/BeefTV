@@ -465,6 +465,7 @@ jobs:
         run: |
           python3 scripts/publish-desktop-r2.py stage \
             --manifest dist/desktop-update.json --assets-dir dist --with-installers \
+            --verification-receipt "$RUNNER_TEMP/cos-public-verification.json" \
             --verifier "$RUNNER_TEMP/update-release" --provider cos \
             --endpoint-url "$RELEASE_ENDPOINT" --region "$RELEASE_REGION" \
             --bucket "$RELEASE_BUCKET" --public-base "$UPDATER_DOWNLOAD_BASE"
@@ -479,6 +480,7 @@ jobs:
         run: |
           python3 scripts/publish-desktop-r2.py activate \
             --manifest dist/desktop-update.json --assets-dir dist --with-installers \
+            --verification-receipt "$RUNNER_TEMP/cos-public-verification.json" \
             --verifier "$RUNNER_TEMP/update-release" --provider cos \
             --endpoint-url "$RELEASE_ENDPOINT" --region "$RELEASE_REGION" \
             --bucket "$RELEASE_BUCKET" --public-base "$UPDATER_DOWNLOAD_BASE"

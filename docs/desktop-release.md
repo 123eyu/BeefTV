@@ -255,6 +255,10 @@ COS 发布使用以下对象，公开下载文件与内部发布对象各有固�
 
 `stage` 只准备版本对象；`activate` 确认 GitHub 最新正式版本及公开清单与本次签名清单一致、全部公开对象可校验后，备份上一份清单，再执行上述条件更新。公网检查使用该版本客户端的请求标识。重复执行已成功的同一版本是幂等的，已有对象内容不同或试图降级会失败。历史 R2 操作必须显式指定 `--provider r2 --region auto --bucket beeftv-releases --endpoint-url <原账户端点> --public-base https://updates.beefapi.com/beeftv`。
 
+正式工作流的 `stage` 和 `activate` 使用相同的 `--verification-receipt "$RUNNER_TEMP/cos-public-verification.json"`。`stage` 仍执行存储端完整读回，以及公网完整大小/SHA256校验；全部成功后才保存本地回执。回执绑定签名信封、存储配置和 GitHub 仓库/run/attempt/job，不上传为产物，也不跨作业或跨次发布复用。
+
+`activate` 先用随机错误 ETag 确认该对象拒绝请求并返回 412，再发送带原强 ETag 的 `If-Match` 和前 1024 字节 Range 请求，核对 206、ETag、Content-Range、大小及该片段哈希。文件变化、缺失、条件请求失效、不支持所需 Range 或返回不同片段都会阻止激活。没有回执或完整校验时缺少强 ETag 的文件仍执行完整校验；存在但不匹配当前发布或作业的回执直接报错。清单始终完整读取、验签和核对，锁及 claim 协议不变；`resume` 不使用回执快捷检查。这样正常 CI 的大包传输从三轮降为两轮，激活仅增加每包 1 KiB 和一次拒绝探测。
+
 #### 遗留锁与未完成 claim 的人工恢复
 
 锁不会自动过期，也不能靠删除 claim 重试另一份清单。`resume` 只处理未解锁的同一次故障写入，执行前必须取得以下现场证据：
