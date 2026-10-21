@@ -83,7 +83,7 @@ class PublicationTests(unittest.TestCase):
                     etag = self.headers['If-Match']
                 if fixture.etag_mode == "weak":
                     etag = "W/" + etag
-                if self.headers.get("If-Match") not in (None, etag):
+                if self.headers.get("If-Match") not in (None, etag) and fixture.range_mode != "ignore-if-match":
                     self.send_error(412)
                     return
                 status = 200
@@ -305,6 +305,39 @@ class PublicationTests(unittest.TestCase):
                 redirect_stderr(io.StringIO()):
             self.assertEqual(release.main(), 1)
         storage.assert_not_called()
+
+    def test_r2_cli_rehashes_full_objects_even_with_a_receipt_and_cache_ignoring_if_match(self):
+        manifest = self.manifest(copies=512)
+        receipt = self.root / 'receipt.json'
+        owner = dict(GITHUB_REPOSITORY='glanderness/BeefTV', GITHUB_RUN_ID='123',
+                     GITHUB_RUN_ATTEMPT='1', GITHUB_JOB='publish')
+        argv = ['publish', 'stage', '--manifest', str(manifest), '--verifier', '/tmp/update-release',
+                '--endpoint-url', 'https://' + 'a' * 32 + '.r2.cloudflarestorage.com',
+                '--verification-receipt', str(receipt)]
+        http, publisher = release.PublicHTTP, release.Publisher
+        self.store.check_conditions = Mock()
+        self.range_mode = 'ignore-if-match'
+        def make_publisher(*args, **kwargs):
+            return publisher(*args, **kwargs, release_check=lambda *a: None)
+        with patch.dict(os.environ, owner), patch.object(release, 'storage_config', return_value=self.store), \
+                patch.object(release, 'PublicHTTP', side_effect=lambda **kw: http(self.publisher.public.opener, **kw)), \
+                patch.object(release, 'Publisher', side_effect=make_publisher), patch('builtins.print'):
+            with patch('sys.argv', argv):
+                self.assertEqual(release.main(), 0)
+            self.assertEqual(json.loads(receipt.read_text())['objects'], {})
+            self.transfers.clear()
+            argv[1] = 'activate'
+            with patch('sys.argv', argv):
+                self.assertEqual(release.main(), 0)
+            packages = [x for x in self.transfers if not x[0].endswith('.json')]
+            self.assertEqual(len(packages), 4)
+            self.assertTrue(all(status == 200 and size > 1024 for _, status, size in packages))
+            key = next(k for k in self.store.objects if k.endswith('.zip'))
+            original = self.store.objects[key]
+            self.store.objects[key] = original[:1024] + b'!' * (len(original) - 1024)
+            with patch('sys.argv', argv), redirect_stderr(io.StringIO()):
+                self.assertEqual(release.main(), 1)
+            self.assertEqual(self.store.objects[release.LATEST], manifest.read_bytes())
 
     def test_receipt_cannot_activate_changed_asset_or_suppressed_range(self):
         for mode in ['changed', 'missing', 'ignored', 'corrupt-prefix', 'truncated', 'echo']:

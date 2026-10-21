@@ -503,7 +503,10 @@ def main():
                     verified = {}
                 else:
                     verified = read_verification_receipt(args.verification_receipt, binding)
-            publisher = Publisher(store, PublicHTTP(verified=verified), args.verifier.resolve(),
+            # The R2 custom-domain cache can ignore If-Match on a cache hit.
+            # Only COS can reuse HTTP proofs; R2 always rehashes full responses.
+            public = PublicHTTP(verified=verified if args.provider == "cos" else None)
+            publisher = Publisher(store, public, args.verifier.resolve(),
                                   R2_PUBLIC_BASE if is_bridge else args.public_base,
                                   feed_public_base=args.public_base)
             assets_dir = args.assets_dir or args.manifest.parent
