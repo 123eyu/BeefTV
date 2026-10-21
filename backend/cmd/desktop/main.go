@@ -36,6 +36,11 @@ func main() {
 		log.Fatal(err)
 	}
 	app := newDesktopApp(dataDir)
+	for _, arg := range os.Args[1:] {
+		if strings.HasPrefix(arg, "beeftv:") {
+			app.queueSkillLink(arg)
+		}
+	}
 	if err := configureDesktopTemp(dataDir); err != nil {
 		log.Fatal(err)
 	}
@@ -60,6 +65,7 @@ func desktopAppOptions(app *DesktopApp) *options.App {
 		Height:           960,
 		BackgroundColour: &options.RGBA{R: 13, G: 15, B: 18, A: 255},
 		Mac: &mac.Options{
+			OnUrlOpen: app.queueSkillLink,
 			// WKWebView disables element fullscreen by default, including the
 			// video player's fullscreen control.
 			Preferences: &mac.Preferences{FullscreenEnabled: mac.Enabled},
@@ -79,7 +85,17 @@ func desktopAppOptions(app *DesktopApp) *options.App {
 			Assets:  assets,
 			Handler: desktopAssetHandler{app: app},
 		},
-		OnStartup:  app.startup,
+		OnStartup: app.startup,
+		SingleInstanceLock: &options.SingleInstanceLock{
+			UniqueId: skillInstanceID(app.dataDir),
+			OnSecondInstanceLaunch: func(data options.SecondInstanceData) {
+				for _, arg := range data.Args {
+					if strings.HasPrefix(arg, "beeftv:") {
+						app.queueSkillLink(arg)
+					}
+				}
+			},
+		},
 		OnShutdown: app.shutdown,
 		Bind:       []interface{}{app},
 	}

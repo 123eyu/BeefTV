@@ -37,6 +37,7 @@ type DesktopApp struct {
 	storageRoot             string
 	dataDir                 string
 	wailsCtx                context.Context
+	pendingSkillLink        string
 	chooseSavePath          func(ctx context.Context, fileName string) (string, error)
 	copyOwnedMedia          func(resourceID, destPath string) error
 }

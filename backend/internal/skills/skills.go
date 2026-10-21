@@ -158,7 +158,17 @@ func (s *Service) AddedSkills(userID string) ([]SkillItem, error) {
 	if err != nil {
 		return nil, err
 	}
-	return s.skillItems(userID, rows, false)
+	items, err := s.skillItems(userID, rows, false)
+	if err != nil {
+		return nil, err
+	}
+	active := make([]SkillItem, 0, len(items))
+	for _, item := range items {
+		if item.IsAdded {
+			active = append(active, item)
+		}
+	}
+	return active, nil
 }
 
 func (s *Service) SkillDetail(userID string, id string) (*SkillItem, error) {
@@ -236,12 +246,6 @@ func (s *Service) SetSkillAdded(userID string, id string, added bool) (*SkillIte
 	skill, err := s.visibleSkill(userID, id)
 	if err != nil {
 		return nil, err
-	}
-	if skill.OwnerID == userID {
-		if !added {
-			return nil, kernel.BadAuthRequest("自己创建的技能始终保留在我的技能中")
-		}
-		return s.SkillDetail(userID, id)
 	}
 	state, err := s.skillState(userID, id)
 	if err != nil {
@@ -333,7 +337,7 @@ func (s *Service) skillItems(userID string, skills []model.Skill, includeInstruc
 			Source: skill.Source, Tag: skill.Tag, SortWeight: skill.SortWeight, IsPrivate: skill.IsPrivate,
 			LikeCount: metric.LikeCount, IsLike: state.Liked, OwnerUID: skill.OwnerID,
 			EffectiveUser: SkillEffectiveUser{Name: ownerName, AvatarURL: ownerAvatarURL, UID: skill.OwnerID}, ShowcaseMedia: showcaseMedia,
-			AddedCount: metric.AddedCount, ExtraInfo: skill.ExtraInfo, IsAdded: state.Added || skill.OwnerID == userID, IsOwner: skill.OwnerID == userID,
+			AddedCount: metric.AddedCount, ExtraInfo: skill.ExtraInfo, IsAdded: state.Added, IsOwner: skill.OwnerID == userID,
 			MarketRelease: release,
 		})
 	}

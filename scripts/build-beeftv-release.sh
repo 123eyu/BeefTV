@@ -205,6 +205,7 @@ fi
 APP_PLIST="$APP_BUNDLE/Contents/Info.plist"
 if [[ -f "$APP_PLIST" ]] && command -v plutil >/dev/null 2>&1; then
   MACOS_VERSION="${VERSION_VALUE#v}"
+  MACOS_VERSION="${MACOS_VERSION%%-*}"
   plutil -replace CFBundleShortVersionString -string "$MACOS_VERSION" "$APP_PLIST"
   plutil -replace CFBundleVersion -string "$MACOS_VERSION" "$APP_PLIST"
 fi

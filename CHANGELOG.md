@@ -4,6 +4,9 @@ All notable public changes to BeefTV are documented in this file.
 
 ## Unreleased
 
+- 桌面技能入口支持浏览和安装固定版本、查看文件、启停、历史版本恢复和私人改写，保留原版与辅助文件。
+- 作者可在客户端继续助手准备的投稿，连接投稿账号，分别确认私有上传和公开送审；错误草稿可修改后重新准备，上传中断后核对原包继续处理。
+- 官网技能链接先打开指定版本详情，由用户确认安装；详情显示实际审核摘要，使用前明确提示尚未满足的理解能力，文字技能无需配置多模态模型。
 - Built-in BeefAPI can be connected from the desktop app without pasting a key.
 - Prepared the first audited public source snapshot.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.

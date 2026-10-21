@@ -1,4 +1,5 @@
 import { createRoot } from "react-dom/client";
+import { MemoryRouter } from "react-router";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 import { App } from "antd";
@@ -41,4 +42,4 @@ function Harness() {
         {externalOpen ? <AgentConnectPanel kind="codex" onClose={() => setExternalOpen(false)} onConfigured={() => {}} verifiedClientIds={[]} onBusyChange={() => {}} /> : null}
     </App>;
 }
-createRoot(document.getElementById("root")!).render(<QueryClientProvider client={appQueryClient}><Harness /></QueryClientProvider>);
+createRoot(document.getElementById("root")!).render(<MemoryRouter><QueryClientProvider client={appQueryClient}><Harness /></QueryClientProvider></MemoryRouter>);

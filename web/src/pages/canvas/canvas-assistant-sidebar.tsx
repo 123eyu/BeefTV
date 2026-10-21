@@ -11,6 +11,8 @@ import type { AssistantAttachment, AssistantGenerationProposal, AssistantSkillSe
 import type { CanvasNodeData } from "@/types/canvas";
 import { listAddedSkills, type Skill } from "@/services/api/skills";
 import { SkillInstallModal } from "@/pages/skills/skill-install-modal";
+import { AssistantPublicationEntry } from "@/pages/skills/assistant-publication-entry";
+import { Link } from "react-router";
 import { captureUserScope, userScopeMatches } from "@/lib/user-scope-guard";
 import { getActiveUserScope, getActiveUserScopeEpoch, subscribeUserScope } from "@/lib/user-scope";
 import { attachmentFromCanvasReference, attachmentRangeError, readAssistantInputDraft, saveAssistantInputDraft, uploadAssistantAttachment, type AssistantInputDraft } from "@/services/assistant-attachments";
@@ -196,6 +198,7 @@ export function CanvasAssistantSidebar(props: Props) {
         <div className="canvas-assistant-panel" data-canvas-no-zoom>
             <header className="canvas-assistant-header">
                 <div className="canvas-assistant-heading"><h2>BeefTV Agent</h2></div>
+                <Link to="/skills" className="canvas-assistant-meta" aria-label="打开技能市场和我的投稿">技能</Link>
                 <Tooltip title="新对话">
                     <Button type="text" size="small" aria-label="新对话" disabled={assistant.streaming || assistant.sessionBusy} icon={<MessageSquarePlus className="size-4" />} onClick={() => void assistant.startNewSession()} />
                 </Tooltip>
@@ -253,6 +256,7 @@ export function CanvasAssistantSidebar(props: Props) {
                 ))}
 
                 <CanvasAssistantPlan plan={assistant.plan} />
+                <AssistantPublicationEntry canvasId={assistant.canvasId} turnCount={assistant.turns.length} running={assistant.streaming} />
                 {props.continuation?.notice ? <div className="canvas-assistant-card" aria-label="自动继续状态">
                     <span role="status">{props.continuation.notice}</span>
                     <div className="canvas-assistant-card-actions">
