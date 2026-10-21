@@ -25,7 +25,7 @@ function fixture() {
     priorReceiptSHA256: hash(priorReceiptBytes),
     knownLimitations: { carriedFromVersion: 'v2.0.0', inheritedFailedCheckIds: ['native_video', 'native_audio', 'media_film_review'], evidence: ['prior-receipt'] },
     review: { ...bound(), result: 'approved', independent: true, reviewer: 'independent-reviewer' },
-    upgrade: { ...bound(), preservedData: true },
+    upgrade: { ...bound(), status: 'pending_release_workflow', preservedData: null, requiredBeforePublish: true },
     verification: Object.fromEntries(['localReleaseGate', 'workflowAndUpscale', 'diagnostics', 'skills', 'publisher', 'ci'].map(id => [id, { ...bound(), status: 'passed' }])),
     packages: { platforms: ['darwin-arm64', 'darwin-amd64', 'windows-amd64', 'linux-amd64'], status: 'pending_release_workflow', archives: null, workflowEvidence: ['.github/workflows/release-desktop.yml'], windowsReleasedUpgradeAndRollbackBeforeUpload: true, finalArchiveSmokeBeforeUpload: true, linuxNativeWindowBeforeUpload: true, signedManifestBeforePublish: true, publicReadbackAfterPublish: true },
   };
@@ -45,6 +45,8 @@ for (const [name, mutate] of [
   ['known failures cannot disappear', r => { r.knownLimitations.inheritedFailedCheckIds.pop(); }],
   ['self review cannot approve', r => { r.review.independent = false; }],
   ['CI remains mandatory', r => { r.verification.ci.status = 'pending'; }],
+  ['native data preservation cannot pass before the release build', r => { r.upgrade.preservedData = true; }],
+  ['native data preservation remains mandatory', r => { r.upgrade.requiredBeforePublish = false; }],
   ['Windows rollback remains mandatory', r => { r.packages.windowsReleasedUpgradeAndRollbackBeforeUpload = false; }],
   ['four platforms remain mandatory', r => { r.packages.platforms.pop(); }],
   ['cannot claim unbuilt packages', r => { r.packages.archives = {}; }],

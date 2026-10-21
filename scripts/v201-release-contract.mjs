@@ -43,7 +43,10 @@ export function validateV201Release(receipt, sourceDigest, proofs = {}) {
     || !evidence(receipt.knownLimitations.evidence)) fail('retain original receipt and known media failures');
   if (receipt.review?.result !== 'approved' || receipt.review.independent !== true || !receipt.review.reviewer
     || !bound(receipt.review) || proofs.reviewedSourceDigest !== sourceDigest) fail('independent review must cover current source');
-  if (receipt.upgrade?.preservedData !== true || !bound(receipt.upgrade)) fail('current-source data preservation required');
+  // Native installation runs only on disposable CI hosts, after preflight.
+  // Require that execution without claiming its future result as a pass.
+  if (receipt.upgrade?.status !== 'pending_release_workflow' || receipt.upgrade.preservedData !== null
+    || receipt.upgrade.requiredBeforePublish !== true || !bound(receipt.upgrade)) fail('native data preservation must remain mandatory and pending');
   for (const id of ['localReleaseGate', 'workflowAndUpscale', 'diagnostics', 'skills', 'publisher', 'ci']) {
     if (receipt.verification?.[id]?.status !== 'passed' || !bound(receipt.verification[id])) fail(`missing current check: ${id}`);
   }
