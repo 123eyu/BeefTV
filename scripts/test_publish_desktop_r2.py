@@ -57,6 +57,7 @@ class PublicationTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
         self.store = FakeS3()
+        self.legacy_store = FakeS3()
         store = self.store
         self.public_requests = []
         requests = self.public_requests
@@ -72,7 +73,8 @@ class PublicationTests(unittest.TestCase):
                 if not re.fullmatch(r"BeefTV-Desktop-Updater/v\d+\.\d+\.\d+", agent):
                     self.send_error(403)
                     return
-                content = store.objects.get(self.path.lstrip("/"))
+                origin = fixture.legacy_store if self.headers.get("X-Test-Origin") == "legacy" else store
+                content = origin.objects.get(self.path.lstrip("/"))
                 if content is None:
                     self.send_error(404)
                     return
@@ -118,7 +120,10 @@ class PublicationTests(unittest.TestCase):
 
         def opener(request, timeout):
             url = f"http://127.0.0.1:{self.server.server_port}{urlsplit(request.full_url).path}"
-            return urllib.request.urlopen(urllib.request.Request(url, headers=dict(request.header_items())), timeout=timeout)
+            headers = dict(request.header_items())
+            if urlsplit(request.full_url).hostname == "legacy.example":
+                headers["X-Test-Origin"] = "legacy"
+            return urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout)
 
         # Cryptography belongs to the existing Go verifier. Exercise invocation
         # and its failure result here, without replacing production verification.
@@ -127,6 +132,82 @@ class PublicationTests(unittest.TestCase):
         self.addCleanup(self.verifier.stop)
         self.publisher = release.Publisher(self.store, release.PublicHTTP(opener), "/tmp/update-release",
                                            "https://updates.beefapi.com/beeftv", lambda *args: None)
+
+    def bridge(self):
+        return release.Publisher(self.legacy_store, self.publisher.public, "/tmp/update-release",
+                                 release.R2_PUBLIC_BASE, lambda *args: None,
+                                 feed_public_base="https://legacy.example/beeftv")
+
+    def test_bridge_requires_the_exact_already_active_r2_feed(self):
+        old = self.manifest()
+        self.publisher.stage(old, self.root)
+        self.publisher.activate(old)
+        newer = self.manifest("v1.5.8")
+        self.publisher.stage(newer, self.root)
+        with self.assertRaises(release.PublishError):
+            self.bridge().activate(newer, require_active_source=True)
+        self.assertEqual(self.legacy_store.writes, [])
+        self.assertEqual(self.store.objects[release.LATEST], old.read_bytes())
+
+    def test_bridge_updates_only_legacy_feed_and_backup_with_original_signed_bytes(self):
+        old = self.manifest()
+        old_bytes = old.read_bytes()
+        self.legacy_store.objects[release.LATEST] = old_bytes
+        newer = self.manifest("v1.5.8")
+        self.publisher.stage(newer, self.root)
+        self.publisher.activate(newer)
+        bridge = self.bridge()
+        self.assertEqual(bridge.activate(newer, require_active_source=True), "v1.5.8")
+        self.assertEqual(self.legacy_store.objects[release.LATEST], newer.read_bytes())
+        self.assertEqual(len(self.legacy_store.writes), 2)
+        self.assertTrue(all(key == release.LATEST or key.startswith("beeftv/latest-backups/")
+                            for key, _ in self.legacy_store.writes))
+        self.assertIn(old_bytes, self.legacy_store.objects.values())
+        self.assertFalse(any(key.endswith((".zip", ".exe", ".dmg", ".deb"))
+                             for key in self.legacy_store.objects))
+        before = list(self.legacy_store.writes)
+        bridge.activate(newer, require_active_source=True)
+        self.assertEqual(self.legacy_store.writes, before)
+
+    def test_bridge_rejects_corrupt_r2_package_before_any_cos_write(self):
+        manifest = self.manifest()
+        self.publisher.stage(manifest, self.root)
+        self.publisher.activate(manifest)
+        key = next(key for key in self.store.objects if key.endswith(".zip"))
+        self.store.objects[key] = b"changed"
+        with self.assertRaises(release.PublishError):
+            self.bridge().activate(manifest, require_active_source=True)
+        self.assertEqual(self.legacy_store.writes, [])
+
+    def test_bridge_failure_does_not_rollback_canonical_r2_feed(self):
+        manifest = self.manifest()
+        self.publisher.stage(manifest, self.root)
+        self.publisher.activate(manifest)
+        def competing_writer(key):
+            if key == release.LATEST:
+                self.legacy_store.objects[key] = b"concurrent feed"
+        self.legacy_store.before_put = competing_writer
+        with self.assertRaisesRegex(release.PublishError, "changed concurrently"):
+            self.bridge().activate(manifest, require_active_source=True)
+        self.assertEqual(self.store.objects[release.LATEST], manifest.read_bytes())
+
+    def test_bridge_resume_requires_active_r2_and_checks_legacy_feed_after_recovery(self):
+        manifest = self.manifest()
+        self.publisher.stage(manifest, self.root)
+        bridge = self.bridge()
+        bridge.store.provider = "cos"
+        bridge.store.resume = Mock(side_effect=lambda key, source, *_:
+                                   bridge.store.objects.__setitem__(key, source.read_bytes()))
+        confirmations = dict(confirm_no_inflight=True, confirm_writers_frozen=True,
+                             confirm_no_unlock_attempt=True, require_active_source=True)
+        with patch.object(release, "require_terminal_publisher"):
+            with self.assertRaises(release.PublishError):
+                bridge.resume(manifest, b"lock", b"claim", **confirmations)
+            bridge.store.resume.assert_not_called()
+            self.publisher.activate(manifest)
+            self.assertEqual(bridge.resume(manifest, b"lock", b"claim", **confirmations), "v1.5.7")
+        bridge.store.resume.assert_called_once_with(release.LATEST, manifest, b"lock", b"claim")
+        self.assertEqual(self.legacy_store.objects[release.LATEST], manifest.read_bytes())
 
     def manifest(self, version="v1.5.7", omit=None, copies=32):
         platforms = {}
@@ -552,6 +633,7 @@ class S3AdapterTests(unittest.TestCase):
             lock.write_bytes(b'{ "original": "lock" }\n')
             claim.write_bytes(b'{ "original": "claim" }\n')
             args = ["publish", "resume", "--manifest", str(manifest), "--verifier", "/tmp/update-release",
+                    "--provider", "cos",
                     "--endpoint-url", "https://cos.ap-guangzhou.myqcloud.com", "--lock-document", str(lock),
                     "--claim-document", str(claim), "--confirm-no-inflight-put", "--confirm-writers-frozen", "--confirm-no-unlock-attempt"]
             with patch.object(release.sys, "argv", args), patch.object(release, "storage_config") as factory, patch.object(release, "Publisher") as publisher, patch("builtins.print"):
@@ -561,7 +643,8 @@ class S3AdapterTests(unittest.TestCase):
                     self.assertEqual(lock_bytes, lock.read_bytes())
                     self.assertEqual(claim_bytes, claim.read_bytes())
                     self.assertEqual(confirmations, dict(confirm_no_inflight=True, confirm_writers_frozen=True,
-                                                         confirm_no_unlock_attempt=True, installer_dir=None))
+                                                         confirm_no_unlock_attempt=True, installer_dir=None,
+                                                         require_active_source=False))
                     return "v1.5.7"
                 publisher.return_value.resume.side_effect = resume
                 self.assertEqual(release.main(), 0)
@@ -570,6 +653,7 @@ class S3AdapterTests(unittest.TestCase):
 
     def test_cli_resume_requires_original_documents_and_confirmation_before_cloud_probe(self):
         base = ["publish", "resume", "--manifest", "/tmp/not-read", "--verifier", "/tmp/not-called",
+                "--provider", "cos",
                 "--endpoint-url", "https://cos.ap-guangzhou.myqcloud.com"]
         documents = ["--lock-document", "/tmp/lock", "--claim-document", "/tmp/claim"]
         confirmations = ["--confirm-no-inflight-put", "--confirm-writers-frozen", "--confirm-no-unlock-attempt"]
@@ -595,6 +679,51 @@ class S3AdapterTests(unittest.TestCase):
         store = release.storage_config("cos", endpoint, region, bucket, public)
         self.assertEqual(store.http.host, f"{bucket}.cos.{region}.myqcloud.com")
         self.assertEqual(store.http.region, region)
+
+    def test_bridge_cli_rejects_wrong_provider_installers_and_receipts_before_cloud_probe(self):
+        base = ["publish", "bridge-cos", "--manifest", "/tmp/not-read", "--verifier", "/tmp/not-called"]
+        cos = ["--provider", "cos", "--endpoint-url", "https://cos.ap-guangzhou.myqcloud.com"]
+        invalid = [
+            ["--endpoint-url", "https://" + "a" * 32 + ".r2.cloudflarestorage.com"],
+            cos + ["--with-installers"],
+            cos + ["--verification-receipt", "/tmp/not-read"],
+        ]
+        for flags in invalid:
+            with self.subTest(flags=flags), patch.object(release.sys, "argv", base + flags), \
+                    patch.object(release, "storage_config") as factory, redirect_stderr(io.StringIO()):
+                self.assertEqual(release.main(), 1)
+                factory.return_value.check_conditions.assert_not_called()
+
+    def test_bridge_cli_uses_r2_assets_and_original_cos_feed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = Path(directory) / "manifest"
+            manifest.write_bytes(b"original signed envelope")
+            args = ["publish", "bridge-cos", "--manifest", str(manifest), "--verifier", "/tmp/update-release",
+                    "--provider", "cos", "--endpoint-url", "https://cos.ap-guangzhou.myqcloud.com"]
+            with patch.object(release.sys, "argv", args), patch.object(release, "storage_config"), \
+                    patch.object(release, "Publisher") as publisher, patch("builtins.print"):
+                publisher.return_value.activate.return_value = "v1.5.7"
+                self.assertEqual(release.main(), 0)
+                self.assertEqual(publisher.call_args.args[3], release.R2_PUBLIC_BASE)
+                self.assertEqual(publisher.call_args.kwargs['feed_public_base'], release.COS_PUBLIC_BASE)
+                self.assertEqual(publisher.return_value.activate.call_args.kwargs, {'require_active_source': True})
+
+    def test_bridge_resume_cli_preserves_recovery_documents_and_requires_r2_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manifest, lock, claim = (Path(directory) / name for name in ("manifest", "lock", "claim"))
+            for path in (manifest, lock, claim):
+                path.write_bytes(path.name.encode())
+            args = ["publish", "resume-cos-bridge", "--manifest", str(manifest), "--verifier", "/tmp/update-release",
+                    "--provider", "cos", "--endpoint-url", "https://cos.ap-guangzhou.myqcloud.com",
+                    "--lock-document", str(lock), "--claim-document", str(claim),
+                    "--confirm-no-inflight-put", "--confirm-writers-frozen", "--confirm-no-unlock-attempt"]
+            with patch.object(release.sys, "argv", args), patch.object(release, "storage_config"), \
+                    patch.object(release, "Publisher") as publisher, patch("builtins.print"):
+                self.assertEqual(release.main(), 0)
+                self.assertEqual(publisher.call_args.args[3], release.R2_PUBLIC_BASE)
+                self.assertEqual(publisher.call_args.kwargs['feed_public_base'], release.COS_PUBLIC_BASE)
+                self.assertEqual(publisher.return_value.resume.call_args.args[1:], (b"lock", b"claim"))
+                self.assertTrue(publisher.return_value.resume.call_args.kwargs['require_active_source'])
 
     def test_legacy_r2_configuration_still_requires_account_endpoint_and_auto_region(self):
         store = release.storage_config("r2", "https://" + "a" * 32 + ".r2.cloudflarestorage.com",
