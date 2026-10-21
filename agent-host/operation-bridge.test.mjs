@@ -350,6 +350,39 @@ test('media discovery preserves descriptions, required versions and modes in mod
   }
 });
 
+test('media review exposes and forwards the selected resource with its owned target', async () => {
+  const descriptor = descriptors.find(op => op.id === 'media.review');
+  const requests = [];
+  const server = createServer(async (req, res) => {
+    res.setHeader('content-type', 'application/json');
+    if (req.url === '/ops') {
+      res.end(JSON.stringify({ code: 0, data: { ops: [descriptor] } }));
+      return;
+    }
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    requests.push({ path: req.url, body: JSON.parse(raw) });
+    res.end(JSON.stringify({ code: 0, data: { result: { review: { observations: 'fixture observation' } } } }));
+  });
+  const port = await listen(server);
+  try {
+    const bridge = createOperationBridge({ opsUrl: `http://127.0.0.1:${port}`, hostToken: 'test-only', turnBudgetContext: new AsyncLocalStorage() });
+    await bridge.loadDescriptors();
+    const tool = bridge.buildTools('canvas', [], { aborted: false }, newTurnAccumulator(), 'session')[0];
+    expect(tool.name).toBe('media_review');
+    expect(tool.parameters.properties.resourceId.type).toBe('string');
+    expect(tool.parameters.required).not.toContain('resourceId');
+    expect(tool.parameters.additionalProperties).toBe(false);
+    expect(tool.replay).toBe('unsafe');
+    const params = { nodeId: 'node', resourceId: 'selected-resource', expectedVersion: 'version', startMs: 0, endMs: 1000, question: '观察片段' };
+    await tool.execute('review-call', params);
+    expect(requests).toEqual([{ path: '/ops/media.review', body: { opId: '', params: { ...params, canvasId: 'canvas' } } }]);
+  } finally {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
 const EDGE_CREATE_PARAMS = {
   type: 'object',
   properties: { canvasId: { type: 'string' }, fromNodeId: { type: 'string' }, toNodeId: { type: 'string' }, expectedRevision: { type: 'integer' } },

@@ -1865,6 +1865,10 @@
         "assetId": {
           "type": "string"
         },
+        "resourceId": {
+          "type": "string",
+          "description": "目标关联多个资源时，指定其中一个 resourceId；不能读取未关联资源。"
+        },
         "expectedVersion": {
           "type": "string",
           "minLength": 1
