@@ -157,7 +157,7 @@ func (r *Repository) UserStorageUsage(userID string) (UserStorageUsage, error) {
 			(SELECT COUNT(*) FROM canvas_projects WHERE user_id = ?) AS canvas_count,
 			%s AS canvas_bytes,
 			(SELECT COUNT(*) FROM tasks WHERE user_id = ?) AS task_count,
-			(SELECT COALESCE(SUM(length(CAST(COALESCE(prompt, '') AS BLOB)) + length(CAST(COALESCE(input_json, '') AS BLOB)) + length(CAST(COALESCE(result_json, '') AS BLOB)) + length(CAST(COALESCE(text_draft, '') AS BLOB)) + length(CAST(COALESCE(error, '') AS BLOB))), 0) FROM tasks WHERE user_id = ?)
+			(SELECT COALESCE(SUM(length(CAST(COALESCE(prompt, '') AS BLOB)) + length(CAST(COALESCE(input_json, '') AS BLOB)) + length(CAST(COALESCE(workflow_source_cipher, '') AS BLOB)) + length(CAST(COALESCE(result_json, '') AS BLOB)) + length(CAST(COALESCE(text_draft, '') AS BLOB)) + length(CAST(COALESCE(error, '') AS BLOB))), 0) FROM tasks WHERE user_id = ?)
 			+ (SELECT COALESCE(SUM(length(CAST(COALESCE(message, '') AS BLOB)) + length(CAST(COALESCE(payload, '') AS BLOB))), 0) FROM task_logs WHERE user_id = ?)
 			+ (SELECT COALESCE(SUM(length(CAST(COALESCE(url, '') AS BLOB)) + length(CAST(COALESCE(payload, '') AS BLOB))), 0) FROM results WHERE user_id = ?)
 			+ (SELECT COALESCE(SUM(byte_count), 0) FROM task_text_delta WHERE user_id = ?)
@@ -433,7 +433,7 @@ func (r *Repository) SaveTaskCompletion(task *model.Task, expected model.TaskSta
 			Where("id = ? AND status = ?", task.ID, expected).
 			// Completion owns the result, not the worker's routing, lease or
 			// cancellation snapshot, which may have changed during execution.
-			Select("status", "stage", "progress", "result_json", "input_json", "text_draft", "error", "failure_diagnostics", "completed_at", "updated_at").Updates(task)
+			Select("status", "stage", "progress", "result_json", "input_json", "workflow_source_cipher", "text_draft", "error", "failure_diagnostics", "completed_at", "updated_at").Updates(task)
 		if updated.Error != nil {
 			return updated.Error
 		}
@@ -870,6 +870,15 @@ func (r *Repository) ClaimFailedResourceUpload(userID string, id string) (bool, 
 
 func (r *Repository) DeleteResource(userID string, id string) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		if tx.Migrator().HasTable(&model.CanvasWorkflowResource{}) {
+			var count int64
+			if err := tx.Model(&model.CanvasWorkflowResource{}).Where("user_id = ? AND resource_id = ?", userID, id).Count(&count).Error; err != nil {
+				return err
+			}
+			if count > 0 {
+				return fmt.Errorf("资源仍被工作流模板或运行记录引用")
+			}
+		}
 		var resource model.Resource
 		err := tx.Where("id = ? AND user_id = ?", id, userID).First(&resource).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {

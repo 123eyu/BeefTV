@@ -20,6 +20,7 @@ import { usePluginStore } from "@/stores/use-plugin-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import type { DirectorScene } from "@/types/director";
 import { isCanvasNodeGenerating } from "@/lib/canvas/canvas-node-task-state";
+import { cancelWorkflowRun } from "@/services/api/canvas-workflows";
 import { cancelGenerationTask } from "@/services/api/task-center";
 import { canvasTaskConfirmation } from "./canvas-task-confirmation";
 import { subscribeUserScope } from "@/lib/user-scope";
@@ -190,6 +191,8 @@ export function useCanvasNodeOperations({
         // canvas/connection coordinates remain untouched.
         const creationPosition = position || center;
         const node = createCanvasNode(type, creationPosition, metadata);
+        // Keep the processing controls below the card within the initial view.
+        if (type === CanvasNodeType.Upscale && !position) node.position.y -= 220 / Math.max(0.5, viewportScale || 1);
         if (type === CanvasNodeType.Text) {
             const nextNumber = nodesRef.current.filter((item) => item.type === CanvasNodeType.Text).length + 1;
             node.title = `文本节点 ${nextNumber}`;
@@ -204,7 +207,7 @@ export function useCanvasNodeOperations({
         commitNodes([...nodesRef.current, node]);
         selectNodes(new Set([node.id]));
         if (type === CanvasNodeType.Script) setDialogNodeId(null);
-        if (type !== CanvasNodeType.Text && type !== CanvasNodeType.Script && type !== CanvasNodeType.BatchTable && type !== CanvasNodeType.Frame && type !== CanvasNodeType.Drawing && type !== CanvasNodeType.MediaConversion) setDialogNodeId(node.id);
+        if (canOpenCanvasNodePromptPanel(node) && type !== CanvasNodeType.Text) setDialogNodeId(node.id);
     }, [commitNodes, defaultDrawingEngine, effectiveConfig.runningHub.enabled, effectiveConfig.runningHub.workflows.length, getCanvasCenter, message, nodesRef, runtimeStatuses, selectNodes, setDialogNodeId, viewportScale]);
 
     const createFolder = useCallback((position?: Position, linked?: { id: string; projectId: string; title: string; style: CanvasFolderStyle; theme: CanvasFolderTheme; createdAt: string }) => {
@@ -409,7 +412,8 @@ export function useCanvasNodeOperations({
         const removedNodes = nodesRef.current.filter((node) => removedIds.has(node.id));
         const activeBatchItems = removedNodes.flatMap((node) => node.metadata?.generationBatches?.flatMap((batch) =>
             batch.items.filter((item) => ["waiting", "submitting", "queued", "running"].includes(item.status))) || []);
-        if (!removedNodes.some((node) => isCanvasNodeGenerating(node)) && !activeBatchItems.length) {
+        const hasActiveWorkflow = removedNodes.some(node => ["queued", "running"].includes(node.metadata?.reusableWorkflow?.run?.status || "") || node.metadata?.reusableWorkflow?.intent);
+        if (!hasActiveWorkflow && !removedNodes.some((node) => isCanvasNodeGenerating(node)) && !activeBatchItems.length) {
             removeNodes(requestedIds);
             return;
         }
@@ -435,7 +439,11 @@ export function useCanvasNodeOperations({
                         batch.items.filter((item) => ["submitting", "queued", "running"].includes(item.status)).map((item) => item.taskId)) || []),
                 ].filter((id): id is string => Boolean(id)));
                 // Start cancellation before removing nodes; failures must not block deletion.
-                const cancellations = [...taskIds].map((id) => cancelGenerationTask(id));
+                const workflowRuns = new Set(currentRemovedNodes.flatMap(node => {
+                    const run = node.metadata?.reusableWorkflow?.run;
+                    return run && ["queued", "running"].includes(run.status) ? [run.id] : [];
+                }));
+                const cancellations = [...[...taskIds].map((id) => cancelGenerationTask(id)), ...[...workflowRuns].map(id => cancelWorkflowRun(id, { expectedScope }))];
                 removeNodes(requestedIds);
                 const results = await Promise.allSettled(cancellations);
                 if (isCurrent() && results.some((result) => result.status === "rejected")) {

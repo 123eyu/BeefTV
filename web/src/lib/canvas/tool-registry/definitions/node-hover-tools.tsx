@@ -79,6 +79,7 @@ export const nodeHoverToolbarTools: ToolDefinition[] = [
     },
     {
         id: "extractFrames",
+        workflow: { operationId: "video.frame", outputType: "image" },
         toolbar: "node-hover",
         category: "node-state",
         label: (ctx) => ctx.extractingVideoFrames ? "正在截取关键帧" : "截取当前帧、首帧或尾帧",
@@ -93,6 +94,7 @@ export const nodeHoverToolbarTools: ToolDefinition[] = [
     },
     {
         id: "extractAudio",
+        workflow: { operationId: "video.audio", outputType: "audio" },
         toolbar: "node-hover",
         category: "node-state",
         label: (ctx) => ctx.extractingAudio ? "正在分离音视频" : "从视频中分离音频并生成独立音频节点",
@@ -107,6 +109,7 @@ export const nodeHoverToolbarTools: ToolDefinition[] = [
     },
     {
         id: "trimRegenerate",
+        workflow: { operationId: "video.trim", outputType: "video" },
         toolbar: "node-hover",
         category: "node-state",
         label: (ctx) => ctx.trimmingVideo ? "正在剪辑视频" : "剪辑一个或多个视频片段",
@@ -121,6 +124,7 @@ export const nodeHoverToolbarTools: ToolDefinition[] = [
     },
     {
         id: "cropVideo",
+        workflow: { operationId: "video.crop", outputType: "video" },
         toolbar: "node-hover",
         category: "node-state",
         label: "裁切视频画面",
@@ -137,6 +141,7 @@ export const nodeHoverToolbarTools: ToolDefinition[] = [
     },
     {
         id: "depthCapture",
+        workflow: { operationId: "video.depth", outputType: "video" },
         toolbar: "node-hover",
         category: "node-state",
         label: "生成近白远黑的深度动作参考视频",
@@ -285,6 +290,7 @@ export const nodeHoverToolbarTools: ToolDefinition[] = [
     },
     {
         id: "subtitles",
+        workflow: { mode: "manual", reason: "字幕编辑需要人工确认，完成后可作为固定素材输入" },
         toolbar: "node-hover",
         category: "node-state",
         label: "编辑字幕",
@@ -298,6 +304,7 @@ export const nodeHoverToolbarTools: ToolDefinition[] = [
     },
     {
         id: "timeline",
+        workflow: { mode: "manual", reason: "时间线是交互编辑器，可将导出结果作为输入，自动拼接使用视频合并" },
         toolbar: "node-hover",
         category: "node-state",
         label: "时间线编辑",

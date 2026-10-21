@@ -37,6 +37,16 @@ func RunImageTask(ctx context.Context, input Input) (map[string]interface{}, err
 				return nil, err
 			}
 			outputCount = contract.FixedOutputs
+			if len(contract.Presets) > 0 {
+				prompt, err := contract.GenerationPrompt(WithSystemPrompt(input.Config, input.Prompt), input.Config.Size)
+				if err != nil {
+					return nil, err
+				}
+				input.Prompt = prompt
+				input.Config.SystemPrompt = ""
+				// Omit fixed square size: the gateway rejects it when --ar selects a non-square frame.
+				input.Config.Size = "auto"
+			}
 		}
 	}
 	if _, ok := DeclarativeProtocolAdapterForContext(ctx, input.Config.InterfaceType); ok {

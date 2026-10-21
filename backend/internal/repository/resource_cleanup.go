@@ -82,6 +82,9 @@ func (r *Repository) DeleteDetachedResources(resources []model.Resource, deletio
 			}
 		}
 		for userID, ids := range idsByUser {
+			if err := guardCanvasWorkflowResourceReferences(tx, userID, ids); err != nil {
+				return err
+			}
 			exports, err := New(tx).ProjectExportResourceReferences(userID, ids)
 			if err != nil {
 				return err

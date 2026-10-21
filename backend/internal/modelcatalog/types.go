@@ -33,6 +33,7 @@ type ImageCapabilityConfig struct {
 	ResponseFormat        ParameterSupport     `json:"responseFormat"`
 	OutputFormat          ParameterSupport     `json:"outputFormat"`
 	MaxOutputs            int                  `json:"maxOutputs"`
+	GenerationOutputs     []int                `json:"generationOutputs,omitempty"`
 	FixedOutputs          int                  `json:"fixedOutputs,omitempty"`
 }
 
@@ -263,12 +264,15 @@ type TaskConfig struct {
 
 // TaskInput is the explicit adapter target for image/video capability checks.
 type TaskInput struct {
-	Mode            string
-	Prompt          string
-	Config          TaskConfig
-	ReferenceImages []MediaRef
-	ReferenceVideos []MediaRef
-	ReferenceAudios []MediaRef
-	Mask            *MediaRef
-	Metadata        map[string]any
+	// Template inputs have no media metadata until the user supplies resources.
+	// This internal flag is never accepted from a task request.
+	DeferReferenceMetadata bool `json:"-"`
+	Mode                   string
+	Prompt                 string
+	Config                 TaskConfig
+	ReferenceImages        []MediaRef
+	ReferenceVideos        []MediaRef
+	ReferenceAudios        []MediaRef
+	Mask                   *MediaRef
+	Metadata               map[string]any
 }

@@ -7,7 +7,6 @@ export type CanvasProjectDialogIds = {
     infoNodeId: string | null;
     subtitleNodeId: string | null;
     timelineNodeId: string | null;
-    superResolveNodeId: string | null;
     previewNodeId: string | null;
     scriptEditorNodeId: string | null;
     artCritiqueNodeId: string | null;
@@ -21,7 +20,6 @@ export const CANVAS_DELETE_DIALOG_ID_KEYS = [
     "drawingNodeId",
     "infoNodeId",
     "subtitleNodeId",
-    "superResolveNodeId",
     "previewNodeId",
     "scriptEditorNodeId",
     "artCritiqueNodeId",
@@ -55,7 +53,6 @@ export function useCanvasProjectDialogs() {
     const [infoNodeId, setInfoNodeId] = useState<string | null>(null);
     const [subtitleNodeId, setSubtitleNodeId] = useState<string | null>(null);
     const [timelineNodeId, setTimelineNodeId] = useState<string | null>(null);
-    const [superResolveNodeId, setSuperResolveNodeId] = useState<string | null>(null);
     const [previewNodeId, setPreviewNodeId] = useState<string | null>(null);
     const [scriptEditorNodeId, setScriptEditorNodeId] = useState<string | null>(null);
     const [artCritiqueNodeId, setArtCritiqueNodeId] = useState<string | null>(null);
@@ -71,7 +68,6 @@ export function useCanvasProjectDialogs() {
         setDrawingNodeId(clearDeletedId);
         setInfoNodeId(clearDeletedId);
         setSubtitleNodeId(clearDeletedId);
-        setSuperResolveNodeId(clearDeletedId);
         setPreviewNodeId(clearDeletedId);
         setScriptEditorNodeId(clearDeletedId);
         setArtCritiqueNodeId(clearDeletedId);
@@ -114,8 +110,6 @@ export function useCanvasProjectDialogs() {
         setSubtitleNodeId,
         timelineNodeId,
         setTimelineNodeId,
-        superResolveNodeId,
-        setSuperResolveNodeId,
         previewNodeId,
         setPreviewNodeId,
         scriptEditorNodeId,

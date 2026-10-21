@@ -6,9 +6,36 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestWorkerFindsBundledMediaToolsWithoutShellPath(t *testing.T) {
+	t.Setenv("PATH", "/usr/bin:/bin")
+	t.Setenv("CANVAS_FFPROBE_PATH", "/Applications/BeefTV.app/Contents/Resources/agent-host/media-runtime/ffprobe")
+	t.Setenv("CANVAS_FFMPEG_PATH", "/Applications/BeefTV.app/Contents/Resources/agent-host/media-runtime/ffmpeg")
+	for _, platform := range []string{"darwin", "windows"} {
+		env := WorkerEnvForPlatform("/depth/worker", platform)
+		count := 0
+		for _, entry := range env {
+			if !strings.HasPrefix(entry, "PATH=") {
+				continue
+			}
+			count++
+			path := strings.TrimPrefix(entry, "PATH=")
+			if !strings.HasPrefix(path, filepath.Dir(os.Getenv("CANVAS_FFPROBE_PATH"))+string(os.PathListSeparator)) || !strings.HasSuffix(path, "/usr/bin:/bin") {
+				t.Fatalf("%s media PATH = %q", platform, path)
+			}
+			if platform == "windows" && !strings.Contains(path, filepath.Join("/depth", "bin")) {
+				t.Fatalf("Windows component tools lost: %q", path)
+			}
+		}
+		if count != 1 {
+			t.Fatalf("%s has %d PATH entries", platform, count)
+		}
+	}
+}
 
 func TestWindowsWorkerUsesUTF8ForChineseProgress(t *testing.T) {
 	env := WorkerEnvForPlatform("C:/depth/worker", "windows")

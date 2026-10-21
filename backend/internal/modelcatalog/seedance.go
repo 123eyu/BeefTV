@@ -147,6 +147,9 @@ func validateVideoReferenceMedia(profile *VideoCapabilityConfig, input TaskInput
 	if len(input.ReferenceImages) < refs.MinImages {
 		return kernel.BadAuthRequest(fmt.Sprintf("当前视频模型至少需要 %d 张参考图", refs.MinImages))
 	}
+	if input.DeferReferenceMetadata {
+		return nil
+	}
 	for index, media := range input.ReferenceImages {
 		if err := validateVideoReferenceImage(refs, index, media); err != nil {
 			return err

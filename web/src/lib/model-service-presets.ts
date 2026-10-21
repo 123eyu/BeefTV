@@ -13,6 +13,10 @@ export const MODEL_SERVICE_PRESETS = [
 export type ModelServicePresetId = typeof MODEL_SERVICE_PRESETS[number]["id"];
 export const CAPABILITY_LABELS: Record<ModelCapability, string> = { text: "文本", image: "图片", video: "视频", audio: "音频" };
 
+export function isTopazUpscaleChannel(channel: Pick<ModelChannel, "id" | "models">): boolean {
+    return channel.id === "fal-topaz-upscale" || channel.models.some(model => model.replace(/^\/+/, "").startsWith("topaz/upscale/"));
+}
+
 export function servicePresetFor(channel: ModelChannel): ModelServicePresetId {
     try {
         const host = new URL(channel.baseUrl).hostname;

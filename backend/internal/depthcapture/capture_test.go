@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"infinite-canvas/backend/internal/depthruntime"
+	"infinite-canvas/backend/internal/mediatools"
 	"infinite-canvas/backend/internal/model"
 )
 
@@ -145,6 +146,9 @@ func TestProcessSavesSinglePreview(t *testing.T) {
 	tasks := &fakeTasks{}
 	media := &fakeMedia{resource: testVideo(), body: []byte("mp4-bytes")}
 	svc := New(Deps{
+		ProbeOutput: func(context.Context, string) (mediatools.MediaMetadata, error) {
+			return mediatools.MediaMetadata{HasVideo: true, Width: 1080, Height: 1920, DurationMs: 2967}, nil
+		},
 		GOOS: "darwin", GOARCH: "arm64",
 		Media:     media,
 		Tasks:     tasks,
@@ -178,7 +182,7 @@ func TestProcessSavesSinglePreview(t *testing.T) {
 	if tasks.result == nil || tasks.result.ResourceID != "out-1" || tasks.result.Device != "mps" {
 		t.Fatalf("result = %+v", tasks.result)
 	}
-	if media.saved == nil || media.saved.Width != 1920 {
+	if media.saved == nil || media.saved.Width != 1080 || media.saved.Height != 1920 || media.saved.DurationMs != 2967 || tasks.result.Width != 1080 || tasks.result.Height != 1920 {
 		t.Fatalf("saved = %+v", media.saved)
 	}
 	joined := strings.Join(tasks.stages, ",")
@@ -191,6 +195,9 @@ func TestProcessFallsBackOnceFromCUDADeviceFailure(t *testing.T) {
 	tasks := &fakeTasks{}
 	runs := 0
 	svc := New(Deps{
+		ProbeOutput: func(context.Context, string) (mediatools.MediaMetadata, error) {
+			return mediatools.MediaMetadata{HasVideo: true, Width: 1920, Height: 1080, DurationMs: 3000}, nil
+		},
 		GOOS: "windows", GOARCH: "amd64",
 		Media:     &fakeMedia{resource: testVideo(), body: []byte("mp4")},
 		Tasks:     tasks,

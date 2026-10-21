@@ -2,7 +2,7 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSPr
 import { Link2 } from "lucide-react";
 
 import { ConnectionPath, canvasConnectionPath } from "@/components/canvas/canvas-connections";
-import { subscribeCanvasNodeDragPreview } from "@/lib/canvas/canvas-live-viewport";
+import { canvasNodeDragGeometry, subscribeCanvasNodeDragPreview } from "@/lib/canvas/canvas-live-viewport";
 import { CanvasFrameNode } from "@/components/canvas/canvas-frame-node";
 import { CanvasNode } from "@/components/canvas/canvas-node";
 import type { CanvasVideoCropRect } from "@/components/canvas/canvas-video-crop-dialog";
@@ -117,8 +117,8 @@ export const CanvasProjectWorldLayers = memo(function CanvasProjectWorldLayers(p
                 if (preview && !preview.nodeIds.has(from.id) && !preview.nodeIds.has(to.id)) continue;
                 const group = groups.get(connection.id);
                 if (!group) continue;
-                const movedFrom = preview?.nodeIds.has(from.id) ? { ...from, position: { x: from.position.x + preview.x, y: from.position.y + preview.y } } : from;
-                const movedTo = preview?.nodeIds.has(to.id) ? { ...to, position: { x: to.position.x + preview.x, y: to.position.y + preview.y } } : to;
+                const movedFrom = canvasNodeDragGeometry(from, preview);
+                const movedTo = canvasNodeDragGeometry(to, preview);
                 const { pathD, startX, startY, endX, endY } = canvasConnectionPath(connection, movedFrom, movedTo, props.scriptScrollTopById[from.id] || 0, props.scriptScrollTopById[to.id] || 0);
                 group.querySelectorAll<SVGPathElement>("path[d]").forEach((path) => path.setAttribute("d", pathD));
                 const endpoints = group.querySelectorAll<SVGCircleElement>("circle");

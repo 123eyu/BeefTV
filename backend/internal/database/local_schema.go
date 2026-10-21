@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 21
+const CurrentSchemaVersion int64 = 25
 
 type localSchemaMigration struct {
 	Version   int64 `gorm:"primaryKey;autoIncrement:false"`
@@ -63,6 +63,7 @@ func LocalModels() []any {
 		&model.AssistantSkillContext{}, &model.AssistantSkillContextMutation{},
 		&model.CreationConversation{},
 		&model.CanvasLibraryFolder{}, &model.CanvasDrawing{},
+		&model.CanvasWorkflow{}, &model.CanvasWorkflowRun{}, &model.CanvasWorkflowResource{}, &model.CanvasWorkflowRevision{},
 		&model.PromptTemplate{}, &model.UserPromptCustomization{},
 		&model.Task{}, &model.CreationRun{}, &model.CreationSubmission{}, &model.TaskTextDelta{}, &model.TaskLog{}, &model.Result{},
 	}
@@ -97,6 +98,30 @@ func canonicalLocalMigrations() []localMigration {
 		{version: 19, name: "assistant-continuation-intent-fence", apply: migrateAssistantContinuationIntentFence},
 		{version: 20, name: "assistant-production-authorization", apply: migrateAssistantProductionAuthorization},
 		{version: 21, name: "skill-market-release-metadata", apply: migrateSkillMarketReleaseMetadata},
+		{version: 22, name: "canvas-reusable-workflows", apply: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&model.CanvasWorkflow{}, &model.CanvasWorkflowRun{}, &model.CanvasWorkflowResource{})
+		}},
+		{version: 23, name: "canvas-workflow-source-snapshots", apply: func(tx *gorm.DB) error { return ensureSQLiteColumn(tx, "tasks", "workflow_source_cipher", "TEXT") }},
+		{version: 24, name: "canvas-workflow-immutable-revisions", apply: func(tx *gorm.DB) error {
+			if err := tx.AutoMigrate(&model.CanvasWorkflow{}, &model.CanvasWorkflowRun{}, &model.CanvasWorkflowRevision{}); err != nil {
+				return err
+			}
+			return tx.Exec("INSERT OR IGNORE INTO canvas_workflow_revisions (template_id, revision, user_id, name, description, definition_json, recipe_cipher) SELECT id, 1, user_id, name, description, definition_json, recipe_cipher FROM canvas_workflows").Error
+		}},
+		// Preview builds assigned v17-v19 to workflow migrations before main
+		// used those versions for assistant context and continuation schema. Keep
+		// the historical ledger intact and reconcile the idempotent assistant
+		// structures under a new version so upgraded preview databases become
+		// compatible with current main.
+		{version: 25, name: "reconcile-preview-assistant-schema", apply: func(tx *gorm.DB) error {
+			if err := migrateAssistantSkillContexts(tx); err != nil {
+				return err
+			}
+			if err := migrateAssistantContinuations(tx); err != nil {
+				return err
+			}
+			return migrateAssistantContinuationIntentFence(tx)
+		}},
 	}
 }
 
@@ -508,7 +533,30 @@ func requireReconciledSchema(db *gorm.DB) error {
 		}
 	}
 	if version >= 21 {
-		return requireSkillMarketReleaseMetadata(db)
+		if err := requireSkillMarketReleaseMetadata(db); err != nil {
+			return err
+		}
+	}
+	if version >= 22 {
+		for _, table := range []any{&model.CanvasWorkflow{}, &model.CanvasWorkflowRun{}, &model.CanvasWorkflowResource{}} {
+			if !db.Migrator().HasTable(table) {
+				return fmt.Errorf("本地可复用工作流表缺失，请启用自动迁移")
+			}
+		}
+	}
+	if version >= 23 {
+		exists, err := sqliteHasColumn(db, "tasks", "workflow_source_cipher")
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return fmt.Errorf("本地任务工作流来源快照列缺失，请启用自动迁移")
+		}
+	}
+	if version >= 24 {
+		if !db.Migrator().HasTable(&model.CanvasWorkflowRevision{}) || !db.Migrator().HasColumn(&model.CanvasWorkflow{}, "revision") || !db.Migrator().HasColumn(&model.CanvasWorkflowRun{}, "template_revision") {
+			return fmt.Errorf("本地工作流版本结构缺失，请启用自动迁移")
+		}
 	}
 	return nil
 }

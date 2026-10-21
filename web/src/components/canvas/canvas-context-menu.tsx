@@ -32,7 +32,7 @@ import { aceternityMotion } from "@/lib/aceternity-motion";
 import { SpotlightSurface } from "@/components/ui/aceternity/spotlight-surface";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { canvasNodeAssetCategory } from "@/lib/canvas/canvas-node-asset";
-import { isCanvasFolderNode } from "@/lib/canvas/canvas-frame";
+import { isCanvasFolderNode, isFrameNode } from "@/lib/canvas/canvas-frame";
 import { resolveAddNodeMenuCommands, type AddNodeMenuContext } from "@/lib/canvas/tool-registry";
 import { useActiveTheme } from "@/stores/canvas/use-canvas-theme-store";
 import { usePluginStore } from "@/stores/use-plugin-store";
@@ -162,7 +162,7 @@ export function CanvasNodeContextMenu({
     const isVideo = node?.type === CanvasNodeType.Video;
     const isMedia = isImage || isVideo;
     const isAudio = node?.type === CanvasNodeType.Audio;
-    const isFrame = node?.type === CanvasNodeType.Frame;
+    const isFrame = isFrameNode(node);
     const isFolder = isCanvasFolderNode(node);
     const hasNodeContent = isText ? Boolean(nodeContent.trim()) : Boolean(nodeContent);
     const canSaveAsset = Boolean(node && !isCharacterReference && (isText ? hasNodeContent : hasNodeContent && (isImage || isVideo || isAudio)));
@@ -533,6 +533,6 @@ function nodeTypeLabel(node?: CanvasNodeData | null) {
     if (node.type === CanvasNodeType.Video) return "视频节点";
     if (node.type === CanvasNodeType.Audio) return "音频节点";
     if (node.type === CanvasNodeType.Drawing) return "绘图节点";
-    if (node.type === CanvasNodeType.Frame) return isCanvasFolderNode(node) ? "文件夹" : "背板";
+    if (isFrameNode(node)) return node.type === CanvasNodeType.Workflow ? "工作流" : isCanvasFolderNode(node) ? "文件夹" : "背板";
     return "生成配置节点";
 }

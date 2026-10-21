@@ -1,5 +1,7 @@
 import type { CanvasColorGrade } from "@/lib/canvas/canvas-color-grade";
+import type { WorkflowDefinition, WorkflowMediaType, WorkflowNodeRole, WorkflowRun, WorkflowValue } from "@/services/api/canvas-workflows";
 import type { MediaConversionNodeState } from "@/lib/media-conversion/contracts";
+import type { CanvasUpscaleSettings, CanvasUpscaleBatch } from "@/lib/canvas/canvas-upscale";
 import type { AssetCategory } from "@/lib/asset-category";
 import type { PortraitTextureSettings } from "@/lib/canvas/canvas-portrait-texture";
 import type { StyleExecutionPlan } from "@/lib/canvas/style-profile";
@@ -28,6 +30,8 @@ export enum CanvasNodeType {
     Video = "video",
     Audio = "audio",
     Frame = "frame",
+    Workflow = "reusable-workflow",
+    WorkflowControl = "workflow-control",
     Markdown = "markdown",
     Svg = "svg",
     Html = "html",
@@ -36,6 +40,7 @@ export enum CanvasNodeType {
     Chart = "chart",
     ColorGrade = "colorgrade",
     MediaConversion = "media-conversion",
+    Upscale = "upscale",
     BatchTable = "batch-table",
     Director = "director",
 }
@@ -184,6 +189,20 @@ export type CanvasSkillSnapshot = {
 };
 
 export type CanvasNodeMetadata = {
+    /** Deterministic canvas processing recipe, without runtime state or credentials. */
+    workflowOperation?: { id: string; version: number; config: Record<string, string | number | boolean>; inputs: Array<{ nodeId: string; port: string; order?: number }> };
+    reusableWorkflow?: {
+        layoutVersion?: number;
+        templateId: string;
+        templateRevision?: number;
+        definition: WorkflowDefinition;
+        run?: WorkflowRun;
+        intent?: { clientOperationId: string; inputs: Record<string, WorkflowValue> };
+        error?: string;
+        inputsChanged?: boolean;
+        runApplied?: boolean;
+    };
+    workflowSlot?: { instanceId: string; nodeId: string; role: WorkflowNodeRole; mediaType: WorkflowMediaType; status?: string; error?: string };
     /** Media interaction role. `generator` owns generation controls; `result` is an inspect/process object. */
     nodeRole?: CanvasMediaNodeRole;
     /** How a media result entered the canvas. Only meaningful when nodeRole is `result`. */
@@ -448,6 +467,9 @@ export type CanvasNodeMetadata = {
     /** 调色节点的参数；缺省视为未调色。 */
     colorGrade?: CanvasColorGrade;
     mediaConversion?: MediaConversionNodeState;
+    upscale?: CanvasUpscaleSettings;
+    upscaleBatch?: CanvasUpscaleBatch;
+    generatedFromProcessingNodeId?: string;
     /** 用户手动拉伸过尺寸；图片按真实比例自动适配时避让它。 */
     manualSize?: boolean;
     storyboard?: StoryboardData;

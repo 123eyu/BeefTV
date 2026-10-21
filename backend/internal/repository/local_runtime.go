@@ -332,6 +332,14 @@ func (r *Repository) CreateTaskWithActiveLimit(task *model.Task, limit int) erro
 }
 
 func (r *Repository) RetryTask(userID string, prepared *model.Task, limit int) (*model.Task, error) {
+	return r.retryTask(userID, prepared, limit, nil)
+}
+
+func (r *Repository) RetryTaskWithExpectedInput(userID string, prepared *model.Task, limit int, expectedInputJSON string) (*model.Task, error) {
+	return r.retryTask(userID, prepared, limit, &expectedInputJSON)
+}
+
+func (r *Repository) retryTask(userID string, prepared *model.Task, limit int, expectedInputJSON *string) (*model.Task, error) {
 	var task model.Task
 	err := withImmediateTransaction(r.db, func(tx *gorm.DB) error {
 		if err := RequireTaskScopeActiveTx(tx, userID, prepared.ProjectID); err != nil {
@@ -354,7 +362,11 @@ func (r *Repository) RetryTask(userID string, prepared *model.Task, limit int) (
 			"logical_model_revision_id": prepared.LogicalModelRevisionID, "route_id": prepared.RouteID, "channel_model_id": prepared.ChannelModelID, "input_json": prepared.InputJSON,
 			"model": prepared.Model, "provider": prepared.Provider, "lease_owner": "", "lease_expires_at": nil, "updated_at": time.Now(),
 		}
-		updated := tx.Model(&model.Task{}).Where("id = ? AND user_id = ? AND status IN ?", prepared.ID, userID, []model.TaskStatus{model.TaskStatusFailed, model.TaskStatusCancelled}).Updates(updates)
+		query := tx.Model(&model.Task{}).Where("id = ? AND user_id = ? AND status IN ?", prepared.ID, userID, []model.TaskStatus{model.TaskStatusFailed, model.TaskStatusCancelled})
+		if expectedInputJSON != nil {
+			query = query.Where("input_json = ? AND provider_request_id = ? AND poll_stage = ? AND next_poll_at IS NULL", *expectedInputJSON, "", "")
+		}
+		updated := query.Updates(updates)
 		if updated.Error != nil {
 			return updated.Error
 		}

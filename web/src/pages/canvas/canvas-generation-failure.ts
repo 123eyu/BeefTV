@@ -97,8 +97,8 @@ export function imageSubmissionUnknown(metadata: CanvasNodeMetadata | undefined)
 
 export function canvasGenerationTaskNodes(nodes: CanvasNodeData[], targetNodeId: string, task: GenerationTask): CanvasNodeData[] {
     return nodes.map((node) => {
-        if (node.id !== targetNodeId) return node;
         const failed = task.status === "failed" || task.status === "cancelled";
+        if (node.id !== targetNodeId && !(failed && node.metadata?.taskId === task.id)) return node;
         const outputIndex = node.metadata?.taskOutputIndex ?? 0;
         const output = task.outputs?.find((item) => item.outputIndex === outputIndex);
         const paused = task.status === "succeeded" && !output?.materializedAssetId && [task.stage, output?.materializationErrorCode].some((code) => code === "delivery_paused" || code === "delivery_timed_out");

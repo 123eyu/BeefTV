@@ -214,7 +214,7 @@ export function CanvasNodeToolbar({
         };
     }, [anchor === null, containerRef, node, viewport.k, viewport.x, viewport.y]);
 
-    if (!node || !anchor) return null;
+    if (!node || !anchor || node.type === CanvasNodeType.Director || node.metadata?.directorSceneId) return null;
 
     const isImage = node.type === CanvasNodeType.Image;
     const isVideo = node.type === CanvasNodeType.Video;
@@ -399,6 +399,7 @@ export function CanvasNodeToolbar({
             <div role="toolbar" aria-label="节点快捷工具" className="flex h-10 max-w-full items-center gap-0.5 overflow-visible rounded-[var(--dock-radius-tight)] px-1.5 backdrop-blur-2xl" style={{ ...dockStyle, border: 0 }}>
                 {isVideo ? (
                     <>
+                        <NodeDockToolButton tool={{ id: "ai-upscale", label: "AI超分", icon: <UpscaleToolbarIcon />, group: "process", order: 1, onClick: () => onSuperResolve(node) }} showTooltip={false} />
                         {videoProcessingTools.length ? <NodeDockMenuButton menuId="video-processing" label="视频处理" icon={null} tools={videoProcessingTools} openMenuId={openMenuId} onOpenChange={handleMenuOpenChange} placement="bottomLeft" /> : null}
                         {videoAudioTool ? <NodeDockToolButton tool={videoAudioTool} showTooltip={false} /> : null}
                         {videoSubtitleTool ? <NodeDockToolButton tool={videoSubtitleTool} showTooltip={false} /> : null}
@@ -415,6 +416,7 @@ export function CanvasNodeToolbar({
                     </>
                 ) : (
                     <>
+                        {isImage ? <NodeDockToolButton tool={{ id: "ai-upscale", label: "AI超分", icon: <UpscaleToolbarIcon />, group: "process", order: 1, onClick: () => onSuperResolve(node) }} showTooltip={false} /> : null}
                         {(isImage ? imagePrimaryTools : primaryTools).map((tool) => (
                             <NodeDockToolButton key={tool.id} tool={tool} showTooltip={tool.id !== "maskEdit"} />
                         ))}
@@ -450,6 +452,13 @@ export function CanvasNodeToolbar({
             </div>
         </div>
     );
+}
+
+function UpscaleToolbarIcon() {
+    return <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M6 2H3a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-3" />
+        <path d="M9 2h5v5M14 2 7 9" />
+    </svg>;
 }
 
 function NodeDockToolButton({ tool, iconOnly = false, showTooltip = true }: { tool: ToolbarTool; iconOnly?: boolean; showTooltip?: boolean }) {

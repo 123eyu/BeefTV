@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"infinite-canvas/backend/internal/outbound"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -30,10 +31,28 @@ func imageSubmissionURL(req *http.Request) bool {
 // Probe only metadata on the same origin and never forward credentials across
 // a redirect. Unsupported endpoints keep their existing single-POST path.
 func NegotiateImageReplay(req *http.Request) (*http.Request, error) {
-	return negotiateImageReplay(req, outbound.OutboundHTTPClient(5*time.Second))
+	return negotiateImageReplay(req, outbound.OutboundHTTPClient(10*time.Second))
 }
 
 func negotiateImageReplay(req *http.Request, configured *http.Client) (*http.Request, error) {
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		var negotiated *http.Request
+		negotiated, err = probeImageReplay(req, configured)
+		if err == nil {
+			return negotiated, nil
+		}
+		// Only metadata GETs have run. Retrying a transient probe never sends
+		// the paid image POST; cancellation and permanent failures stop here.
+		var network net.Error
+		if req == nil || req.Context().Err() != nil || !(errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &network) && (network.Timeout() || network.Temporary()))) {
+			break
+		}
+	}
+	return nil, RequestPreparationError{Cause: RequestNotSentError{Cause: err}}
+}
+
+func probeImageReplay(req *http.Request, configured *http.Client) (*http.Request, error) {
 	if !imageSubmissionURL(req) || RecoverableImageEndpoint(req) {
 		return req, nil
 	}
@@ -50,7 +69,7 @@ func negotiateImageReplay(req *http.Request, configured *http.Client) (*http.Req
 	if _, err := outbound.ValidateOutboundURL(u.String()); err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(req.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(req.Context(), 10*time.Second)
 	defer cancel()
 	probe, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {

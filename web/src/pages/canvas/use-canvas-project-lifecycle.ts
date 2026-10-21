@@ -5,11 +5,12 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Dispatc
 import { App } from "antd";
 import { useNavigate } from "react-router";
 
-import { canvasAppearanceBaseTheme, canvasAppearanceForTheme, DEFAULT_CANVAS_BACKGROUND_MODE, normalizeCanvasAppearance, type CanvasAppearance } from "@/lib/canvas/canvas-appearance";
+import { canvasAppearanceForTheme, DEFAULT_CANVAS_BACKGROUND_MODE, normalizeCanvasAppearance, type CanvasAppearance } from "@/lib/canvas/canvas-appearance";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { removeCanvasDrawing } from "@/lib/canvas/canvas-drawing-storage";
 import { normalizeCanvasNodeTimestamps } from "@/lib/canvas/canvas-node-timestamps";
 import { normalizeCanvasMediaNodeSemanticsList } from "@/lib/canvas/canvas-node-semantics";
+import { normalizeWorkflowContainers } from "@/lib/canvas/reusable-workflow-instance";
 import { migrateDirectorCanvas } from "@/lib/canvas/director/director-node-migration";
 import { canvasWorkspaceProjectId, listCanvasWorkspaceProjectCanvases } from "@/lib/canvas/canvas-workspace-project";
 import { carryGenerationRecoveryRestore, hydrateAssistantImages, resetInterruptedGeneration } from "@/lib/canvas/canvas-project-generation";
@@ -44,13 +45,17 @@ function editorDocumentOf(source: { nodes: CanvasNodeData[]; connections: Canvas
 function openCanvasNodes(project: CanvasProject) {
     const sourceNodes = resetInterruptedGeneration(project.nodes);
     const sourceScenes = project.directorScenes || [];
-    const migration = migrateDirectorCanvas(sourceNodes, sourceScenes);
-    const hasDirectorMigration = migration.nodes.some((node, index) => node !== sourceNodes[index]) || migration.directorScenes !== sourceScenes;
-    const nodes = normalizeCanvasMediaNodeSemanticsList(normalizeCanvasNodeTimestamps(migration.nodes, {
+    const directorMigration = migrateDirectorCanvas(sourceNodes, sourceScenes);
+    const migratedNodes = normalizeWorkflowContainers(directorMigration.nodes);
+    const migration = { ...directorMigration, nodes: migratedNodes };
+    const hasNodeMigration = directorMigration.nodes.some((node, index) => node !== sourceNodes[index])
+        || migratedNodes.some((node, index) => node !== directorMigration.nodes[index])
+        || migration.directorScenes !== sourceScenes;
+    const nodes = normalizeCanvasMediaNodeSemanticsList(normalizeCanvasNodeTimestamps(migratedNodes, {
         createdAt: project.createdAt,
         updatedAt: project.updatedAt,
     }));
-    return { nodes, migration, hasDirectorMigration };
+    return { nodes, migration, hasNodeMigration };
 }
 
 function sameValue(left: unknown, right: unknown): boolean {
@@ -390,17 +395,17 @@ export function useCanvasProjectLifecycle({
                 // merge what was read into the editor instead of replacing it with
                 // the graph from before the read. What was read is restored by the
                 // same open rules as below; the editor's own content is kept as is.
-                const { migration, hasDirectorMigration } = openCanvasNodes(targetProject);
-                if (hasDirectorMigration) updateProject(targetProject.id, migration);
-                adoptIncomingEditorDocument(observedStore, hasDirectorMigration ? (storedEditorProject() ?? targetProject) : targetProject, { openRules: true });
+                const { migration, hasNodeMigration } = openCanvasNodes(targetProject);
+                if (hasNodeMigration) updateProject(targetProject.id, migration);
+                adoptIncomingEditorDocument(observedStore, hasNodeMigration ? (storedEditorProject() ?? targetProject) : targetProject, { openRules: true });
                 return;
             }
             const fallbackTheme = useCanvasThemeStore.getState().theme;
             const restoredAppearance = targetProject.appearance
                 ? normalizeCanvasAppearance(targetProject.appearance, fallbackTheme)
                 : canvasAppearanceForTheme(fallbackTheme);
-            const { nodes: initialNodes, migration, hasDirectorMigration } = openCanvasNodes(targetProject);
-            if (hasDirectorMigration) updateProject(targetProject.id, migration);
+            const { nodes: initialNodes, migration, hasNodeMigration } = openCanvasNodes(targetProject);
+            if (hasNodeMigration) updateProject(targetProject.id, migration);
             const snapshot: CanvasHistorySnapshot = {
                 nodes: initialNodes,
                 connections: targetProject.connections,
@@ -410,8 +415,8 @@ export function useCanvasProjectLifecycle({
                 backgroundMode: targetProject.backgroundMode || DEFAULT_CANVAS_BACKGROUND_MODE,
                 showImageInfo: targetProject.showImageInfo || false,
             };
-            observedContentRef.current = hasDirectorMigration ? { ...snapshot, nodes: targetProject.nodes } : snapshot;
-            observedStoreRef.current = hasDirectorMigration ? (storedEditorProject() ?? targetProject) : targetProject;
+            observedContentRef.current = hasNodeMigration ? { ...snapshot, nodes: targetProject.nodes } : snapshot;
+            observedStoreRef.current = hasNodeMigration ? (storedEditorProject() ?? targetProject) : targetProject;
             chatSessionsRef.current = snapshot.chatSessions;
             activeChatIdRef.current = snapshot.activeChatId;
             nodesRef.current = snapshot.nodes;
@@ -422,7 +427,7 @@ export function useCanvasProjectLifecycle({
             setChatSessions(snapshot.chatSessions);
             setActiveChatId(snapshot.activeChatId);
             setCanvasAppearance(snapshot.canvasAppearance);
-            useCanvasThemeStore.getState().setTheme(canvasAppearanceBaseTheme(snapshot.canvasAppearance, fallbackTheme));
+            useCanvasThemeStore.getState().setAppearance(snapshot.canvasAppearance);
             setBackgroundMode(snapshot.backgroundMode);
             setShowImageInfo(snapshot.showImageInfo);
             setViewport(targetProject.viewport);

@@ -15,7 +15,12 @@ func classifyTaskFailure(err error) generation.Failure {
 	if err == nil {
 		return generation.ClassifyError(nil)
 	}
-	return applyAppFailureWrappers(err, generation.ClassifyError(err))
+	failure := applyAppFailureWrappers(err, generation.ClassifyError(err))
+	if failure.Category == generation.CategoryInvalidParams && !failure.Uncertain && definiteMidjourneyCountRejection(err) {
+		failure.Reason = "Midjourney 需要一次请求生成 4 张图片"
+		failure.Action = "请重新选择 Midjourney 模型，使用固定四张设置后重试"
+	}
+	return failure
 }
 
 func applyAppFailureWrappers(err error, failure generation.Failure) generation.Failure {

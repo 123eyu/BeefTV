@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 
 import { updateCanvasNode, updateCanvasNodes } from "@/lib/canvas/canvas-node-timestamps";
+import { repairOverlappingImageBatches } from "@/lib/canvas/canvas-generation-layout";
 import type { CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
 
 export const MEDIA_NODE_CONTENT_FLUSH_MS = 120;
@@ -40,7 +41,7 @@ export function useCanvasNodeContent({ nodesRef, setNodesState }: UseCanvasNodeC
             mediaUpdateTimerRef.current = null;
             if (!updates.size) return;
             setNodesState((current) => {
-                const next = updateCanvasNodes(current, updates);
+                const next = repairOverlappingImageBatches(updateCanvasNodes(current, updates));
                 nodesRef.current = next;
                 return next;
             });

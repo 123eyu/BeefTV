@@ -5,6 +5,7 @@ import (
 	"errors"
 	"infinite-canvas/backend/internal/generation"
 	"log"
+	"strings"
 	"time"
 
 	"infinite-canvas/backend/internal/model"
@@ -169,6 +170,15 @@ func routeFailureInfo(err error) modelcatalog.FailureInfo {
 		info.RetryAfter = upstream.RetryAfter
 	}
 	info.ImageThrottle = definiteImageThrottle(err)
+	var rejection generation.SubmissionRejectedError
+	info.ExplicitRejection = definiteMidjourneyCountRejection(err) || errors.As(err, &rejection)
+	if definiteVODImageParameterFailure(err) {
+		// The gateway includes this marker only for an actual supplier task.
+		info.TerminalProviderFailure = strings.Contains(upstream.Body, "upstream_task_id:")
+		if !info.TerminalProviderFailure {
+			info.ExplicitRejection = true
+		}
+	}
 	var preparation generation.RequestPreparationError
 	info.PreparationFailed = errors.As(err, &preparation)
 	info.Canceled = errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)

@@ -76,6 +76,9 @@ func SafeRouteRejection(info FailureInfo) bool {
 	if info.ImageRecovery {
 		return false
 	}
+	if info.ExplicitRejection {
+		return true
+	}
 	if info.PreparationFailed {
 		return true
 	}

@@ -267,14 +267,14 @@ func downloadResumableAttempt(ctx context.Context, parsed *url.URL, opts Resumab
 		total = contentTotal
 	default:
 		if retryableHTTPStatus(response.StatusCode) {
-			return ResumableResult{}, true, fmt.Errorf("远程资源下载失败：%s", response.Status)
+			return ResumableResult{}, true, &HTTPStatusError{StatusCode: response.StatusCode, Message: fmt.Sprintf("远程资源下载失败：%s", response.Status)}
 		}
 		// Expired signed links may later be refreshed for the same artifact.
 		// Keep bytes, but require source/validator checks before any reuse.
 		if response.StatusCode != http.StatusUnauthorized && response.StatusCode != http.StatusForbidden {
 			removeResumablePartial(opts.PartialPath)
 		}
-		return ResumableResult{}, false, fmt.Errorf("远程资源下载失败：%s", response.Status)
+		return ResumableResult{}, false, &HTTPStatusError{StatusCode: response.StatusCode, Message: fmt.Sprintf("远程资源下载失败：%s", response.Status)}
 	}
 	pending.Total = total
 	if total >= 0 && total >= opts.MaxBytes {

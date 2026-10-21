@@ -31,11 +31,19 @@ func BuiltinRegistry() *Registry {
 			PatchFields: editableNodeFields("metadata.content", "Markdown 正文", "Markdown 正文"),
 		},
 		generatedMediaDescriptor("image", "3", "图片", 720, 405, "image", ConnectionPolicy{
-			CanSource: true, CanTarget: true, CanReference: true, AcceptedInputKinds: []string{"text", "image"},
+			CanSource: true, CanTarget: true, CanReference: true, AcceptedInputKinds: []string{"text", "image", "upscale-result"},
 		}),
 		generatedMediaDescriptor("video", "3", "视频", 720, 405, "video", ConnectionPolicy{
-			CanSource: true, CanTarget: true, CanReference: true, AcceptedInputKinds: []string{"text", "image", "video", "audio"},
+			CanSource: true, CanTarget: true, CanReference: true, AcceptedInputKinds: []string{"text", "image", "video", "audio", "upscale-result"},
 		}),
+		{
+			Type: "upscale", Version: "1", Label: "AI超分", DefaultWidth: 420, DefaultHeight: 240,
+			Purpose:   "批量处理左侧图片与视频，在右侧独立媒体节点交付结果。",
+			InputKind: "upscale-result", Connection: ConnectionPolicy{CanSource: true, CanTarget: true, AcceptedInputKinds: []string{"image", "video"}},
+			CanUpdate: true, SummaryFields: []string{"upscale", "upscaleBatch"}, DetailFields: []string{"upscale", "upscaleBatch"},
+			PatchFields:    map[string]PatchField{"title": {Path: "title", Kind: patchKindString, Label: "节点名称", Order: 10, Description: "超分处理节点名称", MaxRunes: maxAgentNodeTitleRunes}},
+			CreateMetadata: func(string) map[string]any { return map[string]any{"status": "idle"} },
+		},
 		generatedMediaDescriptor("audio", "3", "音频", 340, 120, "audio", ConnectionPolicy{
 			CanSource: true, CanTarget: true, CanReference: true, MaxInputCount: 1, AcceptedInputKinds: []string{"text"},
 		}),

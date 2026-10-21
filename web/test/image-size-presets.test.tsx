@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ImageSizePicker } from "../src/components/image-size-picker";
-import { applyImageSizeSelection } from "../src/components/image-settings-panel";
+import { applyImageSizeSelection, imageSizeLabel } from "../src/components/image-settings-panel";
 import { ImageSizePresetsEditor } from "../src/components/image-size-presets-editor";
 import { ModelCapabilityEditor } from "../src/components/model-capability-editor";
 import { defaultImageCapabilityConfig, normalizeImageValue, normalizeModelCapabilityConfig } from "../src/lib/model-capabilities";
@@ -241,4 +241,10 @@ describe("统一图片分辨率与宽高比", () => {
         const video = renderToStaticMarkup(<ModelCapabilityEditor capability="video" section="protocol" />);
         expect(video).not.toContain("admin-image-protocol-grid");
     });
+});
+
+test("Midjourney exposes only priced native tiers and preserves declared aspect ratio", () => {
+ const profile = defaultImageCapabilityConfig("openai-image","midjourney-v8.2");
+ expect(imageSizeLabel("1456x816",profile)).toBe("16:9 · 1K");
+ expect(profile.size.presets?.some((preset) => preset.tier === "2k")).toBe(false);
 });

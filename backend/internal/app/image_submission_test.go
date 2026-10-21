@@ -66,6 +66,60 @@ func imageSubmissionFixture(t *testing.T, multipartBody bool) (*Service, *gorm.D
 
 func noImageWait(context.Context, time.Duration) error { return nil }
 
+func TestImageSubmissionMidjourneyCountRejectionStopsWithoutRecovery(t *testing.T) {
+	s, _, task, row, _ := imageSubmissionFixture(t, false)
+	calls := 0
+	_, _, err := s.sendImageSubmissionWith(context.Background(), task, row, func(_ *http.Request, admit func() error) ([]byte, string, error) {
+		if err := admit(); err != nil {
+			return nil, "", err
+		}
+		calls++
+		return nil, "", providerHTTPError{StatusCode: 500, Body: `{"error":{"code":"invalid_request","message":"Midjourney generates four images per request; n must be 4 or omitted (request id: safe-request-id)"}}`}
+	}, noImageWait)
+	failure := classifyTaskFailure(err)
+	if calls != 1 || failure.Category != generation.CategoryInvalidParams || failure.Uncertain {
+		t.Fatalf("calls=%d failure=%+v", calls, failure)
+	}
+	attempt, loadErr := s.repo.LatestRouteAttempt(task.ID)
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	s.finishTaskRouteAttempt(attempt, &task, err)
+	if attempt.DispatchState != "rejected_no_job" {
+		t.Fatalf("route state=%s", attempt.DispatchState)
+	}
+}
+
+func TestImageSubmissionCountRejectionRequiresExplicitEvidence(t *testing.T) {
+	for _, body := range []string{
+		`{"error":{"code":"invalid_request","message":"internal processing failed"}}`,
+		`{"error":{"code":"internal_error","message":"Midjourney generates four images per request; n must be 4 or omitted"}}`,
+		`{"task_id":"accepted-task","error":{"code":"invalid_request","message":"Midjourney generates four images per request; n must be 4 or omitted"}}`,
+		`<html>Midjourney generates four images per request; n must be 4 or omitted</html>`,
+	} {
+		err := providerHTTPError{StatusCode: 500, Body: body}
+		if definiteMidjourneyCountRejection(err) || !retrySameImageSubmission(err) {
+			t.Fatalf("unknown submission treated as a definite rejection: %s", body)
+		}
+	}
+}
+
+func TestImageSubmissionCountErrorCannotErasePriorAcceptance(t *testing.T) {
+	s, _, task, row, _ := imageSubmissionFixture(t, false)
+	if err := s.repo.MarkImageSubmissionAccepted(row); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := s.sendImageSubmissionWith(context.Background(), task, row, func(_ *http.Request, admit func() error) ([]byte, string, error) {
+		if err := admit(); err != nil {
+			return nil, "", err
+		}
+		return nil, "", providerHTTPError{StatusCode: 500, Body: `{"error":{"code":"invalid_request","message":"Midjourney generates four images per request; n must be 4 or omitted"}}`}
+	}, noImageWait)
+	if failure := classifyTaskFailure(err); !failure.Uncertain || failure.Category != generation.CategorySubmissionUncertain {
+		t.Fatalf("accepted response lost: %+v", failure)
+	}
+}
+
 func TestImageSubmissionUnknownProviderCannotReplayOrRetryLostResponse(t *testing.T) {
 	s, db, task, row, _ := imageSubmissionFixture(t, false)
 	if err := db.Delete(row).Error; err != nil {

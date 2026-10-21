@@ -71,6 +71,25 @@ type taskCatalogAdapter struct{ s *Service }
 
 func (a taskCatalogAdapter) Select(userID string, req localtask.SelectRequest) (localtask.SelectResult, error) {
 	input := req.Input
+	if config, ok := input["config"].(map[string]any); ok {
+		if strings.HasPrefix(strings.TrimSpace(fmt.Sprint(config["model"])), "topaz/upscale/") || config["channelId"] == "fal-topaz-upscale" {
+			return localtask.SelectResult{}, BadAuthRequest("Topaz 请使用素材节点的 AI 超分入口")
+		}
+	}
+	config, _ := input["config"].(map[string]any)
+	name := stringValue(config["model"])
+	if kind := generation.UpscaleMediaType(name); kind != "" {
+		if req.Model != name || req.Type != "canvas_"+kind || stringValue(input["mode"]) != kind {
+			return localtask.SelectResult{}, BadAuthRequest("超分模型与任务类型不一致")
+		}
+		managed, err := a.s.upscaleConfig(name)
+		if err != nil {
+			return localtask.SelectResult{}, err
+		}
+		if stringValue(config["credentialRef"]) != managedBeefAPIRef || stringValue(config["apiKey"]) != managed.APIKey || stringValue(config["baseUrl"]) != managed.BaseURL {
+			return localtask.SelectResult{}, BadAuthRequest("AI 超分需要使用已连接的官方算力账号")
+		}
+	}
 	if modelcatalog.TaskInputUsesWorkflowProvider(input) {
 		config, _ := input["config"].(map[string]any)
 		if err := a.s.RequireWorkflowPluginForUser(userID, strings.TrimSpace(fmt.Sprint(config["interfaceType"]))); err != nil {
@@ -121,6 +140,18 @@ func (a taskCatalogAdapter) RequireCustomChannels(input map[string]any) error {
 }
 
 func (a taskCatalogAdapter) ValidateCapability(input map[string]any) error {
+	config, _ := input["config"].(map[string]any)
+	if generation.UpscaleMediaType(stringValue(config["model"])) != "" {
+		raw, err := json.Marshal(input)
+		if err != nil {
+			return err
+		}
+		var prepared generation.Input
+		if err := json.Unmarshal(raw, &prepared); err != nil {
+			return err
+		}
+		return generation.ValidateUpscaleInput(prepared)
+	}
 	if err := a.s.ValidateTaskCapability(input); err != nil {
 		return err
 	}

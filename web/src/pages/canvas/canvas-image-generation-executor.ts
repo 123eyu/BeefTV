@@ -15,6 +15,7 @@ import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { assertUserScope, captureUserScope, isUserScopeAbandonedError, userScopeMatches } from "@/lib/user-scope-guard";
 import { CanvasGenerationTargetSaveError } from "@/services/canvas-generation-errors";
+import { normalizeImageValue } from "@/lib/model-capabilities";
 import { mergedImageCapabilityConfig } from "@/lib/model-selection";
 import type { GenerationTask } from "@/services/api/task-center";
 
@@ -68,8 +69,9 @@ export async function executeImageGeneration({
         showError(referenceLimitError);
         return;
     }
-    const nativeOutputCount = mergedImageCapabilityConfig(generationConfig, generationConfig.model || generationConfig.imageModel).fixedOutputs || 0;
-    const count = nativeOutputCount || getGenerationCount(generationConfig.count);
+    const profile = mergedImageCapabilityConfig(generationConfig, generationConfig.model || generationConfig.imageModel);
+    const nativeOutputCount = profile.fixedOutputs || 0;
+    const count = nativeOutputCount ? Number(normalizeImageValue(profile, generationConfig).count) : getGenerationCount(generationConfig.count);
     const isConfigNode = sourceNode?.type === CanvasNodeType.Config;
     const isImageNode = sourceNode?.type === CanvasNodeType.Image;
     const isExistingImageNode = isImageNode && Boolean(sourceNode?.metadata?.content || sourceNode?.metadata?.storageKey);
@@ -93,11 +95,15 @@ export async function executeImageGeneration({
     const rootId = reuseSourceNode ? nodeId : nanoid();
     const childIds = count > 1 ? Array.from({ length: count }, () => nanoid()) : [];
     const targetIds = count > 1 ? childIds : [rootId];
+    const baseOperationId = clientOperationId || retryContext?.clientOperationId;
+    const submissionSize = nativeOutputCount || 1;
+    const submissions = Array.from({ length: Math.ceil(targetIds.length / submissionSize) }, (_, index) => ({
+        operationId: baseOperationId ? (targetIds.length > submissionSize ? `${baseOperationId}:${index}` : baseOperationId) : undefined,
+        outputNodeIds: targetIds.slice(index * submissionSize, (index + 1) * submissionSize),
+    }));
     if (onSubmissionPlan) {
         if (!clientOperationId) throw new Error("生成提交缺少确认标识");
-        await onSubmissionPlan({ sourceNodeId: nodeId, submissions: nativeOutputCount
-            ? [{ operationId: clientOperationId, outputNodeIds: targetIds }]
-            : targetIds.map((id, index) => ({ operationId: count > 1 ? `${clientOperationId}:${index}` : clientOperationId, outputNodeIds: [id] })) });
+        await onSubmissionPlan({ sourceNodeId: nodeId, submissions: submissions.map(submission => ({ ...submission, operationId: submission.operationId! })) });
         assertUserScope(expectedScope);
         controller.signal.throwIfAborted();
         canvasNodes = nodesRef?.current || canvasNodes;
@@ -114,7 +120,7 @@ export async function executeImageGeneration({
         x: parentPosition.x + parentWidth + 96,
         y: parentPosition.y + parentHeight / 2 - rootHeight / 2,
     };
-    const rootPosition = reuseSourceNode ? parentPosition : findAvailableGenerationGroupPosition(workingNodes, preferredPosition, imageGenerationGroupSize({ width: rootWidth, height: rootHeight }, outputNodeSize, childIds.length));
+    const rootPosition = findAvailableGenerationGroupPosition(workingNodes.filter(node => node.id !== rootId), reuseSourceNode ? parentPosition : preferredPosition, imageGenerationGroupSize({ width: rootWidth, height: rootHeight }, outputNodeSize, childIds.length));
 
     const reusableRootMetadata = reuseSourceNode
         ? count > 1
@@ -165,7 +171,7 @@ export async function executeImageGeneration({
             size: generationConfig.size,
             batchRootId: rootId,
             ...generationMetadata,
-            taskOutputIndex: nativeOutputCount ? index : undefined,
+            taskOutputIndex: nativeOutputCount ? index % nativeOutputCount : undefined,
             ...styleMetadata,
             ...skillMetadata,
             generationErrorCode: undefined,
@@ -220,43 +226,44 @@ export async function executeImageGeneration({
     let representativeFailure: GenerationFailureMetadata | undefined;
     let abandoned = false;
     let saveFailureMessage: string | undefined;
-    let nativeTask: Promise<GenerationTask> | undefined;
+    const nativeTasks = new Map<number, Promise<GenerationTask>>();
     let nativeBindTail = Promise.resolve();
     await Promise.all(
         targetIds.map(async (targetId, index) => {
             try {
-                const operationId = clientOperationId
-                    ? (count > 1 && !nativeOutputCount ? `${clientOperationId}:${index}` : clientOperationId)
-                    : retryContext?.clientOperationId;
+                if (!isCurrent()) return false;
+                const batchIndex = nativeOutputCount ? Math.floor(index / nativeOutputCount) : index;
+                const { outputNodeIds: batchTargets, operationId } = submissions[batchIndex];
                 if (nativeOutputCount) {
                     // One paid task owns all candidates. Keep its identity on every
                     // placeholder so a reload retrieves that task instead of creating it again.
-                    nativeTask ??= (async () => {
+                    if (!nativeTasks.has(batchIndex)) nativeTasks.set(batchIndex, (async () => {
                         let completed: GenerationTask | undefined;
                         await runCanvasGenerationTaskToConsumer(
                             {
-                                projectId, nodeId: targetIds[0], expectedScope, ...retryContext,
+                                projectId, nodeId: batchTargets[0], expectedScope, ...retryContext,
                                 ...(operationId ? { clientOperationId: operationId } : {}),
                                 mode: "image", resolveReferenceLinks, prompt: effectivePrompt,
                                 config: { ...generationConfig, count: String(nativeOutputCount) }, referenceImages,
                                 signal: controller.signal,
-                                metadata: { sourceNodeId: nodeId, ...taskContext, outputNodeIds: targetIds, resolvedCharacterVersions: generationContext.resolvedCharacterVersions, promptTemplateOperation: sourceNode?.metadata?.promptTemplateOperation, promptTemplateVariables: sourceNode?.metadata?.promptTemplateVariables, ...styleMetadata, ...skillMetadata },
+                                metadata: { sourceNodeId: nodeId, ...taskContext, outputNodeIds: batchTargets, resolvedCharacterVersions: generationContext.resolvedCharacterVersions, promptTemplateOperation: sourceNode?.metadata?.promptTemplateOperation, promptTemplateVariables: sourceNode?.metadata?.promptTemplateVariables, ...styleMetadata, ...skillMetadata },
                             },
                             {
-                                bindTask: (task) => [rootId, ...targetIds].forEach((id) => bindGenerationTask(id, task)),
+                                bindTask: (task) => [...(batchIndex === 0 ? [rootId] : []), ...batchTargets].forEach((id) => bindGenerationTask(id, task)),
                                 consumeTask: async (task) => { completed = task; },
                                 isCurrent,
                                 onSubmission: (metadata) => {
                                     if (!isCurrent()) return;
-                                    projectCanvasGenerationSubmission(nodesRef, setNodes, [rootId, ...targetIds], metadata);
+                                    const submissionIds = [...(batchIndex === 0 ? [rootId] : []), ...batchTargets];
+                                    projectCanvasGenerationSubmission(nodesRef, setNodes, submissionIds, metadata);
                                     if (projectId) useCanvasStore.getState().updateProject(projectId, { nodes: nodesRef.current });
                                 },
                             },
                         );
                         if (!completed) throw new Error("生成任务缺少成功终态");
                         return completed;
-                    })();
-                    const completed = await nativeTask;
+                    })());
+                    const completed = await nativeTasks.get(batchIndex)!;
                     const binding = nativeBindTail.then(() => applyGenerationTaskResult(targetId, completed));
                     nativeBindTail = binding.catch(() => {});
                     await binding;

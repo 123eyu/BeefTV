@@ -16,7 +16,7 @@ import { DirectorCameraProperties } from "@/components/canvas/director/director-
 import { DirectorPanoramaAIModal } from "@/components/canvas/director/director-panorama-ai-modal";
 import { startOperation } from "@/stores/use-operation-progress";
 import { DirectorWorkbenchRail, type DirectorWorkbenchTab } from "@/components/canvas/director/director-workbench-rail";
-import { DirectorViewport, type DirectorViewportHandle } from "@/components/canvas/director/director-viewport";
+import { DirectorViewport, type DirectorPoseEvaluation, type DirectorViewportHandle } from "@/components/canvas/director/director-viewport";
 import { DirectorViewportDock } from "@/components/canvas/director/director-viewport-dock";
 import { DirectorSequencer } from "@/components/canvas/director/director-sequencer";
 import { DirectorPreviewComposer } from "@/components/canvas/director/director-preview-composer";
@@ -64,6 +64,12 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
     const theme = canvasThemes[useActiveTheme()];
     const effectiveConfig = useEffectiveConfig();
     const viewportRef = useRef<DirectorViewportHandle>(null);
+    const [evaluatedPose, setEvaluatedPose] = useState<DirectorPoseEvaluation | null>(null);
+    const handlePoseEvaluated = useCallback((next: DirectorPoseEvaluation) => {
+        setEvaluatedPose((current) => current?.objectId === next.objectId && current.pose === next.pose && current.time === next.time
+            && Object.entries(next.rotations).every(([bone, rotation]) => rotation!.every((value, index) => Math.abs(value - (current.rotations[bone as DirectorHumanoidBone]?.[index] ?? Infinity)) < 1e-6))
+            ? current : next);
+    }, []);
     const modelInputRef = useRef<HTMLInputElement>(null);
     const panoramaInputRef = useRef<HTMLInputElement>(null);
     const sceneReferenceInputRef = useRef<HTMLInputElement>(null);
@@ -390,6 +396,9 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
         };
     }, [activeCamera, cameraInspectorTab, captureReady, draft, mode, open, playing, playing ? null : playhead, viewMode]);
     const selectedObject = draft?.objects?.find((item) => item.id === selectedObjectId) || null;
+    const selectedPoseRotations = selectedObject && evaluatedPose?.objectId === selectedObject.id
+        && evaluatedPose.pose === (selectedObject.pose || "stand") && Math.abs(evaluatedPose.time - playhead) < 1e-5
+        ? evaluatedPose.rotations : undefined;
     const selectedGroup = draft?.groups?.find((item) => item.id === selectedGroupId) || null;
     const selectedLight = draft?.lights?.find((item) => item.id === selectedLightId) || null;
     // 写入关键帧的目的时间用吸附值；取值/显示/手势起点一律用 raw playhead，
@@ -1007,7 +1016,11 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
 
     const recordSelectedKeyframe = () => {
         if (selectedObject && selectedBone) {
-            const rotation = selectedObject.boneOverrides?.[selectedBone as DirectorHumanoidBone] || [0, 0, 0, 1] as DirectorQuat;
+            const rotation = selectedPoseRotations?.[selectedBone as DirectorHumanoidBone] || selectedObject.boneOverrides?.[selectedBone as DirectorHumanoidBone];
+            if (!rotation) {
+                message.info("请等待角色姿势加载完成后再记录骨骼关键帧");
+                return;
+            }
             updateObject(selectedObject.id, { boneTracks: upsertDirectorBoneKeyframe(selectedObject.boneTracks || [], selectedBone as DirectorHumanoidBone, snappedPlayhead, rotation) });
             return;
         }
@@ -1603,8 +1616,8 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
             </div>)}
         </div>}><Button block disabled={!activeCamera}>预设运镜</Button></Dropdown>
         <Field label="时长"><InputNumber aria-label="轨迹时长" min={0.5} max={120} step={0.5} value={activeShot.duration} addonAfter="s" className="w-full" onChange={(value) => { if (value !== null) updateMotionDuration(value); }} /></Field>
-        {motionPosition ? <div><div className="mb-2 opacity-65">位置</div><div className="grid grid-cols-3 gap-1">{motionPosition.map((value, axis) => <div key={axis} className="flex min-w-0 items-center rounded-md bg-white/5"><span className="pl-2 opacity-50">{["X", "Y", "Z"][axis]}</span><InputNumber aria-label={`轨迹位置 ${["X", "Y", "Z"][axis]}`} variant="borderless" controls={false} className="min-w-0 flex-1" step={0.1} value={Number(value.toFixed(2))} onChange={(next) => { if (next !== null) updateMotionPosition(axis, next); }} /></div>)}</div></div> : null}
-        {motionOptics ? <div><div className="mb-2 opacity-65">焦点</div><div className="grid grid-cols-3 gap-1">{motionOptics.target.map((value, axis) => <div key={axis} className="flex min-w-0 items-center rounded-md bg-white/5"><span className="pl-2 opacity-50">{["X", "Y", "Z"][axis]}</span><InputNumber aria-label={`轨迹焦点 ${["X", "Y", "Z"][axis]}`} variant="borderless" controls={false} className="min-w-0 flex-1" step={0.1} value={Number(value.toFixed(2))} onChange={(next) => { if (next !== null) updateMotionOptics({ target: motionOptics.target.map((entry, index) => index === axis ? next : entry) as DirectorVec3 }); }} /></div>)}</div></div> : null}
+        {motionPosition ? <div><div className="mb-2 opacity-65">位置</div><div className="grid grid-cols-3 gap-1">{motionPosition.map((value, axis) => <div key={axis} className="flex min-w-0 items-center rounded-md bg-[var(--cn-fill)]"><span className="pl-2 opacity-50">{["X", "Y", "Z"][axis]}</span><InputNumber aria-label={`轨迹位置 ${["X", "Y", "Z"][axis]}`} variant="borderless" controls={false} className="min-w-0 flex-1" step={0.1} value={Number(value.toFixed(2))} onChange={(next) => { if (next !== null) updateMotionPosition(axis, next); }} /></div>)}</div></div> : null}
+        {motionOptics ? <div><div className="mb-2 opacity-65">焦点</div><div className="grid grid-cols-3 gap-1">{motionOptics.target.map((value, axis) => <div key={axis} className="flex min-w-0 items-center rounded-md bg-[var(--cn-fill)]"><span className="pl-2 opacity-50">{["X", "Y", "Z"][axis]}</span><InputNumber aria-label={`轨迹焦点 ${["X", "Y", "Z"][axis]}`} variant="borderless" controls={false} className="min-w-0 flex-1" step={0.1} value={Number(value.toFixed(2))} onChange={(next) => { if (next !== null) updateMotionOptics({ target: motionOptics.target.map((entry, index) => index === axis ? next : entry) as DirectorVec3 }); }} /></div>)}</div></div> : null}
         {motionOptics ? <Field label="视角"><InputNumber aria-label="轨迹视角" min={1} max={179} step={1} value={Number(motionOptics.fov.toFixed(2))} addonAfter="°" className="w-full" onChange={(next) => { if (next !== null) updateMotionOptics({ fov: next }); }} /></Field> : null}
         <Button block onClick={addCameraKeyframe} disabled={!activeCamera}>记录当前位置关键帧</Button>
         {activeCamera ? <div className="opacity-55">{activeCamera.keyframes.length} 个位置关键帧</div> : null}
@@ -1802,6 +1815,7 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
                         onMultiObjectTransform={handleMultiObjectGroupTransform}
                         onBoneTransform={handleViewportBoneTransform}
                         onActorRigReady={handleActorRigReady}
+                        onPoseEvaluated={handlePoseEvaluated}
                     />
                     {workspaceView === "scene" ? <>
                         <CanvasDirectorOnboarding scope={onboardingScope} open={open} restartSignal={onboardingRestartSignal} className="director-workbench-onboarding absolute left-4 top-28 z-[var(--z-popover)] w-[min(360px,calc(100%-24px))]" />
@@ -1823,7 +1837,7 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
                         {selectedGroup && !capabilities.cameraTools ? <Inspector title={selectedGroup.name} onTitleChange={(name) => commit((current) => ({ ...current, groups: current.groups?.map((group) => group.id === selectedGroup.id ? { ...group, name } : group) }))}><Field label="对象">{draft.objects.filter((object) => object.groupId === selectedGroup.id).length}</Field></Inspector>
                         : sceneSelection.length > 1 && !capabilities.cameraTools && selectedSceneObjects.length === sceneSelection.length && multiSelectionTransformObject && multiSelectionRendered ? <MultiObjectInspector objects={selectedSceneObjects} representative={multiSelectionTransformObject} rendered={multiSelectionRendered} playhead={playhead} capabilities={capabilities} onTransformEdit={(edited) => handleMultiObjectTransform(multiSelectionTransformObject.id, multiSelectionRendered, edited)} onUniformScaleChange={handleMultiUniformScale} onUniformScaleCommit={() => stagedTransaction.end("commit")} onBoneRotationStage={handleMultiBoneRotation} onBoneRotationCommit={() => stagedTransaction.end("commit")} onUpdate={updateSelectedObjects} />
                         : sceneSelection.length > 1 && !capabilities.cameraTools ? <div className="space-y-3 p-3"><h3 className="text-sm font-medium">对象 ({sceneSelection.length})</h3><p className="text-xs opacity-65">已选中 {sceneSelection.length} 个对象</p></div>
-                        : selectedObject && !capabilities.cameraTools ? <ObjectInspector object={selectedObject} rendered={selectedObjectRendered || selectedObject.transform} playhead={snappedPlayhead} selectedBone={selectedBone} tab={actorInspectorTab} motionTabVisible={sequencerVisible} onTabChange={(tab) => { setActorInspectorTab(tab); if (tab !== "pose") setSelectedBone(null); }} capabilities={capabilities} fps={activeShot?.fps || 24} shotDuration={activeShot?.duration || 15} onSelectBone={setSelectedBone} onUpdate={(patch) => updateObject(selectedObject.id, patch)} onTransformEdit={(edited) => handleObjectTransform(selectedObject.id, selectedObjectRendered || selectedObject.transform, edited)} onToggleTransformKey={(channel) => toggleObjectTransformKey(selectedObject.id, channel)} onPathTransformEdit={(edited) => updateActorPath(selectedObject.id, (object) => updateDirectorActorPathTransform(object, edited))} onCreatePath={(kind) => createActorPath(selectedObject.id, kind)} onPathDurationChange={(duration) => updateActorPath(selectedObject.id, (object) => retimeDirectorActorPath(object, duration))} onPathFacingChange={(facing) => updateActorPath(selectedObject.id, (object) => setDirectorActorPathFacing(object, facing))} onUniformScaleChange={(value, stage) => handleUniformScale(selectedObject.id, value, stage)} onUniformScaleCommit={() => stagedTransaction.end("commit")} onBoneRotationStage={(bone, rotation) => writeBoneRotation(selectedObject.id, bone, rotation, "stage")} onBoneRotationCommit={() => stagedTransaction.end("commit")} onAddKeyframe={recordSelectedKeyframe} onDelete={() => removeObject(selectedObject.id)} />
+                        : selectedObject && !capabilities.cameraTools ? <ObjectInspector evaluatedRotations={selectedPoseRotations} object={selectedObject} rendered={selectedObjectRendered || selectedObject.transform} playhead={snappedPlayhead} selectedBone={selectedBone} tab={actorInspectorTab} motionTabVisible={sequencerVisible} onTabChange={(tab) => { setActorInspectorTab(tab); if (tab !== "pose") setSelectedBone(null); }} capabilities={capabilities} fps={activeShot?.fps || 24} shotDuration={activeShot?.duration || 15} onSelectBone={setSelectedBone} onUpdate={(patch) => updateObject(selectedObject.id, patch)} onTransformEdit={(edited) => handleObjectTransform(selectedObject.id, selectedObjectRendered || selectedObject.transform, edited)} onToggleTransformKey={(channel) => toggleObjectTransformKey(selectedObject.id, channel)} onPathTransformEdit={(edited) => updateActorPath(selectedObject.id, (object) => updateDirectorActorPathTransform(object, edited))} onCreatePath={(kind) => createActorPath(selectedObject.id, kind)} onPathDurationChange={(duration) => updateActorPath(selectedObject.id, (object) => retimeDirectorActorPath(object, duration))} onPathFacingChange={(facing) => updateActorPath(selectedObject.id, (object) => setDirectorActorPathFacing(object, facing))} onUniformScaleChange={(value, stage) => handleUniformScale(selectedObject.id, value, stage)} onUniformScaleCommit={() => stagedTransaction.end("commit")} onBoneRotationStage={(bone, rotation) => writeBoneRotation(selectedObject.id, bone, rotation, "stage")} onBoneRotationCommit={() => stagedTransaction.end("commit")} onAddKeyframe={recordSelectedKeyframe} onDelete={() => removeObject(selectedObject.id)} />
                         : selectedLight && !capabilities.cameraTools ? <LightInspector light={selectedLight} onUpdate={(patch) => updateLight(selectedLight.id, patch)} onDelete={() => removeLight(selectedLight.id)} />
                         : sceneInspectorView === "scene" && !capabilities.cameraTools && viewMode !== "camera" ? <DirectorSceneInspector scene={draft} onChange={(patch) => commit((current) => ({ ...current, ...patch }))} />
                         : capabilities.cameraTools || viewMode === "camera" ? <DirectorCameraScreenshotTabs scene={draft} tab={cameraInspectorTab} motionTabVisible={sequencerVisible} onTabChange={setCameraInspectorTab} motionContent={motionInspector}><DirectorCameraProperties scene={draft} camera={activeCamera} cameras={draft.cameras} shot={activeShot} objects={draft.objects} previewUrl={cameraPreviewUrl} playhead={playhead} onUpdateCamera={updateActiveCamera} onUpdateAnimated={updateAnimatedCameraProperty} onUpdateRotation={updateAnimatedCameraRotation} onToggleTrack={toggleCameraTrack} onChangeLookAtMode={updateCameraLookAtMode} onSelectCamera={(cameraId) => updateShot(activeShot.id, { cameraId })} onFollowObject={handleFollowObject}>{shotInspector}</DirectorCameraProperties></DirectorCameraScreenshotTabs>
@@ -1882,7 +1896,7 @@ export function CanvasDirectorWorkbench({ open, scene, projectId, imageNodes, on
     );
 }
 
-function ObjectInspector({ object, rendered, playhead, selectedBone, tab, motionTabVisible, onTabChange, capabilities, fps, shotDuration, onSelectBone, onUpdate, onTransformEdit, onToggleTransformKey, onPathTransformEdit, onCreatePath, onPathDurationChange, onPathFacingChange, onUniformScaleChange, onUniformScaleCommit, onBoneRotationStage, onBoneRotationCommit, onAddKeyframe, onDelete }: { object: DirectorObject; rendered: DirectorTransform; playhead: number; selectedBone: string | null; tab: "properties" | "pose" | "motion"; motionTabVisible: boolean; onTabChange: (tab: "properties" | "pose" | "motion") => void; capabilities: DirectorModeCapabilities; fps: number; shotDuration: number; onSelectBone: (bone: string | null) => void; onUpdate: (patch: Partial<DirectorObject>) => void; onTransformEdit: (transform: DirectorTransform) => void; onToggleTransformKey: (channel: "position" | "rotation" | "scale") => void; onPathTransformEdit: (transform: DirectorTransform) => void; onCreatePath: (kind: DirectorActorPathKind | "pencil" | "pen") => void; onPathDurationChange: (duration: number) => void; onPathFacingChange: (facing: boolean) => void; onUniformScaleChange: (value: number, stage: boolean) => void; onUniformScaleCommit: () => void; onBoneRotationStage: (bone: DirectorHumanoidBone, rotation: DirectorQuat) => void; onBoneRotationCommit: () => void; onAddKeyframe: () => void; onDelete: () => void }) {
+function ObjectInspector({ object, evaluatedRotations, rendered, playhead, selectedBone, tab, motionTabVisible, onTabChange, capabilities, fps, shotDuration, onSelectBone, onUpdate, onTransformEdit, onToggleTransformKey, onPathTransformEdit, onCreatePath, onPathDurationChange, onPathFacingChange, onUniformScaleChange, onUniformScaleCommit, onBoneRotationStage, onBoneRotationCommit, onAddKeyframe, onDelete }: { object: DirectorObject; evaluatedRotations?: Partial<Record<DirectorHumanoidBone, DirectorQuat>>; rendered: DirectorTransform; playhead: number; selectedBone: string | null; tab: "properties" | "pose" | "motion"; motionTabVisible: boolean; onTabChange: (tab: "properties" | "pose" | "motion") => void; capabilities: DirectorModeCapabilities; fps: number; shotDuration: number; onSelectBone: (bone: string | null) => void; onUpdate: (patch: Partial<DirectorObject>) => void; onTransformEdit: (transform: DirectorTransform) => void; onToggleTransformKey: (channel: "position" | "rotation" | "scale") => void; onPathTransformEdit: (transform: DirectorTransform) => void; onCreatePath: (kind: DirectorActorPathKind | "pencil" | "pen") => void; onPathDurationChange: (duration: number) => void; onPathFacingChange: (facing: boolean) => void; onUniformScaleChange: (value: number, stage: boolean) => void; onUniformScaleCommit: () => void; onBoneRotationStage: (bone: DirectorHumanoidBone, rotation: DirectorQuat) => void; onBoneRotationCommit: () => void; onAddKeyframe: () => void; onDelete: () => void }) {
     const [pathMenuOpen, setPathMenuOpen] = useState(false);
     const beginPath = (kind: DirectorActorPathKind | "pencil" | "pen") => { setPathMenuOpen(false); onCreatePath(kind); };
     const isActor = object.kind === "actor" || object.primitive === "character";
@@ -1945,19 +1959,19 @@ function ObjectInspector({ object, rendered, playhead, selectedBone, tab, motion
             {mappedBones.length ? !object.url ? <div className="director-pose-controls space-y-3">{directorProceduralPoseControlGroups.map((group) => {
                 const controls = group.controls.filter((control) => mappedBones.includes(control.bone));
                 return controls.length ? <section key={group.label} className="space-y-1.5"><h4 className="text-[var(--fs-tiny)] opacity-55">{group.label}</h4>{controls.map(({ bone, axisIndex, label, direction }) => {
-                    const rotation = object.boneOverrides?.[bone] || poseDeltas[bone] || [0, 0, 0, 1] as DirectorQuat;
+                    const rotation = evaluatedRotations?.[bone] || object.boneOverrides?.[bone] || poseDeltas[bone] || [0, 0, 0, 1] as DirectorQuat;
                     const sidePrefix = bone.startsWith("left") ? "左 " : bone.startsWith("right") ? "右 " : "";
                     const axisLabel = `${sidePrefix}${label}`;
                     const axisLabels = [axisLabel, axisLabel, axisLabel] as const;
-                    return <div key={`${bone}-${axisIndex}`} data-director-bone-row={bone} data-director-pose-axis={label} className={`rounded-md transition ${selectedBone === bone ? "bg-white/5 ring-1 ring-[var(--workspace-accent)]/50" : ""}`} onPointerDown={() => onSelectBone(bone)}>
+                    return <div key={`${bone}-${axisIndex}`} data-director-bone-row={bone} data-director-pose-axis={label} className={`rounded-md transition ${selectedBone === bone ? "bg-[var(--cn-fill)] ring-1 ring-[var(--workspace-accent)]/50" : ""}`} onPointerDown={() => onSelectBone(bone)}>
                         <BoneRotationFields axes={axisLabels} axisIndices={[axisIndex]} axisDirections={axisDirections(axisIndex, direction)} label="" rotation={rotation} onChange={(next) => onBoneRotationStage(bone, next)} onChangeComplete={onBoneRotationCommit} />
                     </div>;
                 })}</section> : null;
             })}</div> : <div className="director-pose-controls space-y-3">{directorBoneControlGroups.map((group) => {
                 const bones = group.bones.filter((bone) => mappedBones.includes(bone));
                 return bones.length ? <section key={group.label} className="space-y-2"><h4 className="text-[var(--fs-tiny)] opacity-55">{group.label}</h4>{bones.map((bone) => {
-                    const rotation = object.boneOverrides?.[bone] || poseDeltas[bone] || [0, 0, 0, 1] as DirectorQuat;
-                    return <div key={bone} data-director-bone-row={bone} className={`rounded-md p-1.5 transition ${selectedBone === bone ? "bg-white/5 ring-1 ring-[var(--workspace-accent)]/50" : ""}`} onPointerDown={() => onSelectBone(bone)}>
+                    const rotation = evaluatedRotations?.[bone] || object.boneOverrides?.[bone] || poseDeltas[bone] || [0, 0, 0, 1] as DirectorQuat;
+                    return <div key={bone} data-director-bone-row={bone} className={`rounded-md p-1.5 transition ${selectedBone === bone ? "bg-[var(--cn-fill)] ring-1 ring-[var(--workspace-accent)]/50" : ""}`} onPointerDown={() => onSelectBone(bone)}>
                         <div className="mb-1 flex items-center justify-between gap-2"><button type="button" aria-label={`选择骨骼 ${directorBoneLabel(bone)}`} aria-pressed={selectedBone === bone} className="min-w-0 flex-1 truncate text-left text-[var(--fs-label)]" onClick={() => onSelectBone(bone)}>{directorBoneLabel(bone)}</button><Button size="small" aria-label={`重置骨骼 ${directorBoneLabel(bone)}`} onClick={() => resetBone(bone)}>重置</Button></div>
                         <BoneRotationFields boneLabel={directorBoneLabel(bone)} label="" rotation={rotation} onChange={(next) => onBoneRotationStage(bone, next)} onChangeComplete={onBoneRotationCommit} />
                     </div>;

@@ -65,6 +65,9 @@ export function isolateCopiedNodeMetadata(node: CanvasNodeData, idMap: ReadonlyM
     delete metadata.versionOfNodeId;
     delete metadata.versionLabel;
     delete metadata.versionPrimary;
+    delete metadata.upscaleBatch;
+    if (metadata.upscale) metadata.upscale = structuredClone(metadata.upscale);
+    metadata.generatedFromProcessingNodeId = remapOwnedNodeId(node.metadata?.generatedFromProcessingNodeId, idMap);
 
     metadata.copiedFromNodeId = node.id;
     if (node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) {

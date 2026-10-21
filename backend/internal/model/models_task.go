@@ -52,6 +52,10 @@ type Task struct {
 	CompletedAt               *time.Time              `json:"completedAt"`
 	CreatedAt                 time.Time               `json:"createdAt" gorm:"index:idx_tasks_user_created,priority:2;index:idx_tasks_status_created,priority:2;index:idx_tasks_claim,priority:3;index:idx_tasks_user_project_created,priority:3"`
 	UpdatedAt                 time.Time               `json:"updatedAt"`
+
+	// WorkflowSourceCipher retains the canonical successful command privately,
+	// before public completion projections remove media and provider settings.
+	WorkflowSourceCipher string `json:"-" gorm:"type:text"`
 }
 
 // TaskFailureDiagnostics contains bounded, redacted evidence, never request bodies.

@@ -64,6 +64,51 @@ func definiteImageThrottle(err error) bool {
 	return !isImageRecoveryError(err) && errors.As(err, &upstream) && upstream.StatusCode == 429 && classifyProviderHTTP(upstream).Category == generation.CategoryThrottled
 }
 
+func definiteMidjourneyCountRejection(err error) bool {
+	var upstream providerHTTPError
+	if !errors.As(err, &upstream) || upstream.StatusCode < 400 {
+		return false
+	}
+	var body struct {
+		TaskID string `json:"task_id"`
+		ID     string `json:"id"`
+		Error  struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+			TaskID  string `json:"task_id"`
+		} `json:"error"`
+	}
+	if json.Unmarshal([]byte(upstream.Body), &body) != nil || body.TaskID != "" || body.ID != "" || body.Error.TaskID != "" {
+		return false
+	}
+	return body.Error.Code == "invalid_request" && strings.HasPrefix(strings.ToLower(strings.TrimSpace(body.Error.Message)), "midjourney generates four images per request; n must be 4 or omitted")
+}
+
+// A structured VOD parameter failure is a terminal response, even if VOD created
+// a task before rejecting its parameters. It is never evidence for an automatic resend.
+func definiteVODImageParameterFailure(err error) bool {
+	if isImageRecoveryError(err) {
+		return false
+	}
+	var unknown generation.SubmissionUnknownError
+	if errors.As(err, &unknown) {
+		return false
+	}
+	var upstream providerHTTPError
+	if !errors.As(err, &upstream) || upstream.StatusCode != http.StatusBadRequest {
+		return false
+	}
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal([]byte(upstream.Body), &body) != nil {
+		return false
+	}
+	return body.Error.Code == "vod_image_invalid_params" || body.Error.Code == "vod_image_invalid_media"
+}
+
 func isImageRecoveryError(err error) bool {
 	var recovery imageRecoveryError
 	return errors.As(err, &recovery)
@@ -307,6 +352,9 @@ func (s *Service) sendImageSubmissionWith(ctx context.Context, task model.Task, 
 			}
 			return data, mime, nil
 		}
+		if !row.ResponseAccepted && definiteMidjourneyCountRejection(sendErr) {
+			return nil, "", sendErr
+		}
 		if !retrySameImageSubmission(sendErr) {
 			var preparation generation.RequestPreparationError
 			if errors.As(sendErr, &preparation) {
@@ -336,6 +384,9 @@ func (s *Service) sendImageSubmissionWith(ctx context.Context, task model.Task, 
 }
 
 func retrySameImageSubmission(err error) bool {
+	if definiteMidjourneyCountRejection(err) {
+		return false
+	}
 	var preparation generation.RequestPreparationError
 	if errors.As(err, &preparation) {
 		return false

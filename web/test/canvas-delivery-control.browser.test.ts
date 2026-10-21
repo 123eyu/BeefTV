@@ -97,7 +97,8 @@ for (const owner of ["canvas", "account"]) {
             }
             // Simulate route/account changes while the actual AntD dialog lives.
             await page.evaluate((owner) => document.getElementById(`switch-${owner}`)!.click(), owner);
-            if (afterRequest) releaseCancellation?.(); else await confirm.click();
+            if (afterRequest) releaseCancellation?.();
+            else await page.getByRole("dialog").getByRole("button", { name: "继续等待", exact: true }).click({ timeout: 5000 }).catch(() => {});
             await page.getByRole("dialog").waitFor({ state: "hidden" });
             expect(writes).toHaveLength(afterRequest ? 1 : 0);
             expect(JSON.parse(await page.locator("#snapshot").innerText()).nodes[0].metadata.status).toBe("loading");

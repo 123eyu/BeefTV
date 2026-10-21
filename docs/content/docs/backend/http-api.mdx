@@ -52,6 +52,8 @@ MiniMax speech 的 OpenAI 音频兼容目录通过 `audioOptions` 提供官方�
 | `/timeline/render-plan` | 只读编译时间线语义渲染计划：不排队、不落盘、不计费 |
 | `/timeline/renders`、`/timeline/transcriptions` | 本机时间线成片任务与字幕转写任务 |
 | `/depth-captures` | 本机深度动作捕捉任务 |
+| `/media-upscale/*` | Topaz 图片与视频云端超分、规格及费用估算 |
+| `/canvas-workflows/*`, `/canvas-workflow-runs/*` | 画布可复用工作流模板、输入替换和持久执行 |
 | `/tasks/*` | 生成任务创建、查询、取消、恢复与事件流 |
 | `/ai/*` | 外部模型目录和自定义协议转发 |
 | `/plugins/*`, `/skills/*` | 本地扩展包与技能 |
@@ -77,6 +79,53 @@ MiniMax speech 的 OpenAI 音频兼容目录通过 `audioOptions` 提供官方�
 `POST /timeline/transcriptions` 接收待转写素材编号和可选语言，创建字幕转写任务。只接受当前用户已上传完成的音视频。省略 `model` 使用本地 whisper.cpp；指定 `model` 使用已连接 BeefTV 账号的云端转写模型，必须由当前目录声明 `audio.transcriptions`。云端请求在服务端提取单声道 16 kHz WAV 后提交，最多 25 MiB；凭据不写入任务，排队期间连接改变会拒绝执行。云端识别按模型计费，结果以带时间的字幕返回。
 
 `POST /depth-captures` 接收待处理视频素材编号，创建本机深度动作捕捉任务。只接受当前用户已上传完成的视频。可选 `nodeId` 指定结果节点，此时必须提供 `projectId`；任务保存目标节点并在完成后使用既有画布任务绑定操作回填。节点必须仍引用该任务，已删除或已改用其他任务的节点不会被恢复或覆盖。
+
+### Topaz 图片与视频超分
+
+`GET /media-upscale/capabilities` 返回图片和视频支持的模式、模型、倍率和格式。`POST /media-upscale/estimate` 接收 `resourceId,channelId,mode,model,scale,outputFormat?,enhancementStrength?`，通过官方算力返回源与输出规格及人民币预留费用 `reservation,currency=CNY,generationSubmitted=false`。估价不提交生成；未取得有效报价时禁止提交。
+
+`POST /media-upscale/tasks` 增加 `clientOperationId,projectId?,nodeId?`，创建标准 `canvas_image` 或 `canvas_video` 任务。`channelId` 固定为 `beefapi`；图片支持 Standard V2、Wonder 3.5，视频支持 Proteus、Starlight Fast 2，分别映射到四个 `topaz-*` 官方模型。倍率为一至四的整数，图片输出 PNG 或 JPEG。素材必须属于当前用户且已就绪；视频最长五分钟。
+
+复用已连接的官方算力账号，客户端无需配置供应商 Key；任务输入中的凭据由现有密钥保护层加密。素材上传、估价、生成和结果查询均经 BeefAPI。任务复用标准生成队列、稳定操作 ID 与回执恢复；提交状态不确定时禁止自动重提。结果保存为用户自有资源并回填新节点，保留原素材。取消不保证云端停止或退款；普通生成接口拒绝直接供应商端点。
+
+`POST /media-upscale/tasks/:id/recover` 校验归属和官方超分模型，优先取回原任务结果。已失败且有回执的任务只查询原云端任务；没有回执的任务仅在现有队列能证明尚未受理时允许沿用原操作 ID 重试，不确定提交仍被阻止。已取消任务要求先核对状态。源视频有音轨而云端结果缺失时，落库前尝试无重编码补回；不能安全保留则明确失败。
+
+### 画布可复用工作流
+
+所有接口使用现有 `{code,msg,data}` 信封，并限定当前工作区 owner。模板创建、删除、运行、重试与取消仅接受可信桌面 UI，外部 Agent 凭据无法调用写入口。
+
+| 方法 | 路径 | 请求或返回的 `data` |
+| --- | --- | --- |
+| GET | `/canvas-workflows` | `{workflows: Template[]}` |
+| POST | `/canvas-workflows` | 接收 `{name,description,definition}`，返回 `Template` |
+| GET / DELETE | `/canvas-workflows/:id` | 模板详情 / `{id}` |
+| GET | `/canvas-workflow-operations` | `{operations}`，端口与安全参数描述 |
+| GET | `/canvas-workflows/:id/editor?revision=N` | `{workflow,operations}`，指定版本的安全编辑投影 |
+| PUT | `/canvas-workflows/:id` | `{name,description,definition,expectedRevision}`，版本冲突返回 409 |
+| POST | `/canvas-workflows/validate` | `{definition,templateId?,templateRevision?}`，返回 `{valid:true,definition}`，定义已规范化 |
+| GET | `/canvas-workflows/:id/runs` | `{runs: Run[]}`，最近 100 次 |
+| POST | `/canvas-workflows/:id/runs` | 接收 `{clientOperationId,inputs,templateRevision?}`，返回 `Run` |
+| GET | `/canvas-workflow-runs/:id` | `Run` |
+| POST | `/canvas-workflow-runs/:id/retry` | 重试失败步骤，返回 `Run` |
+| POST | `/canvas-workflow-runs/:id/cancel` | 停止后续步骤并尝试取消已开始任务，返回 `Run` |
+
+`definition` 为 `{version:1,nodes,edges,outputNodeIds}`。节点字段为 `{id,title,mediaType,role,resourceId?,text?,sourceTaskId?}`；素材类型为 `image|video|audio|text`，角色为 `input|constant|generation|depth`。连线使用 `{fromNodeId,toNodeId}`。每个生成步骤必须引用同用户的已成功标准生成任务；后端冻结参数与准确的参考素材槽位。变量必须唯一匹配原槽位或原提示词片段，无法映射、重复、循环或断开的可替换输入会在保存前报错。深度步骤只接受一个视频输入。输入替换为 `{[nodeId]:{resourceId?,text?}}`，省略某输入则使用模板默认值。
+
+`Template` 返回 `{id,name,description,definition,createdAt,updatedAt}`。`Run` 返回 `{id,templateId,templateName,status,error?,steps,outputs,createdAt,updatedAt}`；运行状态为 `queued|running|succeeded|failed|cancelled`。步骤为 `{nodeId,title,status,taskId?,error?,resourceId?,text?}`，步骤初态为 `pending`；输入和常量直接完成。输出为 `{nodeId,mediaType,resourceId?,text?}`。任务派发使用已有 admission 和 worker；切换画布不影响运行，应用重启后通过持久任务操作编号对账并继续。运行确认标识重复时返回原运行，输入不同则拒绝。取消不能保证上游任务立即停止或退款。
+
+新完成任务会私有加密保留完整生成命令，以供封装时恢复原参考素材和参数。已在旧版本清理完整输入的历史任务不能无损还原，保存时提示先手动重新运行一次。首版拒绝一次任务生成多个结果的来源，避免把所选的第二个结果错误替换成首次结果；请使用单结果任务封装。
+
+模板返回 `revision`，运行返回 `templateRevision`。模板保存创建不可变版本，旧实例与运行继续使用原版本；幂等身份包含版本。编辑已有模板时，验证请求携带模板与版本上下文，复用已冻结配方，不依赖原任务历史继续存在。
+
+定义新增可选 `positions`；节点新增 `operationId`、`operationVersion`、`config` 与 `useDefault`，支持通用 `operation` 角色，兼容旧角色。连线可指定 `fromPort`、`toPort`、`order`。当前操作包括图片、视频、音频、文本生成，以及深度、视频裁剪和视频拼接；生成不属于工作流必选步骤。裁剪使用 `startSeconds/endSeconds`，拼接按输入 `order` 排序，二者复用本地持久媒体任务。可替换素材仅在 `useDefault` 明确启用时作为实例默认输入。
+
+编辑接口不公开完整配方或密钥。模型步骤只允许修改来源已有的安全参数与提示词；更换模型或渠道需重新导入已成功的步骤，不通过编辑字段猜测新请求。
+
+视频生成节点可设置 `videoDurationSourceNodeId`，指向已连接至该步骤的参考视频节点。每次执行使用该节点当前产出或替换素材的 `durationMs`，向上取整为整数秒后写入 `config.videoSeconds`；省略此字段则沿用固定时长。来源必须为视频、已经就绪且拥有有效时长，来源模型必须已声明时长参数；缺失时长不会静默沿用旧值。计算后的时长仍经过模型能力校验，不会自动截短到模型上限。
+
+工作流提示词通过 `@[node:<节点ID>]` 保存引用，编辑器显示节点当前名称；重命名不改变引用对象。输入 `@` 可选择同一工作流中兼容的上游节点并自动连线，不能引用自身或形成循环。媒体引用在执行时转换为原模型配方中对应的参考标签，文本引用替换为本次节点产出的文本，支持重复引用；断开、删除或无法映射的引用在保存时拒绝。连线 `order` 仍是同一端口内从 0 开始的内部槽位，与执行顺序无关，界面无需用户编辑编号。
+
+操作目录还包含 `image.crop`、`image.resize`、`video.crop`、`video.frame`、`video.audio`。裁切使用归一化 `x/y/width/height`；尺寸调整使用 `longEdge` 与可选 `algorithm`；截帧使用 `seconds`。输入端口为 `image` 或 `video`。这些操作派发私有固定配置的 `canvas_media_transform` 本地任务，复用稳定任务操作编号和 `taskId:0` 产物恢复身份。配置只接受结构化参数，原生进程不接受客户端传入的路径或命令。`definition.editorLayoutVersion` 用于编辑器布局升级，运行依赖关系不变。
 
 深度任务继续在 `resultJson.resourceId` 返回结果资源，同时通过标准 `outputs` 提供视频素材及交付状态。历史深度任务也支持结果交付修复；没有记录目标节点的旧任务可通过 `canvas.task.bind` 绑定仍引用该任务的节点。交付暂时失败不会改写任务的成功状态，后台恢复仅重试交付，不重新执行深度处理。
 

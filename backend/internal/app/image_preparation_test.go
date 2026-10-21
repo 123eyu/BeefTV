@@ -38,3 +38,20 @@ func TestImagePreparationFailureIsNotUnknownSubmission(t *testing.T) {
 		t.Fatalf("a sealed prior attempt was described as unsubmitted: %#v", sealed)
 	}
 }
+
+// A failed metadata GET never dispatched the paid image POST. Route sealing
+// must preserve that proof rather than wrap it as an unknown submission.
+func TestImageReplayProbeFailureRemainsUnsentAfterRouteFinish(t *testing.T) {
+	s, task, attempt := routeUnknownFixture(t)
+	task.Type = "canvas_image"
+	cause := generation.RequestPreparationError{Cause: generation.RequestNotSentError{Cause: context.DeadlineExceeded}}
+	s.finishTaskRouteAttempt(attempt, &task, cause)
+	stored, err := s.repo.LatestRouteAttempt(task.ID)
+	if err != nil || stored.DispatchState != "rejected_no_job" {
+		t.Fatalf("metadata probe sealed as unknown: %+v %v", stored, err)
+	}
+	failure := classifyTaskFailure(cause)
+	if failure.Uncertain || failure.Category != generation.CategoryRequestNotSent {
+		t.Fatalf("incorrect UI failure: %#v", failure)
+	}
+}

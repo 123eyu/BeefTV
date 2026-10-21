@@ -6,7 +6,6 @@ import { sameCanvasContent, sameCanvasDocument } from "@/lib/canvas/canvas-conte
 import { traceCanvasGraph } from "@/lib/canvas/canvas-graph-trace";
 import { DEFAULT_CANVAS_BACKGROUND_MODE, normalizeCanvasAppearance, readCanvasAppearanceDefault, type CanvasAppearance } from "@/lib/canvas/canvas-appearance";
 import { decideExternalCanvasRevision } from "@/lib/canvas/canvas-external-revision";
-import { useThemeStore } from "@/stores/use-theme-store";
 import { parseCanvasStorageDocument, rebaseCanvasProjects, serializeCanvasStorageDocument, type CanvasStorageDocument } from "@/lib/canvas/canvas-storage-revision";
 import { localForageStorageForScope } from "@/lib/localforage-storage";
 import { scopedLocalStorage } from "@/lib/user-scope";
@@ -755,7 +754,7 @@ export const useCanvasStore = create<CanvasStore>()(
                     connections: [],
                     chatSessions: [],
                     activeChatId: null,
-                    appearance: appearanceDefault?.appearance ?? { mode: useThemeStore.getState().theme },
+                    appearance: appearanceDefault?.appearance ?? { mode: "follow" },
                     backgroundMode: appearanceDefault?.backgroundMode || DEFAULT_CANVAS_BACKGROUND_MODE,
                     showImageInfo: false,
                     viewport: initialViewport,

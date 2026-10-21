@@ -174,7 +174,7 @@ function syncOverlayContent(scene: OverlayScene, props: CanvasLeaferGraphicsLaye
     }
 
     const bounds = props.selectedNodeBounds;
-    scene.selectionBounds.visible = Boolean(bounds && !selection);
+    scene.selectionBounds.visible = Boolean(bounds && !selection && !scene.dragPreview?.compact);
     if (bounds && !selection) {
         syncSelectionBounds(scene.selectionBounds, liveSelectedNodeBounds(bounds, scene.dragPreview), viewportScale);
         scene.selectionBounds.stroke = props.theme.node.label;
@@ -298,7 +298,7 @@ function liveSelectedNodeBounds(bounds: NonNullable<NodeBounds>, preview: Canvas
 function syncLiveSelectionBounds(scene: OverlayScene, props: CanvasLeaferGraphicsLayerProps, viewportScale: number) {
     const bounds = props.selectedNodeBounds;
     const selection = props.selectionBox;
-    scene.selectionBounds.visible = Boolean(bounds && !selection);
+    scene.selectionBounds.visible = Boolean(bounds && !selection && !scene.dragPreview?.compact);
     if (!bounds || selection) return;
     syncSelectionBounds(scene.selectionBounds, liveSelectedNodeBounds(bounds, scene.dragPreview), viewportScale);
     scene.selectionBounds.stroke = props.theme.node.label;

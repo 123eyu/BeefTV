@@ -58,6 +58,8 @@ export type ImageCapabilityConfig = {
     outputFormat: { supported: boolean };
     maxOutputs: number;
     fixedOutputs?: number;
+    /** Total outputs orchestrated across native fixed-size requests. */
+    generationOutputs?: number[];
 };
 
 export type VideoCapabilityConfig = {
@@ -408,12 +410,13 @@ export function defaultImageCapabilityConfig(protocol?: ModelProtocol, model = "
     }
     const contract = protocol === "openai-image" ? beefAPIImageContract(model) : undefined;
     if (contract) {
+        const presets = "presets" in contract ? contract.presets as ImageResolutionOption[] : undefined;
         return {
             references: { promptMaxChars: contract.promptMaxChars, maxImages: contract.maxImages, maxImageBytes: contract.maxImageBytes, maskSupported: false },
-            size: { parameter: "size", values: [...Object.keys(contract.sizes), ...(contract.fixedOutputs ? Object.values(contract.sizes) : [])], default: "1:1", allowCustom: contract.minSide !== contract.maxSide },
+            size: { parameter: "size", values: [...new Set([...Object.keys(contract.sizes), ...(contract.fixedOutputs ? Object.values(contract.sizes) : []), ...(presets?.flatMap((preset) => [preset.ratio, preset.size]) || [])])], default: "1:1", allowCustom: contract.minSide !== contract.maxSide, ...(presets ? { presets } : {}) },
             quality: { supported: false, values: [], default: "auto" },
             transparentBackground: { supported: false, default: false },
-            responseFormat: { supported: Boolean(contract.fixedOutputs) }, outputFormat: { supported: false }, maxOutputs: contract.fixedOutputs || 1, fixedOutputs: contract.fixedOutputs,
+            responseFormat: { supported: Boolean(contract.fixedOutputs) }, outputFormat: { supported: false }, maxOutputs: contract.fixedOutputs || 1, fixedOutputs: contract.fixedOutputs, generationOutputs: "generationOutputs" in contract ? contract.generationOutputs as number[] : undefined,
         };
     }
     if (protocol === "grok-image") {
@@ -683,6 +686,10 @@ export function modelCapabilityConfigFor(
     const profile = channel?.modelProfiles?.find((item) => item.model === modelName && item.capabilityConfig && !Array.isArray(item.capabilityConfig)) || channel?.modelProfiles?.find((item) => item.model === modelName);
     const protocol = profile?.protocol || channel?.interfaceType;
     const fallback = defaultModelCapabilityConfig(protocol, modelName);
+    // Official gateway contracts also upgrade capabilities cached by older installs.
+    try {
+        if (protocol === "openai-image" && beefAPIImageContract(modelName)?.fixedOutputs && ["beeftv.app", "beefapi.com", "enterprise.beefapi.com", "whatstoken.ai", "www.whatstoken.ai"].includes(new URL(channel?.baseUrl || "").hostname.toLowerCase())) return fallback;
+    } catch { /* Config without a public endpoint uses its stored capabilities. */ }
     const alignMaterialPixels = (video: VideoCapabilityConfig | undefined) => {
         let host = "";
         try { host = new URL(channel?.baseUrl || "").hostname.toLowerCase(); } catch { /* no public URL */ }
@@ -1335,7 +1342,7 @@ export function normalizeImageValue(profile: ImageCapabilityConfig, value: { siz
     // 预设档位带入请求。仅在 quality 未声明支持时启用，避免与 auto/low/medium/high
     // 这组真实图片质量语义混用。
     const presetTier = !profile.quality.supported ? imagePresetTierForSelection(profile, size) : undefined;
-    const quality = profile.quality.supported
+    const quality = profile.fixedOutputs && profile.size.presets?.length ? "auto" : profile.quality.supported
         ? requestedQuality === "auto" || requestedQuality === "any"
             ? profile.quality.values.includes("auto") ? "auto" : profile.quality.default
             : value.quality && profile.quality.values.includes(value.quality)
@@ -1344,7 +1351,8 @@ export function normalizeImageValue(profile: ImageCapabilityConfig, value: { siz
         : requestedQuality === "1k" || requestedQuality === "2k" || requestedQuality === "4k"
           ? requestedQuality
           : presetTier || profile.quality.default || "auto";
-    const count = String(profile.fixedOutputs || Math.max(1, Math.min(profile.maxOutputs, Math.floor(Math.abs(Number(value.count)) || 1))));
+    const requestedCount = Math.floor(Math.abs(Number(value.count)) || 1);
+    const count = String(profile.fixedOutputs ? (profile.generationOutputs?.includes(requestedCount) ? requestedCount : profile.fixedOutputs) : Math.max(1, Math.min(profile.maxOutputs, requestedCount)));
     const transparentBackground = profile.transparentBackground.supported && value.transparentBackground === "true" ? "true" : "false";
     return { size, quality, count, transparentBackground };
 }

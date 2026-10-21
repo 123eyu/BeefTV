@@ -166,7 +166,11 @@ func (s *Service) Process(ctx context.Context, task *model.Task) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	stored, err := s.media.SaveVideo(task.UserID, OutputName, info.Size(), OutputWidth, OutputHeight, resource.DurationMs, file, "depth:"+task.ID)
+	facts, err := s.probeOutput(ctx, matches[0])
+	if err != nil || !facts.HasVideo || facts.Width <= 0 || facts.Height <= 0 || facts.DurationMs <= 0 {
+		return s.failUnlessCanceled(ctx, task, stageOutput, "无法读取深度结果视频的实际尺寸和时长")
+	}
+	stored, err := s.media.SaveVideo(task.UserID, OutputName, info.Size(), facts.Width, facts.Height, facts.DurationMs, file, "depth:"+task.ID)
 	if err != nil {
 		return s.failUnlessCanceled(ctx, task, stageSave, err.Error())
 	}
@@ -175,8 +179,8 @@ func (s *Service) Process(ctx context.Context, task *model.Task) error {
 		FileName:       OutputName,
 		Size:           stored.Size,
 		DurationMs:     stored.DurationMs,
-		Width:          OutputWidth,
-		Height:         OutputHeight,
+		Width:          stored.Width,
+		Height:         stored.Height,
 		Device:         choice.Device,
 		FallbackReason: choice.FallbackReason,
 		RuntimeVersion: "v1",

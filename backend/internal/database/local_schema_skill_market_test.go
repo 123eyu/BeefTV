@@ -24,7 +24,7 @@ func TestV20MarketReleaseMigrationPreservesVersionsAndLedger(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, sql := range []string{
-		"DELETE FROM local_schema_migrations WHERE version = 21",
+		"DELETE FROM local_schema_migrations WHERE version >= 21",
 		"ALTER TABLE skill_versions DROP COLUMN market_release_json",
 		"ALTER TABLE skill_versions ADD COLUMN private_preview_note TEXT",
 		"INSERT INTO skill_versions(id,skill_id,version_label,content_hash,entry_path,package_key,file_count,total_bytes,source_commit,private_preview_note) VALUES('version','skill','1','hash','SKILL.md','skill/version.zip',1,42,'commit','keep')",
@@ -63,7 +63,7 @@ func TestV20MarketReleaseMigrationPreservesVersionsAndLedger(t *testing.T) {
 	if err := db.Order("version").Find(&after).Error; err != nil {
 		t.Fatal(err)
 	}
-	if len(after) != len(before)+1 || !reflect.DeepEqual(before, after[:len(before)]) || after[len(before)].Version != 21 || after[len(before)].Name != "skill-market-release-metadata" {
+	if len(after) != len(before)+5 || !reflect.DeepEqual(before, after[:len(before)]) || after[len(before)].Version != 21 || after[len(before)].Name != "skill-market-release-metadata" || after[len(before)+4].Name != "reconcile-preview-assistant-schema" {
 		t.Fatalf("migration ledger changed: %+v", after)
 	}
 	if err := db.Exec("ALTER TABLE skill_versions DROP COLUMN market_release_json").Error; err != nil {

@@ -14,17 +14,27 @@ import (
 var imageContractJSON []byte
 
 type ImageContract struct {
-	Model          string            `json:"model"`
-	Protocol       string            `json:"protocol"`
-	Path           string            `json:"path"`
-	FixedOutputs   int               `json:"fixedOutputs,omitempty"`
-	PromptMaxChars int               `json:"promptMaxChars"`
-	MaxImages      int               `json:"maxImages"`
-	MaxImageBytes  int64             `json:"maxImageBytes"`
-	MinSide        int               `json:"minSide"`
-	MaxSide        int               `json:"maxSide"`
-	MaxPixels      int               `json:"maxPixels"`
-	Sizes          map[string]string `json:"sizes"`
+	Model             string            `json:"model"`
+	Protocol          string            `json:"protocol"`
+	Path              string            `json:"path"`
+	GenerationOutputs []int             `json:"generationOutputs,omitempty"`
+	FixedOutputs      int               `json:"fixedOutputs,omitempty"`
+	PromptMaxChars    int               `json:"promptMaxChars"`
+	MaxImages         int               `json:"maxImages"`
+	MaxImageBytes     int64             `json:"maxImageBytes"`
+	MinSide           int               `json:"minSide"`
+	MaxSide           int               `json:"maxSide"`
+	MaxPixels         int               `json:"maxPixels"`
+	Sizes             map[string]string `json:"sizes"`
+	Presets           []ImagePreset     `json:"presets,omitempty"`
+}
+
+type ImagePreset struct {
+	Tier   string `json:"tier"`
+	Ratio  string `json:"ratio"`
+	Size   string `json:"size"`
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
 }
 
 var imageContracts = func() []ImageContract {
@@ -51,6 +61,11 @@ func (c ImageContract) PixelSize(size string) (string, error) {
 	}
 	if pixels, ok := c.Sizes[size]; ok {
 		size = pixels
+	}
+	for _, preset := range c.Presets {
+		if preset.Size == size || (preset.Ratio == size && preset.Tier == "1k") {
+			return preset.Size, nil
+		}
 	}
 	parts := strings.Split(size, "x")
 	if len(parts) != 2 {

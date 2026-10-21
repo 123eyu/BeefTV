@@ -16,3 +16,12 @@ func (e *BadRequestError) Error() string {
 func BadAuthRequest(message string) error {
 	return &BadRequestError{Message: message}
 }
+
+// HTTPStatusError preserves response classification without storing bodies or URLs.
+type HTTPStatusError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *HTTPStatusError) Error() string   { return e.Message }
+func (e *HTTPStatusError) Temporary() bool { return retryableHTTPStatus(e.StatusCode) }

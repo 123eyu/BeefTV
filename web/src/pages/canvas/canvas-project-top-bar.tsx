@@ -17,6 +17,8 @@ type CanvasTopBarProps = {
     syncStatus?: ReactNode;
     versionsOpen: boolean;
     onToggleVersions: () => void;
+    onOpenWorkflows?: () => void;
+    workflowsOpen?: boolean;
     assistantOpen?: boolean;
     onToggleAssistant?: () => void;
     title: string;
@@ -63,6 +65,8 @@ export function CanvasTopBar({
     syncStatus,
     versionsOpen,
     onToggleVersions,
+    onOpenWorkflows,
+    workflowsOpen = false,
     assistantOpen = false,
     onToggleAssistant,
     title,
@@ -341,6 +345,7 @@ export function CanvasTopBar({
                 ) : null}
 
                 <div className="canvas-topbar-cluster canvas-topbar-local-cluster pointer-events-auto hidden items-center gap-1 lg:flex" style={dockStyle}>
+                    {onOpenWorkflows ? <Button type="text" className="canvas-topbar-action canvas-topbar-workflow-button !h-9 !rounded-xl !px-2.5" style={{ color: theme.node.text, background: workflowsOpen ? theme.toolbar.activeBg : undefined }} aria-pressed={workflowsOpen} icon={<Workflow className="size-4" />} onClick={onOpenWorkflows}>工作流</Button> : null}
                     {onToggleAssistant ? (
                         <CanvasTopBarTooltip label="Agent（Ctrl/Cmd + J）">
                             <Button
@@ -360,6 +365,7 @@ export function CanvasTopBar({
                 </div>
 
                 <div className="canvas-topbar-cluster canvas-topbar-tools-cluster pointer-events-auto flex items-center gap-1.5 lg:hidden" style={dockStyle}>
+                    {onOpenWorkflows ? <CanvasTopBarTooltip label="工作流"><Button type="text" className="canvas-topbar-action canvas-topbar-workflow-button !h-10 !w-10 !min-w-10 !rounded-xl !p-0" style={{ color: theme.node.text, background: workflowsOpen ? theme.toolbar.activeBg : undefined }} aria-pressed={workflowsOpen} icon={<Workflow className="size-4" />} aria-label="工作流" onClick={onOpenWorkflows} /></CanvasTopBarTooltip> : null}
                     <CanvasTopBarTooltip label="搜索画布节点">
                         <Button
                             type="text"

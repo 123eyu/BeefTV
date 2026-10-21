@@ -772,7 +772,7 @@ export default function CreatePage() {
                     updateOriginAssistant((item) => ({ ...item, content: result.text || "", reasoning: result.reasoning }));
                 }
             } else if (mode === "image") {
-                const taskCount = imageProfile.fixedOutputs ? 1 : Math.max(1, Math.min(imageProfile.maxOutputs, Math.floor(Number(count) || 1)));
+                const taskCount = imageProfile.fixedOutputs ? Number(normalizedImage!.count) / imageProfile.fixedOutputs : Math.max(1, Math.min(imageProfile.maxOutputs, Math.floor(Number(count) || 1)));
                 const settled = await runtime.runGenerationOperationOnce(retryContext?.clientOperationId, () => runtime.runBackendGenerationTaskBatch({
                     resolveReferenceLinks,
                     mode: "image",
@@ -817,7 +817,7 @@ export default function CreatePage() {
                     const reason = taskFailures[0]?.reason || resourceFailures[0]?.reason;
                     throw reason instanceof Error ? reason : new Error("后端任务没有返回图片");
                 }
-                if (failedCount) toast.warning(`${resultUrls.length} 张图片已生成，${failedCount} 张生成失败`);
+                if (failedCount) toast.warning(`${resultUrls.length} 张图片已生成，${failedCount} 批生成或保存失败`);
                 updateOriginAssistant((item) => ({ ...item, content: failedCount ? `${resultUrls.length} 张图片已生成，${failedCount} 张失败` : "图片已生成" }));
             } else {
                 const result = await runtime.runGenerationOperationOnce(retryContext?.clientOperationId, () => runtime.runBackendGenerationTask({

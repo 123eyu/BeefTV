@@ -27,7 +27,7 @@ func TestImageReplayMetadataFailureStopsBeforePaidPost(t *testing.T) {
 		return nil, context.DeadlineExceeded
 	})}
 	got, err := negotiateImageReplay(req, client)
-	if got != nil || !errors.Is(err, context.DeadlineExceeded) || calls != 1 {
+	if got != nil || !errors.Is(err, context.DeadlineExceeded) || calls != 3 {
 		t.Fatalf("probe failure allowed submission: %v %v %d", got, err, calls)
 	}
 }
@@ -87,5 +87,35 @@ func TestProtocolImageURLIsSavedBeforeAnyDownload(t *testing.T) {
 	items := result["images"].([]interface{})
 	if items[0].(map[string]interface{})["url"] != url {
 		t.Fatalf("original image identity lost: %#v", result)
+	}
+}
+
+func TestImageReplayTransientMetadataFailureRecoversBeforePaidPost(t *testing.T) {
+	req, _ := http.NewRequest("POST", "https://8.8.8.8/v1/images/generations", nil)
+	calls := 0
+	client := &http.Client{Transport: imageReplayProbeTransport(func(probe *http.Request) (*http.Response, error) {
+		calls++
+		if probe.Method != "GET" {
+			t.Fatal("metadata retry dispatched paid POST")
+		}
+		if calls == 1 {
+			return nil, context.DeadlineExceeded
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{"X-Image-Submission-Protocol": []string{ImageReplayProtocol}}, Body: io.NopCloser(strings.NewReader(`{}`)), Request: probe}, nil
+	})}
+	got, err := negotiateImageReplay(req, client)
+	if err != nil || calls != 2 || !RecoverableImageEndpoint(got) {
+		t.Fatalf("metadata recovery: calls=%d err=%v", calls, err)
+	}
+}
+
+func TestImageReplayProbeFailureProvesNoSubmission(t *testing.T) {
+	req, _ := http.NewRequest("POST", "https://8.8.8.8/v1/images/generations", nil)
+	client := &http.Client{Transport: imageReplayProbeTransport(func(*http.Request) (*http.Response, error) { return nil, context.DeadlineExceeded })}
+	_, err := negotiateImageReplay(req, client)
+	var preparation RequestPreparationError
+	failure := ClassifyError(err)
+	if !errors.As(err, &preparation) || !SafeRouteRejection(err) || failure.Uncertain || failure.Category != CategoryRequestNotSent {
+		t.Fatalf("preflight misclassified: %#v %v", failure, err)
 	}
 }

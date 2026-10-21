@@ -60,4 +60,7 @@ func TestImageDeliveryRetainsEncryptedAuthUntilMaterialized(t *testing.T) {
 	if gets != 1 || strings.Contains(stored.InputJSON, "imageDeliveryCipher") {
 		t.Fatalf("download/secret cleanup: gets=%d input=%s", gets, stored.InputJSON)
 	}
+	if stored.WorkflowSourceCipher == "" {
+		t.Fatal("image result delivery removed reusable source snapshot")
+	}
 }

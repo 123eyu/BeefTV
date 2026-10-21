@@ -439,9 +439,22 @@ export function applyBatchPrimaryImage(root: CanvasNodeData, primary: CanvasNode
 
 export function removeCanvasNodes(nodes: CanvasNodeData[], requestedIds: Set<string>) {
     const removedIds = new Set(requestedIds);
-    nodes.forEach((node) => {
-        if (requestedIds.has(node.id)) node.metadata?.batchChildIds?.forEach((childId) => removedIds.add(childId));
-    });
+    // A workflow is one owned graph. Ordinary frames still detach their contents.
+    const workflowFrames = new Set(nodes.filter(node => node.type === CanvasNodeType.Workflow
+        || nodes.some(child => child.parentId === node.id && child.metadata?.reusableWorkflow)).map(node => node.id));
+    for (const node of nodes) {
+        if (removedIds.has(node.id) && node.metadata?.reusableWorkflow && node.parentId && workflowFrames.has(node.parentId)) removedIds.add(node.parentId);
+    }
+    const ownedIds = new Set([...removedIds].filter(id => workflowFrames.has(id)));
+    let expanded = true;
+    while (expanded) {
+        const previousSize = removedIds.size + ownedIds.size;
+        for (const node of nodes) {
+            if (removedIds.has(node.id)) node.metadata?.batchChildIds?.forEach(id => removedIds.add(id));
+            if (node.parentId && ownedIds.has(node.parentId)) { removedIds.add(node.id); ownedIds.add(node.id); }
+        }
+        expanded = previousSize !== removedIds.size + ownedIds.size;
+    }
     const remainingNodes = nodes.filter((node) => !removedIds.has(node.id));
     const nextNodes = remainingNodes.map((node) => {
         const detached = node.parentId && removedIds.has(node.parentId) ? { ...node, parentId: undefined } : node;

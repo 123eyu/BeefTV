@@ -88,9 +88,14 @@ echo "Building BeefTV $VERSION_VALUE ($COMMIT_VALUE)"
 if [[ "$AGENT_TARGET" == darwin/* ]]; then
   MEDIA_RUNTIME_STAGE="$(mktemp -d "${TMPDIR:-/tmp}/beeftv-release-media.XXXXXX")"
   trap 'rm -rf "$MEDIA_RUNTIME_STAGE"' EXIT
-  bash "$ROOT_DIR/scripts/package-media-runtime-macos.sh" "$AGENT_TARGET" \
-    "$MEDIA_RUNTIME_STAGE/media-runtime" "" \
-    "$ROOT_DIR/dist/BeefTV-${VERSION_VALUE}-ffprobe-${AGENT_TARGET/\//-}-sources.tar.gz"
+  if [[ -n "${BEEFTV_MEDIA_RUNTIME:-}" ]]; then
+    bun -e 'const fs=require("fs"),crypto=require("crypto");const [root,target]=process.argv.slice(1);const m=JSON.parse(fs.readFileSync(root+"/manifest.json","utf8"));if(m.target!==target||crypto.createHash("sha256").update(fs.readFileSync(root+"/ffprobe")).digest("hex")!==m.probeSHA256)throw Error("Media runtime target or checksum mismatch")' "$BEEFTV_MEDIA_RUNTIME" "$AGENT_TARGET"
+    cp -R "$BEEFTV_MEDIA_RUNTIME" "$MEDIA_RUNTIME_STAGE/media-runtime"
+  else
+    bash "$ROOT_DIR/scripts/package-media-runtime-macos.sh" "$AGENT_TARGET" \
+      "$MEDIA_RUNTIME_STAGE/media-runtime" "" \
+      "$ROOT_DIR/dist/BeefTV-${VERSION_VALUE}-ffprobe-${AGENT_TARGET/\//-}-sources.tar.gz"
+  fi
 fi
 
 mkdir -p "$DESKTOP_DIR/build"
@@ -144,6 +149,25 @@ bun "$ROOT_DIR/scripts/package-agent-host.mjs" "$AGENT_TARGET" \
 cp -R "$MEDIA_RUNTIME_STAGE/media-runtime" "$APP_BUNDLE/Contents/Resources/agent-host/media-runtime"
 bun "$ROOT_DIR/scripts/distribution-notices.mjs" "${AGENT_TARGET/\//-}" \
   "$APP_BUNDLE/Contents/Resources/agent-host/licenses" "$VERSION_VALUE"
+# Reuse the explicitly supplied (or already installed) encoder, including its
+# license. The native workflow adapter must not rely on a Finder-launched PATH.
+ENCODER_SOURCE="${BEEFTV_FFMPEG_RUNTIME:-/Applications/BeefTV.app/Contents/Resources/agent-host/media-runtime/ffmpeg}"
+if [[ -x "$ENCODER_SOURCE" ]]; then
+  ENCODER_LICENSE="${BEEFTV_FFMPEG_LICENSE:-$(dirname "$ENCODER_SOURCE")/ffmpeg.LICENSE}"
+  [[ -f "$ENCODER_LICENSE" ]] || { echo "Encoder license missing: $ENCODER_LICENSE" >&2; exit 1; }
+  ENCODER_ARCH="${AGENT_TARGET##*/}"
+  [[ "$ENCODER_ARCH" != amd64 ]] || ENCODER_ARCH=x86_64
+  file "$ENCODER_SOURCE" | grep -q "$ENCODER_ARCH" || { echo "Wrong encoder architecture" >&2; exit 1; }
+  otool -L "$ENCODER_SOURCE" | tail -n +2 | while read -r dylib _; do
+    case "$dylib" in /usr/lib/*|/System/Library/*) ;; *) echo "Non-system encoder dependency: $dylib" >&2; exit 1 ;; esac
+  done
+  ENCODER_DEST="$APP_BUNDLE/Contents/Resources/agent-host/media-runtime"
+  cp "$ENCODER_SOURCE" "$ENCODER_DEST/ffmpeg"
+  cp "$ENCODER_LICENSE" "$ENCODER_DEST/ffmpeg.LICENSE"
+  if [[ -f "$(dirname "$ENCODER_SOURCE")/ffmpeg.README" ]]; then cp "$(dirname "$ENCODER_SOURCE")/ffmpeg.README" "$ENCODER_DEST/ffmpeg.README"; fi
+  chmod 755 "$ENCODER_DEST/ffmpeg"
+  codesign --force --sign - "$ENCODER_DEST/ffmpeg"
+fi
 if [[ "$AGENT_TARGET" == "darwin/$(uname -m)" || ( "$AGENT_TARGET" == darwin/amd64 && "$(uname -m)" == x86_64 ) ]]; then
   bash "$ROOT_DIR/scripts/test-media-runtime-macos.sh" "$APP_BUNDLE/Contents/Resources/agent-host/media-runtime"
 fi

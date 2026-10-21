@@ -1046,6 +1046,8 @@ export function modelOptionsFromChannels(channels: ModelChannel[]) {
             channel.models
                 .map(normalizeRawModelName)
                 .filter(Boolean)
+                .filter((model) => !model.replace(/^\/+/, "").startsWith("topaz/upscale/"))
+                .filter((model) => !["topaz-standard-v2", "topaz-wonder-3.5", "topaz-proteus", "topaz-starlight-fast-2"].includes(model))
                 .filter((model) => channel.scope !== "system" || hasSystemModelProfile(channel, model))
                 .map((model) => encodeChannelModel(channel.id, model)),
         ),

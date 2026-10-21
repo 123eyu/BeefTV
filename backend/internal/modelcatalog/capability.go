@@ -64,10 +64,16 @@ func DefaultImageCapabilityConfig(protocol string, modelName string) *ImageCapab
 			}
 		}
 		sort.Strings(values)
+		presets := make([]ImageSizePreset, 0, len(contract.Presets))
+		for _, preset := range contract.Presets {
+			values = appendUniqueString(values, preset.Ratio)
+			values = appendUniqueString(values, preset.Size)
+			presets = append(presets, ImageSizePreset{Tier: preset.Tier, Ratio: preset.Ratio, Size: preset.Size, Width: preset.Width, Height: preset.Height})
+		}
 		return &ImageCapabilityConfig{
 			References: ImageReferenceConfig{PromptMaxChars: contract.PromptMaxChars, MaxImages: contract.MaxImages, MaxImageBytes: contract.MaxImageBytes},
-			Size:       ImageSizeConfig{Parameter: "size", Values: values, Default: "1:1", AllowCustom: contract.MinSide != contract.MaxSide},
-			Quality:    ImageQualityConfig{Default: "auto"}, MaxOutputs: max(1, contract.FixedOutputs), FixedOutputs: contract.FixedOutputs,
+			Size:       ImageSizeConfig{Parameter: "size", Values: values, Default: "1:1", AllowCustom: contract.MinSide != contract.MaxSide, Presets: presets},
+			Quality:    ImageQualityConfig{Default: "auto"}, MaxOutputs: max(1, contract.FixedOutputs), FixedOutputs: contract.FixedOutputs, GenerationOutputs: contract.GenerationOutputs,
 			ResponseFormat: ParameterSupport{Supported: contract.FixedOutputs > 0},
 		}
 	}
@@ -828,6 +834,9 @@ func validateImageTask(profile *ImageCapabilityConfig, input TaskInput) error {
 		if contract, ok := providerpreset.BeefAPIImageContract(input.Config.Model); ok {
 			profile = DefaultImageCapabilityConfig(contract.Protocol, input.Config.Model)
 			if _, err := contract.PixelSize(input.Config.Size); err != nil {
+				return kernel.BadAuthRequest(err.Error())
+			}
+			if _, err := contract.GenerationPrompt(composedPrompt(input.Config.SystemPrompt, input.Prompt), input.Config.Size); err != nil {
 				return kernel.BadAuthRequest(err.Error())
 			}
 			if err := validateModelPromptLength("图片", composedPrompt(input.Config.SystemPrompt, input.Prompt), contract.PromptMaxChars); err != nil {

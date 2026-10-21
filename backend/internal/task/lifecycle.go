@@ -14,6 +14,17 @@ import (
 )
 
 func (s *Service) Retry(userID, id string) (*model.Task, error) {
+	return s.retry(userID, id, nil)
+}
+
+// RetryWithCredentialRefresh is an in-process retry command. It can update
+// only connection credentials of an unaccepted task; request content and the
+// original admission identity are immutable. HTTP callers cannot set it.
+func (s *Service) RetryWithCredentialRefresh(userID, id, expectedInputJSON, inputJSON string) (*model.Task, error) {
+	return s.retry(userID, id, &retryCredentialRefresh{expectedInputJSON, inputJSON})
+}
+
+func (s *Service) retry(userID, id string, refresh *retryCredentialRefresh) (*model.Task, error) {
 	if s.deps.Runtime == nil || s.deps.Images == nil || s.deps.Failures == nil || s.deps.Secrets == nil || s.deps.Catalog == nil || s.deps.Media == nil || s.deps.Policy == nil || s.deps.Projects == nil || s.deps.Present == nil {
 		return nil, unavailable()
 	}
@@ -45,7 +56,12 @@ func (s *Service) Retry(userID, id string) (*model.Task, error) {
 	if s.deps.Failures.IsModeration(task.Error) {
 		return nil, kernel.BadAuthRequest(ContentModerationRetryMessage)
 	}
-	if s.deps.Failures.BlocksRetry(task.Error, task.Stage) {
+	if refresh != nil {
+		if err := s.validateRetryCredentialRefresh(task, *refresh); err != nil {
+			return nil, err
+		}
+	}
+	if s.deps.Failures.BlocksRetry(task.Error, task.Stage) && !(refresh != nil && s.deps.Failures.Category(task.Error, task.Stage) == generation.CategoryAuth) {
 		category := s.deps.Failures.Category(task.Error, task.Stage)
 		if task.Stage == "submission_unknown" || category == generation.CategorySubmissionUncertain {
 			return nil, kernel.BadAuthRequest(SubmissionUncertainRetryMessage)
@@ -54,6 +70,9 @@ func (s *Service) Retry(userID, id string) (*model.Task, error) {
 			return nil, kernel.BadAuthRequest(DownloadFailureRetryMessage)
 		}
 		return nil, kernel.BadAuthRequest(s.deps.Failures.UserMessage(task.Error))
+	}
+	if refresh != nil {
+		task.InputJSON = refresh.inputJSON
 	}
 	decryptedInput, err := s.deps.Secrets.DecryptInputJSON(task.InputJSON)
 	if err != nil {
@@ -83,7 +102,25 @@ func (s *Service) Retry(userID, id string) (*model.Task, error) {
 	if err := s.deps.Projects.EnsureActive(userID, task.ProjectID); err != nil {
 		return nil, err
 	}
-	task, err = s.store.Retry(userID, task, limit)
+	if refresh != nil {
+		if err := s.deps.Secrets.Protect(taskInput); err != nil {
+			return nil, err
+		}
+		encoded, err := json.Marshal(taskInput)
+		if err != nil {
+			return nil, err
+		}
+		task.InputJSON = string(encoded)
+	}
+	if refresh != nil {
+		store, ok := s.store.(credentialRetryStore)
+		if !ok {
+			return nil, unavailable()
+		}
+		task, err = store.RetryWithExpectedInput(userID, task, limit, refresh.expectedInputJSON)
+	} else {
+		task, err = s.store.Retry(userID, task, limit)
+	}
 	if errors.Is(err, repository.ErrActiveTaskLimit) {
 		return nil, activeLimitError(limit)
 	}

@@ -117,8 +117,20 @@ export function useCanvasGenerationRetry({
             }
 
             const retryPromptSource = sourceNode.metadata?.composerContent || sourceNode.metadata?.prompt || node.metadata?.prompt || "";
-            if (retryMode === "image" && modelCapabilityConfigFor(generationConfig, generationConfig.model).image?.fixedOutputs) {
-                await regenerateImageBatch((batchRoot || node).id, retryPromptSource);
+            const nativeOutputs = retryMode === "image" ? modelCapabilityConfigFor(generationConfig, generationConfig.model).image?.fixedOutputs || 0 : 0;
+            const groupRoot = batchRoot || node;
+            const multipleNativeBatches = nativeOutputs > 0 && (groupRoot.metadata?.batchChildIds?.length || 0) > nativeOutputs;
+            if (nativeOutputs && !multipleNativeBatches) {
+                await regenerateImageBatch(groupRoot.id, retryPromptSource);
+                return;
+            }
+            if (multipleNativeBatches && !batchRoot) {
+                message.warning("请使用重试失败批次，或选择失败图片重试；已完成的批次将保留");
+                return;
+            }
+            const nativeRetryTargets = multipleNativeBatches ? nodesRef.current.filter((item) => item.metadata?.batchRootId === batchRoot?.id && Boolean(node.metadata?.taskId) && item.metadata?.taskId === node.metadata?.taskId) : [];
+            if (multipleNativeBatches && (nativeRetryTargets.length !== nativeOutputs || nativeRetryTargets.some((item) => item.metadata?.content || item.metadata?.storageKey))) {
+                message.warning("该批次已有结果或任务状态不完整，请先取回原任务，避免重复生成");
                 return;
             }
             const retryContextPrompt = retryMode === "image" && sourceNode.metadata?.portraitTexture ? buildPortraitTexturePrompt(retryPromptSource, sourceNode.metadata.portraitTexture) : retryPromptSource;
@@ -246,11 +258,12 @@ export function useCanvasGenerationRetry({
                     ? await createGenerationRetryContext(node.metadata.taskId, node.metadata.attemptGroupId)
                     : { clientOperationId: createClientId() };
                 setNodes((current) => current.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined, generationErrorCode: undefined, resourceReloadAvailable: undefined, failedPromptFingerprint: undefined, failedInputFingerprint: undefined } } : item)));
+                const targetIds = nativeRetryTargets.length ? nativeRetryTargets.map((item) => item.id) : [node.id];
                 await runCanvasGenerationTaskToConsumer(
-                    { ...input, ...retryContext, expectedScope },
+                    { ...input, ...(nativeRetryTargets.length ? { config: { ...input.config, count: String(nativeOutputs) }, metadata: { ...input.metadata, outputNodeIds: targetIds } } : {}), ...retryContext, expectedScope },
                     {
-                        bindTask: (task) => bindGenerationTask(node.id, task),
-                        consumeTask: (task) => applyGenerationTaskResult(node.id, task),
+                        bindTask: (task) => targetIds.forEach((id) => bindGenerationTask(id, task)),
+                        consumeTask: async (task) => { for (const id of targetIds) await applyGenerationTaskResult(id, task); },
                         isCurrent,
                     },
                 );

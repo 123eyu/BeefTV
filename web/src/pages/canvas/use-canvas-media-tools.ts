@@ -1,3 +1,9 @@
+import { isAIUpscaleTask, upscaleObservationFailureMetadata, UPSCALE_OBSERVATION_TIMEOUT_MS } from "@/lib/canvas/canvas-ai-upscale-task";
+import { recoverUpscaleTask } from "@/services/api/media-upscale";
+import { bindBackendCanvasGenerationResult } from "@/services/canvas-generation-consumer";
+import { waitForGenerationTask } from "@/services/api/task-center";
+import { getImageBlob } from "@/services/image-storage";
+import { uploadResourceFile } from "@/services/api/resources";
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { App } from "antd";
 import { confirmDepthComponents } from "@/components/depth-components-panel";
@@ -222,6 +228,65 @@ export function useCanvasMediaTools({
         }
     }, [connectionsRef, domainProjectId, message, nodesRef, projectId, setNodes]);
 
+    const prepareUpscaleResource = useCallback(async (node: CanvasNodeData) => {
+        const existing = ownedResourceIdFromMediaRef(node.metadata?.storageKey, node.metadata?.content);
+        if (existing) return existing;
+        const key = node.metadata?.storageKey || "";
+        const video = node.type === CanvasNodeType.Video;
+        let blob = key ? await (video ? getMediaBlob(key) : getImageBlob(key)) : null;
+        if (!blob) {
+            const url = video ? await resolveMediaUrl(key, node.metadata?.content) : await resolveImageUrl(key, node.metadata?.content);
+            if (!url) throw new Error("无法读取原素材");
+            const response = await fetch(url);
+            if (!response.ok) throw new Error("读取原素材失败");
+            blob = await response.blob();
+        }
+        const resource = await uploadResourceFile(blob, video ? "video" : "image", { width: node.metadata?.naturalWidth, height: node.metadata?.naturalHeight });
+        return resource.id;
+    }, []);
+
+    const observeAIUpscale = useCallback((task: GenerationTask, targetNodeId: string, expectedScope: CapturedUserScope) => {
+        const observer = new AbortController();
+        depthObserversRef.current.add(observer);
+        let observedTask = task;
+        void waitForGenerationTask(task.id, { initialTask: task, expectedScope, signal: observer.signal, timeoutMs: UPSCALE_OBSERVATION_TIMEOUT_MS, onTaskUpdate: update => { observedTask = update; if (projectIdRef.current === projectId) bindGenerationTask(targetNodeId, update); } }).then(async completed => {
+            assertUserScope(expectedScope);
+            if (projectIdRef.current !== projectId) return;
+            const currentNode = nodesRef.current.find(item => item.id === targetNodeId);
+            if (!currentNode) return;
+            // Backend delivery may have already bound the output. Adopt its idempotent
+            // receipt instead of racing it with a full canvas snapshot write.
+            await bindBackendCanvasGenerationResult({
+                canvasId: projectId,
+                nodeId: targetNodeId,
+                task: completed,
+                outputIndex: currentNode.metadata?.taskOutputIndex ?? 0,
+                signal: observer.signal,
+                isCurrent: () => !observer.signal.aborted && projectIdRef.current === projectId,
+                nodesRef,
+                setNodes,
+            });
+        }).catch(cause => {
+            if (observer.signal.aborted || projectIdRef.current !== projectId) return;
+            setNodes(current => current.map(item => item.id === targetNodeId ? { ...item, metadata: { ...item.metadata, ...upscaleObservationFailureMetadata(observedTask, generationErrorMessage(cause)) } } : item));
+        }).finally(() => depthObserversRef.current.delete(observer));
+    }, [bindGenerationTask, nodesRef, projectId, setNodes]);
+
+    const recoverAIUpscale = useCallback(async (node: CanvasNodeData) => {
+        const taskId = node.metadata?.taskId;
+        if (!taskId) throw new Error("找不到原超分任务");
+        const expectedScope = captureUserScope();
+        const original = await queryGenerationTask(taskId, { expectedScope });
+        if (!isAIUpscaleTask(original)) throw new Error("该任务不是超分任务");
+        const task = original.status === "failed" ? await recoverUpscaleTask(taskId, expectedScope) : original;
+        assertUserScope(expectedScope);
+        if (projectIdRef.current !== projectId) return;
+        bindGenerationTask(node.id, task);
+        setNodes(current => current.map(item => item.id === node.id ? { ...item, metadata: { ...item.metadata, status: "loading", errorDetails: undefined, processingLabel: "取回原超分任务结果" } } : item));
+        observeAIUpscale(task, node.id, expectedScope);
+    }, [bindGenerationTask, observeAIUpscale, projectId, setNodes]);
+
+
     const createImageReversePromptNodes = useCallback((node: CanvasNodeData) => {
         if (node.type !== CanvasNodeType.Image || !node.metadata?.content) {
             message.warning("图片节点为空，无法反推提示词");
@@ -278,7 +343,9 @@ export function useCanvasMediaTools({
             const image = await uploadImage(cropped);
             const size = fitNodeSize(image.width, image.height, node.width, node.height);
             const childId = nanoid();
-            const child: CanvasNodeData = { id: childId, type: CanvasNodeType.Image, title: `${node.title || "图片"} · 裁剪`, position: { x: node.position.x + node.width + 96, y: node.position.y }, width: size.width, height: size.height, metadata: mediaResultMetadata("derived", { ...imageMetadata(image), prompt: node.metadata?.prompt, generatedFromNodeId: node.id }) };
+            const child: CanvasNodeData = { id: childId, type: CanvasNodeType.Image, title: `${node.title || "图片"} · 裁剪`, position: { x: node.position.x + node.width + 96, y: node.position.y }, width: size.width, height: size.height, metadata: mediaResultMetadata("derived", { ...imageMetadata(image), prompt: node.metadata?.prompt, generatedFromNodeId: node.id,
+                workflowOperation: { id: "image.crop", version: 1, config: { x: crop.x, y: crop.y, width: crop.width, height: crop.height }, inputs: [{ nodeId: node.id, port: "image" }] },
+            }) };
             const connection = { id: nanoid(), fromNodeId: node.id, toNodeId: childId };
             setNodes((current) => [...current, child]);
             setConnections((current) => [...current, connection]);
@@ -311,6 +378,7 @@ export function useCanvasMediaTools({
                 prompt: `从「${node.title || "视频"}」裁切画面`,
                 videoCrop: normalizedCrop,
                 videoCropSourceNodeId: node.id,
+                workflowOperation: { id: "video.crop", version: 1, config: { x: normalizedCrop.x / sourceDimensions.width, y: normalizedCrop.y / sourceDimensions.height, width: normalizedCrop.width / sourceDimensions.width, height: normalizedCrop.height / sourceDimensions.height }, inputs: [{ nodeId: node.id, port: "video" }] },
             }),
         };
         // The source remains available as soon as the crop is confirmed. The
@@ -333,6 +401,7 @@ export function useCanvasMediaTools({
                     status: NODE_STATUS_SUCCESS,
                     videoCrop: normalizedCrop,
                     videoCropSourceNodeId: node.id,
+                    workflowOperation: pendingChild.metadata?.workflowOperation,
                 }),
             };
             setNodes((current) => current.map((item) => item.id === childId ? completedChild : item));
@@ -746,6 +815,7 @@ export function useCanvasMediaTools({
                     status: NODE_STATUS_SUCCESS,
                     prompt: `从「${node.title || "视频"}」剪辑 ${((range.endMs - range.startMs) / 1000).toFixed(2)} 秒片段`,
                     videoTrimSourceNodeId: node.id,
+                    workflowOperation: { id: "video.trim", version: 1, config: { startSeconds: range.startMs / 1000, endSeconds: range.endMs / 1000 }, inputs: [{ nodeId: node.id, port: "video" }] },
                 }),
             };
             const connection: CanvasConnection = { id: nanoid(), fromNodeId: node.id, toNodeId: child.id };
@@ -1169,7 +1239,9 @@ export function useCanvasMediaTools({
         const image = await uploadImage(upscaled);
         const size = fitNodeSize(image.width, image.height);
         const childId = nanoid();
-        const child: CanvasNodeData = { id: childId, type: CanvasNodeType.Image, title: `${node.title || "图片"} · 放大`, position: { x: node.position.x + node.width + 96, y: node.position.y }, width: size.width, height: size.height, metadata: mediaResultMetadata("derived", { ...imageMetadata(image), prompt: node.metadata?.prompt, generatedFromNodeId: node.id }) };
+        const child: CanvasNodeData = { id: childId, type: CanvasNodeType.Image, title: `${node.title || "图片"} · 放大`, position: { x: node.position.x + node.width + 96, y: node.position.y }, width: size.width, height: size.height, metadata: mediaResultMetadata("derived", { ...imageMetadata(image), prompt: node.metadata?.prompt, generatedFromNodeId: node.id,
+            workflowOperation: { id: "image.resize", version: 1, config: { longEdge: params.targetLongEdge, algorithm: params.algorithm }, inputs: [{ nodeId: node.id, port: "image" }] },
+        }) };
         setNodes((current) => [...current, child]);
         setConnections((current) => [...current, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }]);
         setSelectedNodeIds(new Set([childId]));
@@ -1317,6 +1389,9 @@ export function useCanvasMediaTools({
     }, [bindGenerationTask, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, nodesRef, persistMediaNodes, projectId, resolveImageEditStyle, setConnections, setDialogNodeId, setNodes, setRunningNodeId, setSelectedConnectionId, setSelectedNodeIds, startGenerationRequest]);
 
     return {
+        prepareUpscaleResource,
+        recoverAIUpscale,
+        observeAIUpscale,
         angleNodeId,
         lightingNodeId,
         emotionNodeId,

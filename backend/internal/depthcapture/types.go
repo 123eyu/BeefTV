@@ -6,6 +6,7 @@ import (
 	"os/exec"
 
 	"infinite-canvas/backend/internal/depthruntime"
+	"infinite-canvas/backend/internal/mediatools"
 	"infinite-canvas/backend/internal/model"
 )
 
@@ -16,8 +17,6 @@ const (
 	Provider        = "local"
 	ModelID         = "video-depth-anything-small"
 	MaxDurationMs   = int64(15_100)
-	OutputWidth     = 1920
-	OutputHeight    = 1080
 	OutputName      = "depth-action-reference.mp4"
 
 	pythonEnv   = "BEEFTV_DEPTH_PYTHON"
@@ -91,6 +90,7 @@ type CUDAProbe func(ctx context.Context, python, toolDir, modelRuntime string) e
 type CommandRun func(ctx context.Context, python, toolDir, modelRuntime, device, inputPath, outputDir string, onLine func(string)) error
 
 type Deps struct {
+	ProbeOutput                    func(context.Context, string) (mediatools.MediaMetadata, error)
 	DataDir                        string
 	Media                          Media
 	Tasks                          Tasks

@@ -244,7 +244,10 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
             // 成功终态可能在同一轮到达；消费结果前就要让保存器看见 taskId。
             useCanvasStore.getState().updateProject(projectId, { nodes: next });
             nodesRef.current = next;
-            setNodes(next);
+            // A receipt can share a React batch with another node's recovery.
+            // Apply it to the queued state too, so that update is not replaced
+            // by the earlier nodesRef snapshot.
+            setNodes(current => projectIdRef.current === projectId ? canvasGenerationTaskNodes(current, targetNodeId, task) : current);
         },
         [nodesRef, projectId, setNodes],
     );

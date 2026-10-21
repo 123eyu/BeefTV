@@ -29,6 +29,8 @@ const layout = `
         #node { position: relative; display: flex; align-items: center; justify-content: center; width: 700px; height: 400px; overflow: visible; }
         .absolute { position: absolute; }
         .relative { position: relative; }
+        .h-full { height: 100%; }
+        .w-full { width: 100%; }
         .inset-0 { inset: 0; }
         .left-1\\/2 { left: 50%; }
         .bottom-3 { bottom: 12px; }
@@ -40,6 +42,7 @@ const layout = `
         .h-11 { height: 44px; }
         .flex { display: flex; }
         .items-center { align-items: center; }
+        .justify-center { justify-content: center; }
         .grid { display: grid; }
         .place-items-center { place-items: center; }
         .gap-2 { gap: 8px; }
@@ -161,6 +164,22 @@ test("failed node notice stays readable without overflowing its node at 20% zoom
     });
     expect(scroll.totalHeight).toBeGreaterThan(scroll.visibleHeight);
     expect(scroll.top).toBeGreaterThan(0);
+});
+
+test("batch root failure is centered inside the card at different zoom levels", async () => {
+    const node = { id: "batch-root", type: CanvasNodeType.Image, title: "Midjourney", position: { x: 0, y: 0 }, width: 700, height: 400, metadata: { status: "error", isBatchRoot: true, generationErrorCode: "submission_uncertain", taskId: "original-task" } } as CanvasNodeData;
+    const markup = renderToStaticMarkup(<CanvasNodeContent node={node} theme={canvasThemes.dark} isEditingContent={false} textareaRef={createRef<HTMLTextAreaElement>()} isBatchRoot batchCount={4} batchExpanded batchOpening={false} batchRecovering={false} onContentChange={() => {}} onStopEditing={() => {}} mentionReferences={[]} onOpenTaskDetails={() => {}} />);
+    for (const zoom of [0.2, 0.68, 1, 1.5]) {
+        await page.setContent(`${layout}<div id="world"><div id="node">${markup}</div></div>`);
+        await setZoom(zoom);
+        const card = await page.locator("#node").boundingBox();
+        const notice = await page.locator(".canvas-node-error-content").boundingBox();
+        expect(notice!.x).toBeGreaterThanOrEqual(card!.x - 1);
+        expect(notice!.y).toBeGreaterThanOrEqual(card!.y - 1);
+        expect(notice!.x + notice!.width).toBeLessThanOrEqual(card!.x + card!.width + 1);
+        expect(notice!.y + notice!.height).toBeLessThanOrEqual(card!.y + card!.height + 1);
+        expect(await page.getByRole("button", { name: "查看原任务" }).count()).toBe(1);
+    }
 });
 
 test("crop toolbar remains inside a narrow viewport at 20% zoom", async () => {

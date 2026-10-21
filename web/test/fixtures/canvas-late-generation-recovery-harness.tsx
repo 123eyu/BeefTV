@@ -28,6 +28,7 @@ type LateHarness = {
     startFreshRequest(): void;
     startFreshBatch(): void;
     bindFreshTask(): void;
+    queueRecoveryAndBind(): void;
     switchProject(id: string): void;
     unmount(): void;
     snapshot(): { projectId: string; nodes: CanvasNodeData[]; freshAborted: boolean | null; store: Record<string, CanvasNodeData[]> };
@@ -120,6 +121,12 @@ function Harness() {
             bindFreshTask() {
                 const task: GenerationTask = { id: "fresh-task", type: "canvas_image", status: "running", projectId: projectIdRef.current, prompt: "fresh", attempts: 1, createdAt: "2026-10-15T00:00:00Z", updatedAt: "2026-10-15T00:00:00Z" };
                 generationRef.current.bindGenerationTask("node-fresh", task);
+            },
+            queueRecoveryAndBind() {
+                // Parallel task listeners can queue a recovery update before
+                // another listener binds its receipt in the same React batch.
+                setNodes(current => current.map(node => node.id === "node-recovered" ? { ...node, metadata: { ...node.metadata, errorDetails: "恢复失败", taskStatus: "failed" } } : node));
+                generationRef.current.bindGenerationTask("node-cached", { id: "receipt-task", projectId: "canvas-a", type: "canvas_image", status: "running", prompt: "receipt", attempts: 1, createdAt: "", updatedAt: "" });
             },
             switchProject(id) {
                 const next = resetInterruptedGeneration(projectNodes[id] ?? []);

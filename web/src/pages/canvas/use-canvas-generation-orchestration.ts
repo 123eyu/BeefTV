@@ -307,7 +307,17 @@ export function useCanvasGenerationOrchestration({
             if (root) {
                 const config = buildGenerationConfig(effectiveConfig, root, "image");
                 if (modelCapabilityConfigFor(config, config.model).image?.fixedOutputs) {
-                    void handleRetryNode(root);
+                    if ((root.metadata?.batchChildIds?.length || 0) > (modelCapabilityConfigFor(config, config.model).image?.fixedOutputs || 0)) {
+                        const tasks = new Set<string>();
+                        void (async () => {
+                            for (const child of retryable) {
+                                const taskId = child.metadata?.taskId || child.id;
+                                if (tasks.has(taskId)) continue;
+                                tasks.add(taskId);
+                                await handleRetryNode(child);
+                            }
+                        })();
+                    } else void handleRetryNode(root);
                     return;
                 }
             }

@@ -7,7 +7,7 @@ import { ChannelHeadersEditor, validateChannelHeaders } from "@/components/chann
 import { fetchChannelModels, type ChannelModelFetchResult } from "@/services/api/image-models";
 import { fetchPluginProviderCatalog } from "@/services/api/plugin-catalog";
 import { mergeFetchedChannelModelProfiles, type ChannelModelCatalogItem } from "@/lib/channel-model-catalog";
-import { CAPABILITY_LABELS, MODEL_SERVICE_PRESETS, modelCatalogRequestURL, serviceConnectionError, serviceModelProfile, servicePresetFor, type ModelServicePresetId } from "@/lib/model-service-presets";
+import { CAPABILITY_LABELS, MODEL_SERVICE_PRESETS, isTopazUpscaleChannel, modelCatalogRequestURL, serviceConnectionError, serviceModelProfile, servicePresetFor, type ModelServicePresetId } from "@/lib/model-service-presets";
 import type { ModelProtocolDefinition } from "@/lib/model-protocols";
 import { seedancePortraitLabel } from "@/lib/seedance-portrait";
 import { createModelChannel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
@@ -40,6 +40,10 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
 
     useEffect(() => {
         alive.current = true;
+        if (initial && isTopazUpscaleChannel(initial)) {
+            setProtocolLoading(false);
+            return () => { alive.current = false; };
+        }
         void fetchPluginProviderCatalog("user.custom-channel")
             .then((items) => { if (alive.current) setProtocols(items); })
             .catch(() => { if (alive.current) setError("无法读取模型能力，请关闭后重试"); })
@@ -86,6 +90,7 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
         setStep(1);
     };
     const fetchModels = async () => {
+        if (isTopazUpscaleChannel(draft)) return;
         if (!validateConnection()) return;
         catalogRequest.current?.abort();
         const request = new AbortController();
@@ -130,7 +135,7 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
     const save = async () => {
         if (!validateConnection()) { setStep(0); return; }
         if (!draft.models.length) { setError("请至少选择或添加一个模型"); return; }
-        const profiles = draft.models.map((id) => serviceModelProfile(draft, catalog.find((item) => item.id === id) || { id }, protocols));
+        const profiles = isTopazUpscaleChannel(draft) ? draft.modelProfiles || [] : draft.models.map((id) => serviceModelProfile(draft, catalog.find((item) => item.id === id) || { id }, protocols));
         const missing = profiles.find((profile) => !profile.protocol);
         if (missing) { setError(`${missing.model} 还需要选择请求协议，请打开高级模型设置`); setEditingCapabilities(true); return; }
         setBusy(true);
@@ -146,6 +151,17 @@ export function ModelServiceEditor({ initial, onClose, onSave }: { initial?: Mod
         const profile = serviceModelProfile(draft, item, protocols);
         return `${item.id} ${seedancePortraitLabel(item.id) || item.displayName || ""}`.toLowerCase().includes(query.toLowerCase()) && (filter === "all" || profile.capability === filter);
     });
+    if (isTopazUpscaleChannel(draft)) return <AppModal open centered width={520} title="fal · Topaz 专用超分" footer={null} closable={!saving} keyboard={!saving} mask={{ closable: false }} onCancel={onClose}>
+        <Form layout="vertical" requiredMark={false} disabled={saving} className="pt-2" onFinish={() => void save()}>
+            <p className="mb-4 text-sm text-foreground/65">从图片或视频节点上方的「AI超分」使用。</p>
+            <Form.Item label="渠道名称"><Input aria-label="渠道名称" value={draft.name} onChange={event => patch({ name: event.target.value })} /></Form.Item>
+            <Form.Item label="API Key"><Input.Password prefix={<KeyRound size={15} />} aria-label="API Key" autoComplete="new-password" placeholder={draft.hasApiKey ? "已保存密钥；填写以替换" : "粘贴 fal API Key"} value={draft.apiKey} onChange={event => patch({ apiKey: event.target.value })} /></Form.Item>
+            <Form.Item label="服务地址"><Input aria-label="服务地址" value={draft.baseUrl} onChange={event => patch({ baseUrl: event.target.value })} /></Form.Item>
+            <p className="mb-4 text-sm text-foreground/65">已配置 {draft.models.length} 个超分接口</p>
+            {error ? <Alert className="mb-4" type="error" title={error} /> : null}
+            <div className="flex justify-end gap-2"><Button onClick={onClose}>取消</Button><Button type="primary" htmlType="submit" loading={saving}>保存</Button></div>
+        </Form>
+    </AppModal>;
     const selectedPreset = MODEL_SERVICE_PRESETS.find((item) => item.id === presetId)!;
 
     return <AppModal open centered width={1000} flush footer={null} title={null} closable={!saving} keyboard={!saving} mask={{ closable: false }} onCancel={() => { catalogRequest.current?.abort(); onClose(); }} rootClassName="model-service-modal">

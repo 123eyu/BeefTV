@@ -84,7 +84,7 @@ export function modelCompatibilityError(config: AiConfig, model: string, require
         const publicOptionNames = logicalCost?.logicalCapabilitySpec?.options || {};
         const logicalRequirements = {
             ...requirements,
-            options: Object.fromEntries(Object.entries(requirements.options || {}).filter(([name]) => Boolean(publicOptionNames[name]))),
+            options: Object.fromEntries(Object.entries(requirements.options || {}).filter(([name]) => Boolean(publicOptionNames[name])).map(([name, value]) => [name, capability === "image" && name === "count" ? modelCapabilityConfigFor(config, model).image?.fixedOutputs || value : value])),
         };
         const errors = logicalSpecs.map((spec) => logicalModelCompatibilityError(spec, logicalRequirements, visualInputCount));
         return errors.some((error) => !error) ? "" : errors[0] || "当前输入不受支持";
