@@ -65,6 +65,11 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         quality: node?.metadata?.quality ?? workflowParameterValue("quality") ?? config.quality ?? defaultConfig.quality,
         size: workflowProvider === "model" ? (node?.metadata?.size ?? config.size ?? defaultConfig.size) : workflowOutputSize || node?.metadata?.size || config.size || defaultConfig.size,
         transparentBackground: node?.metadata?.transparentBackground ?? config.transparentBackground ?? defaultConfig.transparentBackground,
+        seedreamMode: node?.metadata?.seedreamMode ?? config.seedreamMode,
+        seedreamMaxImages: node?.metadata?.seedreamMaxImages ?? config.seedreamMaxImages,
+        seedreamOutputFormat: node?.metadata?.seedreamOutputFormat ?? config.seedreamOutputFormat,
+        seedreamOptimize: node?.metadata?.seedreamOptimize ?? config.seedreamOptimize,
+        seedreamWatermark: node?.metadata?.seedreamWatermark ?? config.seedreamWatermark,
         videoSeconds:
             workflowProvider === "model" && !isH3Model(preferredModel)
                 ? normalizeVideoDuration(node?.metadata?.seconds ?? workflowParameterValue("videoSeconds") ?? config.videoSeconds ?? defaultConfig.videoSeconds)

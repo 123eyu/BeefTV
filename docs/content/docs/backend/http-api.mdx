@@ -4,6 +4,21 @@ title: 本地 HTTP API
 
 # 本地 HTTP API
 
+图片任务的 `input.config` 支持 Seedream 参数：`seedreamMode`（`image` 或
+`layers`）、`seedreamMaxImages`（关联组图上限）、`seedreamOutputFormat`
+（`png` 或 `jpeg`）、`seedreamOptimize`（`standard` 或支持该选项的模型上的
+`fast`）与 `seedreamWatermark`（字符串 `true`/`false`）。现有 `size` 传分辨率
+档位或像素尺寸；`transparentBackground` 在 Pro/Flash 上保留单张透明源图的
+Alpha 通道。Pro/Flash 的图层拆分需要一张源图，返回普通图片资源及
+`result.imageLayers` 中的 `imageIndex`、`z_index`、`bounding_box`、名称和描述。
+托管连接仍经 BeefAPI 的 `/v1/images/generations`；供应商密钥不交给客户端。
+
+Seedream 单次任务的实际输出数可以多于提交时的画布目标数。输出 0 保留
+原节点，其余已保存图片按任务 ID 和输出序号生成独立节点；各图层的元数据
+同时保存在节点的 `metadata.imageLayer` 中。恢复工作只读取已有任务和本地
+素材，不重新调用生成接口。原节点记录已分配的输出节点 ID，因此删除图片
+后不会被后台恢复重新创建；原节点已删除或已关联新任务时也不会覆盖它。
+
 Wails 和浏览器开发模式共用同一套 `127.0.0.1` HTTP 合同。路由由 `backend/internal/handler/api.go` 统一注册，权威 OpenAPI 文件为 `backend/internal/handler/openapi.yaml`。
 
 ## 合同规则

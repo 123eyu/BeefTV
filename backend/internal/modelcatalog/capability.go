@@ -55,6 +55,20 @@ func videoDurationSupported(value *VideoCapabilityConfig) bool {
 }
 
 func DefaultImageCapabilityConfig(protocol string, modelName string) *ImageCapabilityConfig {
+	if family := providerpreset.SeedreamFamily(modelName); family != "" {
+		modern := family == "pro" || family == "flash"
+		sizes := []string{"2K", "4K"}
+		refs := 14
+		if modern {
+			sizes = []string{"1K", "1.5K", "2K"}
+			refs = 10
+		} else if family == "lite" {
+			sizes = []string{"2K", "3K", "4K"}
+		} else if family == "4.0" {
+			sizes = []string{"1K", "2K", "4K"}
+		}
+		return &ImageCapabilityConfig{References: ImageReferenceConfig{PromptMaxChars: 32000, MaxImages: refs, MaxImageBytes: 30 * 1024 * 1024}, Size: ImageSizeConfig{Parameter: "size", Values: sizes, Default: "2K", AllowCustom: true}, Quality: ImageQualityConfig{Default: "auto"}, TransparentBackground: VideoBooleanConfig{Supported: modern}, ResponseFormat: ParameterSupport{Supported: true}, OutputFormat: ParameterSupport{Supported: modern || family == "lite"}, MaxOutputs: 15}
+	}
 	if contract, ok := providerpreset.BeefAPIImageContract(modelName); ok && protocol == "openai-image" {
 		values := make([]string, 0, len(contract.Sizes))
 		for ratio := range contract.Sizes {
@@ -726,6 +740,9 @@ func validateVideoDuration(value VideoDurationConfig) error {
 
 // Upgrade only the old built-in GPT image choices; keep other stored limits.
 func applyModelSpecificImageCapability(profile *ImageCapabilityConfig, protocol string, modelName string, _ string) *ImageCapabilityConfig {
+	if providerpreset.SeedreamFamily(modelName) != "" {
+		return DefaultImageCapabilityConfig(protocol, modelName)
+	}
 	name := strings.ToLower(strings.TrimSpace(modelName))
 	if profile == nil || protocol != "openai-image" || (name != "gpt-image-2" && name != "gpt-image-2.5-flare" && name != "gpt-image-2.5-sunburst") {
 		return profile

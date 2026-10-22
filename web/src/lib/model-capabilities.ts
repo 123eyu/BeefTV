@@ -1,5 +1,6 @@
 import { isVolcengineArkVideoProtocol, type ModelProtocol, type ModelProtocolWorkflow } from "@/lib/model-protocols";
 import { beefAPIImageContract } from "@/lib/beefapi-image-contracts";
+import { seedreamImageCapability } from "@/lib/seedream-image";
 import type { ImageResolutionOption, ImageResolutionTier } from "@/lib/image-resolution-tiers";
 
 export type ModelCapabilityConfig = {
@@ -381,6 +382,8 @@ const defaultImageSizes = [
 ];
 
 export function upgradeGPTImageCapability(profile: ImageCapabilityConfig, protocol: ModelProtocol | undefined, model: string): ImageCapabilityConfig {
+    const seedream = seedreamImageCapability(model);
+    if (seedream) return seedream;
     if (protocol !== "openai-image" || !["gpt-image-2", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst"].includes(model.trim().toLowerCase())) return profile;
     if (!Array.isArray(profile.quality?.values) || !Array.isArray(profile.size?.values)) return profile;
     const defaults = defaultImageCapabilityConfig(protocol, model);
@@ -393,6 +396,8 @@ export function upgradeGPTImageCapability(profile: ImageCapabilityConfig, protoc
 }
 
 export function defaultImageCapabilityConfig(protocol?: ModelProtocol, model = ""): ImageCapabilityConfig {
+    const seedream = seedreamImageCapability(model);
+    if (seedream) return seedream;
     const image: ImageCapabilityConfig = {
         references: { promptMaxChars: 32000, maxImages: 16, maxImageBytes: 30 * 1024 * 1024, maskSupported: true },
         size: { parameter: "size", values: [...defaultImageSizes], default: "1:1", allowCustom: true },

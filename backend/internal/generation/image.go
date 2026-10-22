@@ -21,6 +21,9 @@ import (
 )
 
 func RunImageTask(ctx context.Context, input Input) (map[string]interface{}, error) {
+	if seedreamFamily(input.Config.Model) != "" {
+		return runSeedreamImageTask(ctx, input)
+	}
 	outputCount := 1
 	if input.ImageCapability != nil && input.ImageCapability.FixedOutputs > 0 {
 		outputCount = input.ImageCapability.FixedOutputs

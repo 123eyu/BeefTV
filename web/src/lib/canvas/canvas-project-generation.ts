@@ -338,6 +338,11 @@ export function buildImageGenerationMetadata(type: CanvasImageGenerationType, co
         size: config.size,
         quality: config.quality,
         transparentBackground: config.transparentBackground,
+        seedreamMode: config.seedreamMode,
+        seedreamMaxImages: config.seedreamMaxImages,
+        seedreamOutputFormat: config.seedreamOutputFormat,
+        seedreamOptimize: config.seedreamOptimize,
+        seedreamWatermark: config.seedreamWatermark,
         count,
         references: references.map(referenceUrl).filter((url): url is string => Boolean(url)),
     };
