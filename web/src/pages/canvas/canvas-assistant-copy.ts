@@ -232,9 +232,27 @@ const ASSISTANT_TOOL_ACTIVITY: Record<string, [string, string]> = {
 };
 
 /** 只显示官方活动和已核对的操作回执，不把工具完成等同于创作质量验收。 */
-export function assistantLifecycleText(event: Pick<AgentLifecycleEvent, "phase" | "toolName" | "success"> | string | null | undefined): string | null {
+export function assistantLifecycleText(event: Pick<AgentLifecycleEvent, "phase" | "toolName" | "success" | "stage" | "saved" | "total"> | string | null | undefined): string | null {
     const phase = typeof event === "string" ? event : event?.phase;
     switch (phase) {
+        case "business": {
+            if (!event || typeof event === "string") return null;
+            const count = Number.isSafeInteger(event.total) && event.total! > 0 && event.total! <= 1000 &&
+                Number.isSafeInteger(event.saved) && event.saved! >= 0 && event.saved! <= event.total!
+                ? ` ${event.saved}/${event.total} 个任务的结果已保存。` : "";
+            switch (event.stage) {
+                case "processing": return `正在生成素材。${count}`;
+                case "downloading": return `正在取回生成结果。${count}`;
+                case "saving": return `生成已有结果，正在保存文件。${count}`;
+                case "saved": return "文件已保存，正在继续处理。";
+                case "binding": return "文件已保存，正在更新画布。";
+                case "rendering": return "正在合成视频。";
+                case "exporting": return "视频已可用，正在导出可编辑工程。";
+                case "checking": return "正在检查时间线。";
+                case "observation_unavailable": return "原任务已保留，进度暂时无法读取。";
+                default: return null;
+            }
+        }
         case "tool": case "tool_end": {
             const tool = typeof event === "string" ? "" : event?.toolName?.replaceAll(".", "_") || "";
             const activity = ASSISTANT_TOOL_ACTIVITY[tool];

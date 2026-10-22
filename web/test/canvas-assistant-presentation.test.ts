@@ -269,6 +269,11 @@ describe("官方生命周期进度", () => {
     });
     test("压缩和重试各用一句完整的话，结束事件不再显示进度", () => {
         expect(assistantLifecycleText({ phase: "compaction" })).toBe("正在整理对话内容，方便继续。");
+        expect(assistantLifecycleText({ phase: "business", stage: "saving", saved: 2, total: 3 })).toBe("生成已有结果，正在保存文件。 2/3 个任务的结果已保存。");
+        expect(assistantLifecycleText({ phase: "business", stage: "binding" })).toBe("文件已保存，正在更新画布。");
+        expect(assistantLifecycleText({ phase: "business", stage: "exporting" })).toBe("视频已可用，正在导出可编辑工程。");
+        expect(assistantLifecycleText({ phase: "business", stage: "observation_unavailable" })).not.toContain("重新生成");
+        expect(assistantLifecycleText({ phase: "business", stage: "saving", saved: 9, total: 3 })).not.toContain("9/3");
         expect(assistantLifecycleText({ phase: "retry" })).toBe("模型暂时没响应，正在再试一次。");
         expect(assistantLifecycleText({ phase: "compaction_end" })).toBeNull();
         expect(assistantLifecycleText({ phase: "retry_end" })).toBeNull();

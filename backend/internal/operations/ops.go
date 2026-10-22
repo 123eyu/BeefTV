@@ -363,7 +363,7 @@ func opTaskGet(ctx *Context, params json.RawMessage) (any, error) {
 	}
 	return map[string]any{
 		"taskId": task.ID, "type": task.Type, "status": task.Status, "progress": task.Progress,
-		"outputs": task.Outputs, "resultState": task.ResultState,
+		"outputs": task.Outputs, "resultState": task.ResultState, "delivery": task.Delivery,
 		"createdAt": task.CreatedAt, "updatedAt": task.UpdatedAt,
 	}, nil
 }
