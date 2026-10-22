@@ -4,11 +4,22 @@ All notable public changes to BeefTV are documented in this file.
 
 ## Unreleased
 
-- 修复 Windows 中 BeefTV 已运行时再次打开技能链接失败的问题；链接仍只打开指定版本的安装确认页。
 - Built-in BeefAPI can be connected from the desktop app without pasting a key.
 - Prepared the first audited public source snapshot.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
 - Standardized public artifacts, runtime identifiers, documentation, and repository links on the BeefTV name.
+
+## v2.0.2
+
+- 支持已配置 Seedream 渠道的图层拆分和关联组图，生成结果分别保存到画布。
+- 修复助手生成多图后无法检查结果的问题；整片制作暂不支持图层拆分或组图，会在生成前提示。
+- 改善创作助手的任务恢复、停止与进度显示，修复读取当前画布和选择审片素材的问题。
+- 参考图上传遇到临时故障时有限重试，中断后继续原上传记录。
+- 修复部分外接视频渠道的多图请求，以及临时 DNS 错误导致的任务查询中断。
+- 助手宽表格可在侧栏内横向滚动。
+- 修复 Windows 已运行 BeefTV 时再次打开技能安装链接失败的问题；链接仍只打开指定版本的安装确认页。
+
+已知限制：影音模型仍可能漏报剪点或写错同音词，字幕与画面需结合原片核对；助手成片的角标排版和局部文字修改仍需人工检查。
 
 ## v2.0.1
 
