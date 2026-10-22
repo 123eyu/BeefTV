@@ -26,6 +26,12 @@
 5. 精确目录合同 `openai-video/openai-videos`、`video-generations-json`、`volcengine-ark-video` 仅在对应插件已启用时可选。第三方接口若不提供这些元数据，用户对照文档手动选择，不做付费探测。
 6. 协议不支持的素材须在提交前失败，禁止静默遗漏，也不在失败或超时后换格式重发。
 
+## 已核验旧配置修正
+
+WhatsToken 官方地址的 `seedance-2.0`、`seedance-2.0-fast` 曾被保存为 `newapi`（Sora multipart），会触发单图校验。直接配置 `https://whatstoken.ai` 或 `https://www.whatstoken.ai`，基础路径为空或 `/v1` 时，执行配置会将这一旧协议选择修正为既有 `video-generations-json`。其余协议选择、模型、域名、自定义路径和系统渠道保持原样；不创建供应商专用请求实现，不做网络探测或失败后换格式重发。
+
+回归覆盖客户同款 `seedance-2.0-fast`、9:16、五张参考图的 JSON 请求、顺序与 `reference_image` 角色，以及轮询、下载、恢复已有任务、415 不重发、取消和插件缺失。证据来自本地模拟上游，不代表客户现场或真实付费生成验收。
+
 ## 本次案例的证据限度
 
 外接 Seedance 任务的诊断记录是 `POST /v1/videos`、HTTP 415；v1.7.23 的 `newapi` 插件发送 multipart 且只取第一张图。该行为与 WhatsToken 公开文档不匹配，属于已证实的客户端配置/适配问题。原始 415 正文没有保留，未使用客户密钥做生成；不能据此宣称已经复现供应商侧拒绝的完整原因或确认退款。插件验收覆盖本地提交、轮询、结果下载、失败不重发，不等于线上付费生成成功。
