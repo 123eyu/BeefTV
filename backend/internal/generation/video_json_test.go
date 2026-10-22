@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"infinite-canvas/backend/internal/protocol"
-	"infinite-canvas/backend/internal/providerpreset"
 )
 
 func TestExternalVideoJSONCreatePollAndDownload(t *testing.T) {
@@ -111,7 +110,7 @@ func TestVideoJSONMissingPluginDoesNotSubmit(t *testing.T) {
 	}
 }
 
-func TestWhatsTokenLegacyVideoPreservesFiveReferences(t *testing.T) {
+func TestVideoJSONPreservesFiveReferencesAndTaskLifecycle(t *testing.T) {
 	t.Setenv("CANVAS_ALLOWED_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1")
 	for _, outcome := range []string{"success", "415", "resume", "missing plugin", "cancelled"} {
 		t.Run(outcome, func(t *testing.T) {
@@ -168,11 +167,7 @@ func TestWhatsTokenLegacyVideoPreservesFiveReferences(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			config := Config{BaseURL: "https://www.whatstoken.ai/v1", APIKey: "test-key", InterfaceType: "newapi", Model: "seedance-2.0-fast", Size: "9:16", VideoSeconds: "5"}
-			config.InterfaceType = providerpreset.CorrectLegacyVideoProtocol(config.BaseURL, config.Model, config.InterfaceType)
-			// Substitute only the transport destination; exercise the selected
-			// shipped adapter and its real create/poll/download lifecycle.
-			config.BaseURL = server.URL
+			config := Config{BaseURL: server.URL + "/v1", APIKey: "test-key", InterfaceType: "video-generations-json", Model: "seedance-2.0-fast", Size: "9:16", VideoSeconds: "5"}
 			ctx := context.Background()
 			if outcome == "resume" {
 				ctx = WithCallMeta(ctx, CallMeta{ProviderRequestID: "original"})

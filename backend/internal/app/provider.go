@@ -14,7 +14,6 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/providerpreset"
 
 	"gorm.io/gorm"
 )
@@ -448,7 +447,6 @@ func (s *Service) resolveProviderConfig(config providerConfig) (providerConfig, 
 		if _, err := ValidateOutboundURL(config.BaseURL); err != nil {
 			return providerConfig{}, err
 		}
-		config.InterfaceType = providerpreset.CorrectLegacyVideoProtocol(config.BaseURL, config.Model, config.InterfaceType)
 		return config, nil
 	}
 	channel, err := s.SystemChannel(channelID)

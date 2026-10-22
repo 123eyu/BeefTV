@@ -21,7 +21,7 @@ Seedance 专用调度与声明式视频插件共用该下载合同，包括直�
 
 第三方服务的新视频模型需要明确选择请求协议；仅有“OpenAI 兼容”或模型名称不能确认视频接口格式。目录明确标注合同且对应插件已启用时，才可采用该协议。已有用户配置保持原样。
 
-WhatsToken 官方地址（`https://whatstoken.ai` 或 `https://www.whatstoken.ai`，基础路径为空或 `/v1`）上的 `seedance-2.0`、`seedance-2.0-fast` 若仍保存为旧的 `newapi` 协议，本地执行时会按已核验的接口格式使用既有「视频生成 JSON · ratio / duration」插件。全部参考图按原顺序发送，未指定首尾帧的图片明确标为 `reference_image`。该修正仅适用于直接配置的上述地址和模型，不修改已保存设置，不覆盖其他明确协议、系统渠道或未知服务商，也不在请求失败后切换协议重发。插件未安装或停用时仍在发送前失败。
+自定义渠道统一使用用户明确选择的请求协议，不按域名或模型名称自动更换协议。选择「视频生成 JSON · ratio / duration」后，同一格式的其他服务地址和模型也可完整发送多张参考图；顺序保持不变，未指定首尾帧的图片明确标为 `reference_image`。模型能力设置中的数量等限制仍生效。旧配置若误选了 `newapi`（Sora multipart），请在模型的高级设置中选择与服务商实际接口一致的 JSON 协议。插件未安装或停用时仍在发送前失败。
 
 - OpenAI Videos / Sora 使用 `POST /v1/videos` 和 multipart，最多一张参考图。不支持的多图、参考视频、参考音频、尾帧及蒙版会在提交前报错。
 - 「视频生成 JSON · ratio / duration」使用 `POST /v1/video/generations` 和 JSON，发送 `images` 对象数组及图片角色、整数 `duration`、`ratio`，并从查询结果 `data[].url` 取回视频。只有服务商文档符合该格式时才选择。
