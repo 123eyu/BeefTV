@@ -4,6 +4,7 @@ All notable public changes to BeefTV are documented in this file.
 
 ## Unreleased
 
+- 修复 Windows 中 BeefTV 已运行时再次打开技能链接失败的问题；链接仍只打开指定版本的安装确认页。
 - Built-in BeefAPI can be connected from the desktop app without pasting a key.
 - Prepared the first audited public source snapshot.
 - Added reproducible local builds, automated quality checks, and multi-architecture container publishing.
