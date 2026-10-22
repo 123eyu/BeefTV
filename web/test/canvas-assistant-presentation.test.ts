@@ -142,6 +142,13 @@ describe("撤销失败原因映射", () => {
 });
 
 describe("付费生成确认", () => {
+    test("整片单图显示将要提交的 Seedream 选项", () => {
+        const text = assistantProposalText({ proposalId: "p", kind: "image", nodeIds: ["a"], model: "seedream", modelKey: "custom::seedream", production: { targets: [{ nodeId: "a", title: "首帧", kind: "image", modelKey: "custom::seedream", prompt: "花店", parameters: { count: "1", seedreamOutputFormat: "jpeg", seedreamOptimize: "fast", seedreamWatermark: "true" }, referenceNodeIds: [] }] } });
+        expect(text).toContain("图片格式：JPEG");
+        expect(text).toContain("提示词优化：快速");
+        expect(text).toContain("图片水印：开启");
+        expect(text).not.toContain("seedreamOptimize");
+    });
     test("说清数量、用哪个模型、谁扣款", () => {
         const text = assistantProposalText({ proposalId: "p1", kind: "image", nodeIds: ["a", "b"], model: "seedream-4", modelKey: "ch::seedream-4", note: "" });
         expect(text).toBe("为 2 个节点生成图片 · seedream-4\n确认后开始，按所选渠道计费。");
@@ -207,6 +214,20 @@ describe("生成结果只使用这项提议的真实回执", () => {
         expect(progress.ready).toBe(true);
         expect(progress.nodeIds).toEqual(["a", "b"]);
         expect(progress.text).toContain("1 个结果已就绪，1 个结果因任务失败");
+    });
+    test("Seedream 独立输出保存齐全后可检查，缺图或尚未取回时继续等待", () => {
+        const root = ready("source", { isBatchRoot: false, taskOutputIndex: 0, generationOutputNodeIds: ["source", "sibling"] });
+        const sibling = ready("sibling", { isBatchRoot: false, taskOutputIndex: 1 });
+        const progress = assistantProposalProgress(proposal, [root, sibling]);
+        expect(progress.ready).toBe(true);
+        expect(progress.nodeIds).toEqual(["source", "sibling"]);
+        expect(progress.text).toContain("2 个结果已就绪");
+        expect(assistantProposalProgress(proposal, [root]).ready).toBe(false);
+        expect(assistantProposalProgress(proposal, [root, ready("sibling", { taskStatus: "running" })]).ready).toBe(false);
+        expect(assistantProposalProgress(proposal, [root, ready("sibling", { resourceReloadAvailable: true })]).ready).toBe(false);
+        expect(assistantProposalProgress(proposal, [root, ready("sibling", { taskClientOperationId: "older" })]).ready).toBe(false);
+        expect(assistantProposalProgress(proposal, removeCanvasNodes([root, sibling], new Set(["sibling"])).nodes).ready).toBe(false);
+        expect(assistantProposalProgress(proposal, [ready("source", { generationOutputNodeIds: ["source"], isBatchRoot: false })]).ready).toBe(true);
     });
     test("删除运行子项会缩短当前列表，但不会把尚在运行的原批次说成完成", () => {
         const root = node("batch", { isBatchRoot: true, batchChildIds: ["a", "b"], generationOutputNodeIds: ["a", "b"], count: 2 });

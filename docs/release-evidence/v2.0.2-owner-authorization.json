@@ -10,6 +10,8 @@
   "newPaidBudgetCNY": 0,
   "requiredBeforePublish": ["independent_source_review", "targeted_regression", "four_platform_packages", "windows_upgrade_and_rollback", "linux_native_window", "signed_manifest", "public_readback"],
   "deferredDependencyPullRequests": [164, 166],
-  "scope": "Only the eleven already merged application changes in includedMain and the metadata needed to publish v2.0.2. Deferred PRs are excluded. Existing production model channel, price and Skill submission settings are not changed by this release.",
+  "scope": "The eleven already merged application changes in includedMain, release metadata, and the explicitly approved bounded Seedream assistant repairs. Deferred PRs are excluded. Existing production model channel, price and Skill submission settings are not changed by this release.",
+  "repairInstruction": "本版先明确提示暂不支持的整片组合，修好检查按钮后继续发版",
+  "repairScope": "Reject unsupported whole-film Seedream layers/groups before paid admission, preserve supported single-image settings, and recognize the persisted independent output list for the result-check action. Do not add variable-output whole-film production.",
   "source": "Direct human selection in this release conversation on 2026-10-22. Authorization is not test success. Prior-version waivers and paid budgets are not inherited."
 }
