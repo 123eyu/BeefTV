@@ -1,0 +1,15 @@
+{
+  "version": "v2.0.2",
+  "approvedBy": "Ender",
+  "date": "2026-10-22",
+  "instruction": "本版豁免完整十二次生成和整套助手验收；不新增付费生成，源码 review、专项回归、四平台包、升级回滚及签名检查通过后发布",
+  "includedMain": "d33ff1b7553cb938dc9e8f777c04a7e396a45d11",
+  "includedPullRequests": [221, 222, 223, 224, 225, 226, 227, 228, 230, 231, 233],
+  "waiveCompleteGenerationMatrix": true,
+  "waiveCompleteAssistantAcceptance": true,
+  "newPaidBudgetCNY": 0,
+  "requiredBeforePublish": ["independent_source_review", "targeted_regression", "four_platform_packages", "windows_upgrade_and_rollback", "linux_native_window", "signed_manifest", "public_readback"],
+  "deferredDependencyPullRequests": [164, 166],
+  "scope": "Only the eleven already merged application changes in includedMain and the metadata needed to publish v2.0.2. Deferred PRs are excluded. Existing production model channel, price and Skill submission settings are not changed by this release.",
+  "source": "Direct human selection in this release conversation on 2026-10-22. Authorization is not test success. Prior-version waivers and paid budgets are not inherited."
+}
