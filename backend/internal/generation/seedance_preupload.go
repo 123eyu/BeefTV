@@ -410,7 +410,7 @@ func PutBeefAPISeedanceBytes(ctx context.Context, session BeefAPISeedanceUploadS
 	req = trace.attach(req)
 	observation := TransportObservation{Request: req, StartedAt: time.Now(), ResponseLimitBytes: beefAPISeedanceUploadResponseLimit}
 	defer func() {
-		observation.Dispatched, observation.TransportPhase = trace.result()
+		observation.Dispatched, observation.TransportPhase = trace.result(resultErr)
 		var upload *ReferenceUploadError
 		if errors.As(resultErr, &upload) {
 			upload.Dispatched, upload.TransportPhase = observation.Dispatched, observation.TransportPhase
@@ -436,7 +436,7 @@ func PutBeefAPISeedanceBytes(ctx context.Context, session BeefAPISeedanceUploadS
 		}
 	}
 	resp, err := client.Do(req)
-	observation.Dispatched, observation.TransportPhase = trace.result()
+	observation.Dispatched, observation.TransportPhase = trace.result(err)
 	if err != nil {
 		upload := referenceUploadError(ctx, err)
 		upload.Code = "upload_transport_error"

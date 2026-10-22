@@ -396,10 +396,13 @@ func resolveOutboundHostWithPolicy(ctx context.Context, host string, allowPrivat
 	}
 	addresses, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		if allowPrivateHost && (host == "localhost" || strings.HasSuffix(host, ".localhost")) {
 			return []net.IP{net.IPv4(127, 0, 0, 1)}, nil
 		}
-		return nil, BadAuthRequest("外部服务域名解析失败")
+		return nil, &DNSResolutionError{Cause: err}
 	}
 	if len(addresses) == 0 {
 		if allowPrivateHost && (host == "localhost" || strings.HasSuffix(host, ".localhost")) {

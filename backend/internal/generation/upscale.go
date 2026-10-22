@@ -207,10 +207,8 @@ func RunUpscaleTask(ctx context.Context, input Input) (map[string]any, error) {
 	if runtime.ReferenceProgress != nil {
 		runtime.ReferenceProgress.ClearReference()
 	}
-	if err := setExecutionStage(ctx, runtime, "正在确认超分结果"); err != nil {
-		return nil, StatePendingError{TaskID: id, Cause: err}
-	}
 	policy := DefaultVideoPollPolicy()
+	policy.QueryStage = "正在确认超分结果"
 	policy.InitialDelay, policy.Interval = 0, 5*time.Second
 	return RunVideoPollLoop(ctx, id, policy, func(ctx context.Context) (VideoPollOutcome, error) {
 		result, _, err := QueryUpscaleResult(ctx, input, id)

@@ -484,6 +484,16 @@ describe("generation error classification", () => {
         expect(text).toContain("参考图 2");
     });
 
+    test("copied original-task DNS failure identifies local network and query stage", () => {
+        const text = formatGenerationDiagnostics(explainGenerationError("模型服务域名解析失败"), { failureDiagnostics: {
+            source: "local_network", stage: "查询原任务（DNS 解析）", summary: "外部服务域名解析失败",
+        } });
+        expect(text).toContain("错误来源：本地网络");
+        expect(text).toContain("失败阶段：查询原任务（DNS 解析）");
+        expect(text).not.toContain("正在连接上游");
+        expect(text).not.toContain("上游业务响应");
+    });
+
     test("copied reference failure keeps DNS stage and recovery attempt", () => {
         const text = formatGenerationDiagnostics(explainGenerationError("参考素材上传失败，本次尚未开始生成"), { failureDiagnostics: {
             source: "reference_upload", requests: [{ operation: "reference_put", method: "PUT", dispatched: false, outcome: "not_dispatched", transportPhase: "dns", transportRoute: "direct", startedAt: "2026-10-22T03:00:00Z", durationMs: 123, summary: "参考图 1 上传文件（第 3 次）失败：域名解析失败" }],

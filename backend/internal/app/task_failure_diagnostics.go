@@ -9,6 +9,7 @@ import (
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/outbound"
 )
 
 func captureTaskFailureDiagnostics(task *model.Task, err error, source string) {
@@ -37,16 +38,31 @@ func captureTaskFailureDiagnostics(task *model.Task, err error, source string) {
 	var payload providerPayloadError
 	var appErr *kernel.AppError
 	var upload *generation.ReferenceUploadError
+	var dns *outbound.DNSResolutionError
+	var download videoDownloadError
 	switch {
 	case errors.As(err, &upload):
 		d.Source, d.Stage, d.Summary = "reference_upload", upload.Meta.Label(), upload.Error()
 		d.FailedOperation, d.TransportPhase = "reference_"+upload.Meta.Stage, upload.TransportPhase
 		d.HTTPStatus, d.ProviderCode, d.RequestID = upload.HTTPStatus, upload.Code, upload.RequestID
+	case errors.As(err, &dns):
+		d.Source, d.TransportPhase = "local_network", "dns"
+		d.Stage = "解析模型服务域名"
+		if errors.As(err, &download) || task.Stage == "正在取回生成结果" {
+			d.Stage = "取回生成结果（DNS 解析）"
+		} else if task.ProviderRequestID != "" {
+			d.Stage = "查询原任务（DNS 解析）"
+		}
 	case errors.As(err, &httpErr):
 		d.Source, d.HTTPStatus, d.ProviderCode = "upstream_http", httpErr.StatusCode, failure.ProviderCode
 		d.RequestID = firstNonEmpty(failure.RequestID, httpErr.RequestID)
 	case errors.As(err, &payload):
 		d.Source, d.ProviderCode = "upstream_response", failure.ProviderCode
+		if failure.Category == generation.CategoryInputInaccessible {
+			d.Stage = "上游读取参考素材"
+		} else if task.ProviderRequestID != "" {
+			d.Stage = "上游任务处理"
+		}
 		if len(d.Requests) > 0 {
 			last := d.Requests[len(d.Requests)-1]
 			d.RequestID, d.HTTPStatus = firstNonEmpty(d.RequestID, last.RequestID), last.HTTPStatus

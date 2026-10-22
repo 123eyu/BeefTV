@@ -1,9 +1,12 @@
 package generation
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptrace"
 	"sync/atomic"
+
+	"infinite-canvas/backend/internal/outbound"
 )
 
 // Keep evidence for the whole Client.Do, including redirects. A later TLS
@@ -20,6 +23,8 @@ func (t *transportTrace) attach(req *http.Request) *http.Request {
 		DNSDone: func(info httptrace.DNSDoneInfo) {
 			if info.Err == nil {
 				t.phase.Store("connect")
+			} else {
+				t.phase.Store("dns")
 			}
 		},
 		ConnectStart:      func(string, string) { t.phase.Store("connect") },
@@ -38,7 +43,12 @@ func (t *transportTrace) attach(req *http.Request) *http.Request {
 	return req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
 }
 
-func (t *transportTrace) result() (bool, string) {
+func (t *transportTrace) result(err error) (bool, string) {
 	phase, _ := t.phase.Load().(string)
+	var dns *outbound.DNSResolutionError
+	if errors.As(err, &dns) {
+		// The resolver's own socket can emit ConnectStart before DNS fails.
+		phase = "dns"
+	}
 	return t.connected.Load(), phase
 }

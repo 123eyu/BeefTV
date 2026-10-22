@@ -155,12 +155,12 @@ func TestTransportTracePreservesDNSFailureAndRequestDispatch(t *testing.T) {
 	callbacks := httptrace.ContextClientTrace(req.Context())
 	callbacks.DNSStart(httptrace.DNSStartInfo{})
 	callbacks.DNSDone(httptrace.DNSDoneInfo{Err: errors.New("lookup failed")})
-	if dispatched, phase := trace.result(); dispatched || phase != "dns" {
+	if dispatched, phase := trace.result(nil); dispatched || phase != "dns" {
 		t.Fatalf("DNS evidence: %t %s", dispatched, phase)
 	}
 	callbacks.GotConn(httptrace.GotConnInfo{})
 	callbacks.TLSHandshakeStart()
-	if dispatched, phase := trace.result(); !dispatched || phase != "tls" {
+	if dispatched, phase := trace.result(nil); !dispatched || phase != "tls" {
 		t.Fatal("later handshake erased earlier dispatch")
 	}
 }

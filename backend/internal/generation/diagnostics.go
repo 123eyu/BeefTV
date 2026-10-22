@@ -71,7 +71,7 @@ func SanitizeTaskDiagnostics(input *model.TaskFailureDiagnostics) *model.TaskFai
 		d.Input = &v
 	}
 	switch d.Source {
-	case "local_validation", "upstream_http", "upstream_response", "local_result", "local_response", "reference_upload":
+	case "local_validation", "local_network", "upstream_http", "upstream_response", "local_result", "local_response", "reference_upload":
 	default:
 		d.Source = "unknown"
 	}

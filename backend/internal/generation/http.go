@@ -290,7 +290,7 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 	req = trace.attach(req)
 	observation := TransportObservation{Request: req, StartedAt: startedAt, ResponseLimitBytes: MaxResponseBytes}
 	defer func() {
-		observation.Dispatched, observation.TransportPhase = trace.result()
+		observation.Dispatched, observation.TransportPhase = trace.result(resultErr)
 		observation.Body = responseData
 		observation.Err = resultErr
 		if runtime, ok := RuntimeFromContext(req.Context()); ok && runtime.Receipts != nil {
@@ -382,7 +382,7 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 		}
 	}
 	resp, err := client.Do(req)
-	observation.Dispatched, observation.TransportPhase = trace.result()
+	observation.Dispatched, observation.TransportPhase = trace.result(err)
 	if err != nil {
 		if usesGenerationCircuit {
 			_ = runtime.Limits.RecordChannelResult(req.Context(), channelID, !errors.Is(err, context.Canceled))

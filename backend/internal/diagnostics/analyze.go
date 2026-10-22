@@ -116,6 +116,14 @@ func analyze(c *collection) []Finding {
 		}
 		diagnostic := task.FailureDiagnostics
 		switch {
+		case diagnostic != nil && diagnostic.Source == "local_network":
+			stage := "local_network"
+			if diagnostic.TransportPhase != "" && diagnostic.TransportPhase != "unknown" {
+				stage += "/" + diagnostic.TransportPhase
+			}
+			add("confirmed", stage, "local_network_failed", "记录确认本机访问外部服务时发生网络故障；已有上游任务应继续查询原任务，不能据此认定模型生成失败。", []string{ref}, nil)
+		case diagnostic != nil && diagnostic.Source == "upstream_response" && diagnostic.HTTPStatus < 400:
+			add("confirmed", diagnostic.Stage, "upstream_business_failed", "上游已返回业务失败；HTTP 成功不代表生成成功，素材读取失败也不等于用户电脑下载失败。", []string{ref}, nil)
 		case diagnostic != nil && diagnostic.Source == "reference_upload":
 			stage := "reference_upload"
 			if diagnostic.FailedOperation != "" && diagnostic.FailedOperation != "unknown" {
