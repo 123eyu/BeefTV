@@ -74,6 +74,8 @@ type TaskFailureDiagnostics struct {
 	ProviderTaskID  string                `json:"providerTaskId,omitempty"`
 	Param           string                `json:"param,omitempty"`
 	Stage           string                `json:"stage,omitempty"`
+	FailedOperation string                `json:"failedOperation,omitempty"`
+	TransportPhase  string                `json:"transportPhase,omitempty"`
 	CapturedAt      string                `json:"capturedAt,omitempty"`
 }
 
@@ -83,6 +85,7 @@ type TaskRequestEvidence struct {
 	Dispatched            bool   `json:"dispatched"`
 	TransportPhase        string `json:"transportPhase,omitempty"`
 	TransportRoute        string `json:"transportRoute,omitempty"`
+	Attempt               int    `json:"attempt,omitempty"`
 	Outcome               string `json:"outcome"`
 	HTTPStatus            int    `json:"httpStatus,omitempty"`
 	RequestID             string `json:"requestId,omitempty"`

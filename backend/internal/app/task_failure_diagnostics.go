@@ -40,6 +40,7 @@ func captureTaskFailureDiagnostics(task *model.Task, err error, source string) {
 	switch {
 	case errors.As(err, &upload):
 		d.Source, d.Stage, d.Summary = "reference_upload", upload.Meta.Label(), upload.Error()
+		d.FailedOperation, d.TransportPhase = "reference_"+upload.Meta.Stage, upload.TransportPhase
 		d.HTTPStatus, d.ProviderCode, d.RequestID = upload.HTTPStatus, upload.Code, upload.RequestID
 	case errors.As(err, &httpErr):
 		d.Source, d.HTTPStatus, d.ProviderCode = "upstream_http", httpErr.StatusCode, failure.ProviderCode

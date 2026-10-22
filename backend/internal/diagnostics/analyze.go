@@ -116,6 +116,25 @@ func analyze(c *collection) []Finding {
 		}
 		diagnostic := task.FailureDiagnostics
 		switch {
+		case diagnostic != nil && diagnostic.Source == "reference_upload":
+			stage := "reference_upload"
+			if diagnostic.FailedOperation != "" && diagnostic.FailedOperation != "unknown" {
+				stage = diagnostic.FailedOperation
+			}
+			if diagnostic.TransportPhase != "" && diagnostic.TransportPhase != "unknown" {
+				stage += "/" + diagnostic.TransportPhase
+			} else if diagnostic.FailedOperation != "" {
+				for i := len(diagnostic.Requests) - 1; i >= 0; i-- {
+					request := diagnostic.Requests[i]
+					if request.Operation == diagnostic.FailedOperation {
+						if request.TransportPhase != "" && request.TransportPhase != "unknown" {
+							stage += "/" + request.TransportPhase
+						}
+						break
+					}
+				}
+			}
+			add("confirmed", stage, "reference_preparation_failed", "记录确认参考素材准备失败，尚未进入后续生成提交；连接阶段说明失败位置，不能单凭这一点判定是哪一方网络故障。", []string{ref}, nil)
 		case diagnostic != nil && diagnostic.Source == "local_result" && diagnostic.ExecutionResult == "completed":
 			add("confirmed", "result_delivery", "local_result_failed", "模型已完成，任务记录确认本地结果处理失败；应继续取回原任务，避免重复生成。", []string{ref}, nil)
 		case diagnostic != nil && diagnostic.HTTPStatus >= 400 && (diagnostic.Source == "upstream_http" || diagnostic.Source == "upstream_response"):

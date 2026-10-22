@@ -270,10 +270,11 @@ func TestBeefAPISeedancePreuploadCompleteErrorPreventsGenerate(t *testing.T) {
 		providerMedia{},
 	)
 	err := prepareBeefAPISeedanceReferences(harness.ctx(), input.Config, &input, nil)
-	if err == nil || !strings.Contains(err.Error(), "参考图 1 确认上传失败：还没有收到文件，请先把文件传完再确认") {
+	var upload *generation.ReferenceUploadError
+	if !errors.As(err, &upload) || upload.Meta.Stage != "complete" || upload.Meta.Attempt != 1 || !strings.Contains(upload.Detail, "还没有收到文件，请先把文件传完再确认") {
 		t.Fatalf("error = %v, want user-facing complete message", err)
 	}
-	if harness.generates != 0 {
+	if harness.generates != 0 || harness.completes != 1 {
 		t.Fatal("generation posted after complete failure")
 	}
 	if harness.puts == 0 {

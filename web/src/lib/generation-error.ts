@@ -438,7 +438,7 @@ function formatExecutionEvidence(evidence?: GenerationFailureDiagnostics): strin
         input.images?.slice(0, 16).forEach((media, i) => lines.push(`参考图 ${i + 1}：${number(media.width)}×${number(media.height)}，${number(media.bytes)} 字节`));
     }
     const outcomes: Record<string, string> = { response_received: "收到响应（业务结果另判）", transport_error: "传输或读取失败", not_dispatched: "请求未发送", http_error: "HTTP 错误", cancelled: "取消", timeout: "超时", business_error: "业务错误", response_limit: "本地响应大小限制" };
-    const phases: Record<string, string> = { connect: "建立连接", tls: "TLS 握手", request: "发送请求", response_wait: "等待响应", response: "读取响应" };
+    const phases: Record<string, string> = { dns: "DNS 解析", connect: "建立连接", tls: "TLS 握手", request: "发送请求", response_wait: "等待响应", response: "读取响应" };
     const routes: Record<string, string> = { direct: "直连", proxy: "代理" };
     const preparationOperations: Record<string, string> = { reference_create: "申请素材上传", reference_put: "上传素材文件", reference_complete: "确认素材上传" };
     evidence?.requests?.slice(0, 8).forEach((request, i) => {

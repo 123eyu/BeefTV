@@ -48,6 +48,15 @@ var (
 )
 
 func ValidateOutboundURL(rawURL string) (*url.URL, error) {
+	return ValidateOutboundURLContext(context.Background(), rawURL)
+}
+
+// ValidateOutboundURLContext keeps DNS safety checks inside the caller's
+// cancellation/deadline, including reference-upload recovery budgets.
+func ValidateOutboundURLContext(ctx context.Context, rawURL string) (*url.URL, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	parsed, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil || parsed.Hostname() == "" {
 		return nil, BadAuthRequest("外部服务地址无效")
@@ -58,7 +67,10 @@ func ValidateOutboundURL(rawURL string) (*url.URL, error) {
 	if parsed.User != nil {
 		return nil, BadAuthRequest("外部服务地址不允许包含认证信息")
 	}
-	if err := ValidateOutboundHost(parsed.Hostname()); err != nil {
+	if _, err := resolveOutboundHost(ctx, parsed.Hostname()); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, err
 	}
 	return parsed, nil
@@ -101,7 +113,7 @@ func OutboundHTTPClient(timeout time.Duration) *http.Client {
 			if len(via) >= maxOutboundRedirects {
 				return errors.New("外部服务重定向次数过多")
 			}
-			_, err := ValidateOutboundURL(req.URL.String())
+			_, err := ValidateOutboundURLContext(req.Context(), req.URL.String())
 			return err
 		},
 	}

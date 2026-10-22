@@ -484,6 +484,16 @@ describe("generation error classification", () => {
         expect(text).toContain("参考图 2");
     });
 
+    test("copied reference failure keeps DNS stage and recovery attempt", () => {
+        const text = formatGenerationDiagnostics(explainGenerationError("参考素材上传失败，本次尚未开始生成"), { failureDiagnostics: {
+            source: "reference_upload", requests: [{ operation: "reference_put", method: "PUT", dispatched: false, outcome: "not_dispatched", transportPhase: "dns", transportRoute: "direct", startedAt: "2026-10-22T03:00:00Z", durationMs: 123, summary: "参考图 1 上传文件（第 3 次）失败：域名解析失败" }],
+        } });
+        expect(text).toContain("阶段=DNS 解析");
+        expect(text).toContain("第 3 次");
+        expect(text).toContain("请求未发送");
+        expect(text).not.toContain("上游任务可能仍在执行");
+    });
+
     test("content moderation helper recognizes new categories", () => {
         expect(isContentModerationError("提示词未通过内容安全审核")).toBe(true);
         expect(isContentModerationError("上游 HTTP 400")).toBe(false);

@@ -286,8 +286,11 @@ func DoBinaryWithDispatchAdmission(req *http.Request, admit func() error) ([]byt
 
 func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admit func() error) (responseData []byte, responseMime string, resultErr error) {
 	startedAt := time.Now()
+	trace := &transportTrace{}
+	req = trace.attach(req)
 	observation := TransportObservation{Request: req, StartedAt: startedAt, ResponseLimitBytes: MaxResponseBytes}
 	defer func() {
+		observation.Dispatched, observation.TransportPhase = trace.result()
 		observation.Body = responseData
 		observation.Err = resultErr
 		if runtime, ok := RuntimeFromContext(req.Context()); ok && runtime.Receipts != nil {
@@ -336,7 +339,7 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 	if videoIdleTimeout > 0 && !SameProviderOrigin(credentials.Origin, req.URL.String()) {
 		stripVideoCredentialQuery(req.URL, credentials.Values)
 	}
-	if _, err := outbound.ValidateOutboundURL(req.URL.String()); err != nil {
+	if _, err := outbound.ValidateOutboundURLContext(req.Context(), req.URL.String()); err != nil {
 		return nil, "", err
 	}
 	outbound.ApplyDefaultOutboundHeaders(req)
@@ -370,8 +373,6 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 			cancel(nil)
 		}()
 	}
-	trace := &transportTrace{}
-	req = trace.attach(req)
 	if transport, ok := client.Transport.(*http.Transport); ok {
 		observation.TransportRoute = "direct"
 		if transport.Proxy != nil {

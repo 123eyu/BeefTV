@@ -14,8 +14,15 @@ type transportTrace struct {
 }
 
 func (t *transportTrace) attach(req *http.Request) *http.Request {
-	t.phase.Store("connect")
+	t.phase.Store("")
 	trace := &httptrace.ClientTrace{
+		DNSStart: func(httptrace.DNSStartInfo) { t.phase.Store("dns") },
+		DNSDone: func(info httptrace.DNSDoneInfo) {
+			if info.Err == nil {
+				t.phase.Store("connect")
+			}
+		},
+		ConnectStart:      func(string, string) { t.phase.Store("connect") },
 		TLSHandshakeStart: func() { t.phase.Store("tls") },
 		GotConn: func(httptrace.GotConnInfo) {
 			t.connected.Store(true)

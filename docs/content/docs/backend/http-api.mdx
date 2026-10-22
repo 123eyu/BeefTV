@@ -305,6 +305,10 @@ NewAPI Channel 2 与 BeefAPI 视频的暂时下载断连会保留原任务 ID �
 
 内置 BeefAPI Seedance 的素材预上传分为申请地址、上传文件（PUT）和确认上传，轨迹分别记录为 `reference_create`、`reference_put`、`reference_complete`。上传失败的 `source=reference_upload`；摘要包含素材类型、从 1 开始的序号和失败阶段，并保留实际采集到的 HTTP 状态、连接阶段、存储错误代码和请求 ID。存储错误正文只提取代码与请求 ID，不保存签名地址、签名头、素材内容或原始 XML。
 
+单文件 PUT 的临时连接或传输失败最多尝试 3 次。可能已经传完但回执丢失时，先用原票据确认；只有服务端明确返回 `video_reference_upload_incomplete` 才重传相同文件。确认回执丢失只重试同票据确认，不重新上传，也不创建新票据。首次失败后的自动恢复受 30 秒总时限和任务取消约束，间隔采用带随机量的退避；正常路径没有额外预检或等待。证书校验失败、地址安全拒绝、单文件存储 403 和确定的网关鉴权/参数错误不自动重试。分片仍按原收件回执跳过已确认部分。
+
+网络阶段从实际请求被动采集，不用额外探测请求阻塞上传。`requests[].attempt` 保存当前操作的尝试序号，摘要同时标注次数；仍只保留首次和最近 7 条请求，超出条数以 `omittedRequests` 说明。素材准备失败还保存 `failedOperation` 和已采集到的 `transportPhase`，避免把最后一次恢复查询误当作原失败。导出的 schema 3 ZIP 和离线分析可识别素材准备失败及已记录的连接阶段；阶段定位不等于网络责任归属，也不能恢复旧记录没有采集到的证据。
+
 生成尚未提交时，文件上传连接失败、签名拒绝、限流或临时服务异常可改用网关已有的内嵌素材接口，合并后的 Base64 与 JSON 仍受原 64 MiB 上限约束，并重新校验剩余素材的类型、大小和模型限制。已经完成上传的素材链接保留，最终只提交一次生成。取消、地址安全校验拒绝、素材校验失败、上传确认失败以及无法满足大小限制时停止提交并保留错误；不会因上传失败重试付费生成。无法恢复的上传错误使用 `reference_preupload_failed`，禁止自动重试，允许用户检查网络后手动重试。
 
 上述内嵌恢复只适用于 Seedance；要求 HTTP 参考链接的模型在预上传失败时停止准备，不回退到内嵌素材，也不提交生成。
@@ -321,7 +325,7 @@ NewAPI Channel 2 与 BeefAPI 视频的暂时下载断连会保留原任务 ID �
 
 连接阶段确认整次 HTTP 请求（含重定向）都未取得可发送请求的连接时，失败类别为 `request_not_sent`，允许重试。已经取得连接、提交后丢失响应或重定向后失败，仍按提交结果未确认处理。旧任务缺少连接证据时，不会仅凭 `TLS handshake timeout` 文本自动解除重试保护。
 
-请求诊断增加 `transportPhase`（`connect`、`tls`、`request`、`response_wait`、`response`）和 `transportRoute`（`direct`、`proxy`），不记录代理地址或凭据。`dispatched` 表示已取得可发送 HTTP 请求的连接，不证明服务端已经收件；`requestBytes` 是请求体声明长度，不是实际发送量。诊断中的模型优先取任务执行快照，避免节点后来切换模型造成误判。
+请求诊断增加 `transportPhase`（`dns`、`connect`、`tls`、`request`、`response_wait`、`response`）和 `transportRoute`（`direct`、`proxy`），不记录代理地址或凭据。`dispatched` 表示已取得可发送 HTTP 请求的连接，不证明服务端已经收件；`requestBytes` 是请求体声明长度，不是实际发送量。诊断中的模型优先取任务执行快照，避免节点后来切换模型造成误判。
 
 ## 明确不存在的端点
 
