@@ -402,6 +402,13 @@ describe("assistantVisibleReply", () => {
 });
 
 describe("assistantUnresolvedFailures", () => {
+    test("整片不支持的 Seedream 组合直接显示出路，不依赖助手复述错误", async () => {
+        const { assistantUnresolvedFailures } = await import("@/pages/canvas/canvas-assistant-copy");
+        const failed = { tool: "canvas.generation.propose", args: { nodeIds: ["image"] }, isError: true, error: "production_seedream_multiple_outputs: server detail must not be shown" };
+        expect(assistantUnresolvedFailures([failed])).toEqual(["整片制作暂不支持 Seedream 图层拆分或组图。请先在画布生成图片，再用已有图片继续制作。"]);
+        expect(assistantUnresolvedFailures([failed, { ...failed, isError: false }])).toEqual([]);
+        expect(assistantUnresolvedFailures([{ ...failed, error: "another_error: private detail" }])).toEqual(["准备生成没有成功"]);
+    });
     test("同一素材 overview 补齐资源重试成功不留下误报，其他素材仍报告", async () => {
         const { assistantUnresolvedFailures } = await import("@/pages/canvas/canvas-assistant-copy");
         for (const tool of ["media.overview", "media_overview"]) {

@@ -377,7 +377,9 @@ export function assistantUnresolvedFailures(calls: AgentToolCall[] | undefined):
             return [...keys].every(key => JSON.stringify(before[key]) === JSON.stringify(after[key]));
         });
         if (resolved) return;
-        const label = call.tool.replace("_", ".") === "media.inspect"
+        const label = call.tool === "canvas.generation.propose" && /^production_seedream_multiple_outputs(?::|$)/.test(call.error || "")
+            ? "整片制作暂不支持 Seedream 图层拆分或组图。请先在画布生成图片，再用已有图片继续制作。"
+            : call.tool.replace("_", ".") === "media.inspect"
             ? call.args?.mode === "audio" ? "有音频片段听取未完成"
                 : call.args?.mode === "video" ? "有视频片段查看未完成"
                     : !call.args?.mode || call.args.mode === "frames" ? "有素材的画面查看未完成" : `${assistantActionLabel(call.tool)}没有成功`
