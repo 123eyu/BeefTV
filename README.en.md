@@ -53,7 +53,9 @@
 
 ## Product demo
 
-<video src="https://github.com/user-attachments/assets/da4081e0-26bc-424e-b20c-124f92ce6538" controls preload="metadata" playsinline></video>
+<div>
+  <video src="https://github.com/user-attachments/assets/da4081e0-26bc-424e-b20c-124f92ce6538" controls preload="metadata" playsinline></video>
+</div>
 
 New product demo · About 45 seconds.
 
@@ -69,7 +71,9 @@ Connect media, local processing, and AI generation in an editable workflow. The 
 | --- | --- |
 | ![The source character in a gray suit jumps into the air](assets/readme/beeftv-character-source-motion.webp) | ![At the same timestamp, the finished example changes the character appearance and clothing while showing an airborne pose](assets/readme/beeftv-character-result-motion.webp) |
 
-<video src="https://github.com/user-attachments/assets/cadf1e3b-e1fa-4a45-83a0-c8cdacc4d1b1" controls preload="metadata" playsinline></video>
+<div>
+  <video src="https://github.com/user-attachments/assets/cadf1e3b-e1fa-4a45-83a0-c8cdacc4d1b1" controls preload="metadata" playsinline></video>
+</div>
 
 [Production record](docs/content/docs/overview/examples.mdx#工作流单人物替换) (Chinese)
 
@@ -104,7 +108,9 @@ In the local example **The Last Bottle of Water**, the user specified the produc
 
 Another shot · About 9 seconds:
 
-<video src="https://github.com/user-attachments/assets/b304bdd1-5a3f-4e96-929b-46a9cbff29bf" controls preload="metadata" playsinline></video>
+<div>
+  <video src="https://github.com/user-attachments/assets/b304bdd1-5a3f-4e96-929b-46a9cbff29bf" controls preload="metadata" playsinline></video>
+</div>
 
 [Listen to the opening narration](assets/readme/beeftv-agent-drama-narration-opening.mp3) · [Production record](docs/content/docs/overview/examples.mdx#agent聊天驱动的短剧制作) (Chinese)
 

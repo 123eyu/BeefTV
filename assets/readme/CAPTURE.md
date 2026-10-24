@@ -153,6 +153,13 @@
 
 ### GitHub 页内播放修复
 
+#### 独立播放器黑框的后续定位
+
+- 用户反馈镜头 4 可播放，另外三个首页播放器黑框。匿名抓取真实首页确认：表格内镜头 4 的 `src` 为媒体 CDN 签名地址；其余三个仍为 `github.com/user-attachments` 跳转地址，并各有一个未解析的 `gh:secured-asset-reference` 占位元素。
+- 最小 GitHub 渲染对照：顶层 `<video>` 和 `<p><video>` 会残留上述占位元素；无样式 `<div>`、表格容器和裸附件 URL 可正确解析为媒体 CDN。给独立播放器增加无样式 HTML 块容器，保留内容、顺序和原表格布局，不修改附件与编码。
+- 之前仅验证播放器数量、附件公开访问、独立本地页面播放，不足以覆盖 GitHub 页面中的附件解析过程；该缺口已补入 `scripts/verify-readme-videos.py`。
+- 回归检查同时验证文档的 GitHub 渲染结果、未解析占位元素、实际 CDN 来源及匿名视频分段响应。修复前的公开首页被准确检出 3 个占位元素；修复后的三份文档均为 4 个已解析播放器且无占位元素。
+
 - 根因：封面 Markdown 链接跳转到 GitHub blob 文件页，不是播放器；GitHub 的 Markdown 渲染会移除普通仓库 MP4 地址的 `<video>`，保留 GitHub 用户附件地址。此前远端 HTTP 可访问检查不足以验证播放器。
 - 参考 Hypit README 的表格内 `<video controls>` 方案。当前中英文 README 和案例页均使用 GitHub 视频附件；章节顺序与三列表格布局保持不变。
 - 附件通过 GitHub 官方 CLI 的 `internal/attachments/client.go` 所用上传接口创建。地址与文件大小记录在 `video-attachments.json`，文档保存稳定附件地址，不保存短时签名地址。

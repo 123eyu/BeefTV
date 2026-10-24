@@ -53,7 +53,9 @@
 
 ## 产品演示
 
-<video src="https://github.com/user-attachments/assets/da4081e0-26bc-424e-b20c-124f92ce6538" controls preload="metadata" playsinline></video>
+<div>
+  <video src="https://github.com/user-attachments/assets/da4081e0-26bc-424e-b20c-124f92ce6538" controls preload="metadata" playsinline></video>
+</div>
 
 新版产品演示 · 约 45 秒。
 
@@ -69,7 +71,9 @@
 | --- | --- |
 | ![原片中穿灰色西装的人物腾空跳跃](assets/readme/beeftv-character-source-motion.webp) | ![同一时间点，完整版中的人物外貌和服装已替换，仍处于腾空跳跃姿态](assets/readme/beeftv-character-result-motion.webp) |
 
-<video src="https://github.com/user-attachments/assets/cadf1e3b-e1fa-4a45-83a0-c8cdacc4d1b1" controls preload="metadata" playsinline></video>
+<div>
+  <video src="https://github.com/user-attachments/assets/cadf1e3b-e1fa-4a45-83a0-c8cdacc4d1b1" controls preload="metadata" playsinline></video>
+</div>
 
 [制作记录](docs/content/docs/overview/examples.mdx#工作流单人物替换)
 
@@ -104,7 +108,9 @@
 
 另一段镜头 · 约 9 秒：
 
-<video src="https://github.com/user-attachments/assets/b304bdd1-5a3f-4e96-929b-46a9cbff29bf" controls preload="metadata" playsinline></video>
+<div>
+  <video src="https://github.com/user-attachments/assets/b304bdd1-5a3f-4e96-929b-46a9cbff29bf" controls preload="metadata" playsinline></video>
+</div>
 
 [开场旁白试听](assets/readme/beeftv-agent-drama-narration-opening.mp3) · [制作记录](docs/content/docs/overview/examples.mdx#agent聊天驱动的短剧制作)
 
