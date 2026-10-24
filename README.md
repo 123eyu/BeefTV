@@ -67,13 +67,13 @@
 
 ![单人物替换工作流真实编辑界面：可替换的视频与图片输入、帧率适配、视频生成节点及模型参数](assets/readme/beeftv-character-workflow-editor.png)
 
-| 原片 · 12.0 秒 | 人物替换完整版 · 12.0 秒 |
-| --- | --- |
-| ![原片中穿灰色西装的人物腾空跳跃](assets/readme/beeftv-character-source-motion.webp) | ![同一时间点，完整版中的人物外貌和服装已替换，仍处于腾空跳跃姿态](assets/readme/beeftv-character-result-motion.webp) |
-
-<div>
-  <video src="https://github.com/user-attachments/assets/cadf1e3b-e1fa-4a45-83a0-c8cdacc4d1b1" controls preload="metadata" playsinline></video>
-</div>
+<table>
+  <tr><th width="50%">原片</th><th width="50%">人物替换完整版</th></tr>
+  <tr>
+    <td><video src="https://github.com/user-attachments/assets/1d8e5c42-d6be-40f5-be55-504b7381bf90" controls preload="metadata" playsinline></video></td>
+    <td><video src="https://github.com/user-attachments/assets/cadf1e3b-e1fa-4a45-83a0-c8cdacc4d1b1" controls preload="metadata" playsinline></video></td>
+  </tr>
+</table>
 
 [制作记录](docs/content/docs/overview/examples.mdx#工作流单人物替换)
 
@@ -92,11 +92,12 @@
 在本地案例 **《最后一瓶水》** 中，用户说明创作顺序并确认生成方案，Agent 自行搭建了 **25 个节点、48 条连线**：从剧本架构、8 镜分镜表，到角色、场景、镜头首帧、视频与中文旁白，过程和素材都留在画布上。
 
 <table>
-  <tr><th width="33%">角色设定 · 沈默</th><th width="33%">场景设定 · 水塔配给点</th><th width="34%">生成镜头 · 点击播放</th></tr>
+  <tr><th width="25%">角色设定 · 沈默</th><th width="25%">场景设定 · 水塔配给点</th><th width="25%">生成镜头一</th><th width="25%">生成镜头二</th></tr>
   <tr>
     <td><img src="assets/readme/beeftv-agent-drama-role-shenmo.webp" alt="Agent 生成的主角沈默设定图"></td>
     <td><img src="assets/readme/beeftv-agent-drama-scene-water-tower.webp" alt="Agent 生成的末日水塔配给点场景"></td>
     <td><video src="https://github.com/user-attachments/assets/0c0e1174-479d-4394-a4b2-7c64a3367e0a" controls preload="metadata" playsinline></video></td>
+    <td><video src="https://github.com/user-attachments/assets/b304bdd1-5a3f-4e96-929b-46a9cbff29bf" controls preload="metadata" playsinline></video></td>
   </tr>
 </table>
 
@@ -105,12 +106,6 @@
 - **先规划**：确定世界观、角色与分镜，写入镜头时长、画面、动作和声音要求。
 - **再执行**：创建节点与参考连线，确认后调用模型，生成角色图、场景图、镜头和旁白。
 - **可检查、可继续**：读取实际产物，核对设定图与分镜首帧，保留成功素材和失败状态，继续调整与编辑。
-
-另一段镜头 · 约 9 秒：
-
-<div>
-  <video src="https://github.com/user-attachments/assets/b304bdd1-5a3f-4e96-929b-46a9cbff29bf" controls preload="metadata" playsinline></video>
-</div>
 
 [开场旁白试听](assets/readme/beeftv-agent-drama-narration-opening.mp3) · [制作记录](docs/content/docs/overview/examples.mdx#agent聊天驱动的短剧制作)
 
