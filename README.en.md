@@ -177,14 +177,14 @@ The new restrictions do not apply retroactively to historical MIT content or ove
 Thank you to the partners, sponsors, and customers supporting BeefTV's continued development.
 
 <table>
-  <tr><th width="26%">Acknowledgements</th><th>About</th></tr>
+  <tr><th width="26%" align="center">Acknowledgements</th><th align="center">About</th></tr>
   <tr>
     <td align="center" valign="middle"><img src="assets/readme/partner-tencent-cloud.png" width="32" height="32" alt="Tencent Cloud icon"><br><strong>Tencent Cloud</strong></td>
     <td><a href="https://cloud.tencent.com/">Tencent Cloud</a> provides cloud computing, AI, and audio and video services, including media storage, processing, and delivery, for developers and enterprises.</td>
   </tr>
   <tr>
     <td align="center" valign="middle"><img src="assets/readme/partner-byteplus.png" width="32" height="32" alt="BytePlus icon"><br><strong>BytePlus</strong></td>
-    <td><a href="https://www.byteplus.com/en">BytePlus</a> draws on ByteDance's technology to offer generative AI, cloud infrastructure, and audio and video solutions to enterprises worldwide.</td>
+    <td><a href="https://www.byteplus.com/en">BytePlus</a> draws on ByteDance's technology to offer generative AI, cloud infrastructure, and audio and video solutions to enterprises worldwide. Special thanks to the BytePlus Overseas Incubator for its compute resources and ecosystem support for this project.</td>
   </tr>
 </table>
 

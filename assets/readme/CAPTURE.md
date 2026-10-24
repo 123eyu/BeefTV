@@ -6,7 +6,7 @@
 - `partner-tencent-cloud.png`：从腾讯云官网引用的 `https://cloudcache.tencent-cloud.com/qcloud/favicon.ico` 无损转换，32 × 32，927 字节。
 - `partner-byteplus.png`：原样保存 BytePlus 官网引用的 `https://sf-bpcms.bytepluscdn.com/obj/byteplus-public-aiso/portal/assets/favicon.png`，32 × 32，554 字节。
 - 图标存放于仓库内，展示不依赖第三方热链；品牌名称采用正文文本以兼容浅色和深色背景。后续新增对象沿用一行一个对象的结构。
-- 介绍依据两家官网及 BytePlus 的 About Us 页面整理，仅描述服务范围，不宣称具体出资、资源额度、认证或独家合作。商标归原权利人所有。
+- 服务介绍依据两家官网及 BytePlus 的 About Us 页面整理；BytePlus 海外孵化器的算力支持与生态扶持鸣谢依据用户明确提供的信息，不宣称具体出资、资源额度、认证或独家合作。商标归原权利人所有。
 
 ## README 视频布局调整
 
