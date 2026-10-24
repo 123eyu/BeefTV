@@ -1,5 +1,13 @@
 # BeefTV 2.0.1 实机素材记录
 
+## 特别鸣谢品牌素材
+
+- 根据用户提供的初期合作对象，新增腾讯云和 BytePlus；采用统一两列表格，左侧官方图标与名称，右侧简短介绍及官网链接，位于贡献与许可之后。
+- `partner-tencent-cloud.png`：从腾讯云官网引用的 `https://cloudcache.tencent-cloud.com/qcloud/favicon.ico` 无损转换，32 × 32，927 字节。
+- `partner-byteplus.png`：原样保存 BytePlus 官网引用的 `https://sf-bpcms.bytepluscdn.com/obj/byteplus-public-aiso/portal/assets/favicon.png`，32 × 32，554 字节。
+- 图标存放于仓库内，展示不依赖第三方热链；品牌名称采用正文文本以兼容浅色和深色背景。后续新增对象沿用一行一个对象的结构。
+- 介绍依据两家官网及 BytePlus 的 About Us 页面整理，仅描述服务范围，不宣称具体出资、资源额度、认证或独家合作。商标归原权利人所有。
+
 ## README 视频布局调整
 
 - 工作流首页改为同一行两个 MP4 播放器：左侧完整原片，右侧已有的人物替换完整版，移除首页重复静帧与下方独立结果播放器。

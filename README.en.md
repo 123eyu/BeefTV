@@ -172,6 +172,22 @@ The new license permits self-hosting, internal customization, and creating and s
 
 The new restrictions do not apply retroactively to historical MIT content or override independently licensed third-party materials. This is a source-available license; the entire repository should not be treated as standard MIT or as an open source project under the OSI definition. See the [license guide](docs/content/docs/overview/licensing.mdx) for covered scenarios and boundaries, and [`NOTICE`](NOTICE) for upstream sources and third-party attributions.
 
+## Special thanks
+
+Thank you to the partners, sponsors, and customers supporting BeefTV's continued development.
+
+<table>
+  <tr><th width="26%">Acknowledgements</th><th>About</th></tr>
+  <tr>
+    <td align="center" valign="middle"><img src="assets/readme/partner-tencent-cloud.png" width="32" height="32" alt="Tencent Cloud icon"><br><strong>Tencent Cloud</strong></td>
+    <td><a href="https://cloud.tencent.com/">Tencent Cloud</a> provides cloud computing, AI, and audio and video services, including media storage, processing, and delivery, for developers and enterprises.</td>
+  </tr>
+  <tr>
+    <td align="center" valign="middle"><img src="assets/readme/partner-byteplus.png" width="32" height="32" alt="BytePlus icon"><br><strong>BytePlus</strong></td>
+    <td><a href="https://www.byteplus.com/en">BytePlus</a> draws on ByteDance's technology to offer generative AI, cloud infrastructure, and audio and video solutions to enterprises worldwide.</td>
+  </tr>
+</table>
+
 ## ⭐ Star History
 
 <a href="https://www.star-history.com/?repos=glanderness%2FBeefTV&amp;type=date&amp;legend=bottom-right">

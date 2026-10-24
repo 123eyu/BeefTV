@@ -172,6 +172,22 @@ BeefTV 同时提供项目库、个人资产库、异步任务、模型渠道与�
 
 新限制不追溯适用于历史 MIT 内容，也不覆盖第三方独立许可的材料。这是一份源码可用许可，不能将整个仓库视为标准 MIT 或 OSI 定义的开源项目。具体场景及覆盖边界见[许可说明](docs/content/docs/overview/licensing.mdx)，上游来源与第三方归属见 [`NOTICE`](NOTICE)。
 
+## 特别鸣谢
+
+感谢支持 BeefTV 持续发展的合作伙伴、赞助商与客户。
+
+<table>
+  <tr><th width="26%">鸣谢对象</th><th>介绍</th></tr>
+  <tr>
+    <td align="center" valign="middle"><img src="assets/readme/partner-tencent-cloud.png" width="32" height="32" alt="腾讯云图标"><br><strong>腾讯云</strong></td>
+    <td><a href="https://cloud.tencent.com/">腾讯云</a>提供云计算、人工智能与音视频服务，覆盖媒体存储、处理和分发等场景，服务开发者与企业的应用建设。</td>
+  </tr>
+  <tr>
+    <td align="center" valign="middle"><img src="assets/readme/partner-byteplus.png" width="32" height="32" alt="BytePlus 图标"><br><strong>BytePlus</strong></td>
+    <td><a href="https://www.byteplus.com/en">BytePlus</a> 源自字节跳动的企业技术服务品牌，面向全球企业提供生成式 AI、云基础设施与音视频解决方案。</td>
+  </tr>
+</table>
+
 ## ⭐ Star History
 
 <a href="https://www.star-history.com/?repos=glanderness%2FBeefTV&amp;type=date&amp;legend=bottom-right">
