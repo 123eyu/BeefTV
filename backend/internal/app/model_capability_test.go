@@ -431,6 +431,24 @@ func TestSeedanceSavedEnumAndContinuousDurationsRespectDocumentedFloor(t *testin
 	}
 }
 
+func TestSeedanceEnumWithoutLegalDurationRejectsSubmission(t *testing.T) {
+	// 保存的枚举全部低于官方 4 秒下限时，没有任何合法时长可提交：
+	// 收紧后必须拒绝，而不是退回原来的 1 秒。
+	for _, values := range [][]int{{1}, {1, 2, 3}} {
+		profile := DefaultModelCapabilityConfigForModel("newapi", "seedance-2.0").Video
+		profile.Duration = VideoDurationConfig{Selection: "enum", Values: slices.Clone(values), Default: 1}
+		for _, seconds := range []string{"1", "2", "3", "4"} {
+			input := canvasGenerationInput{
+				Prompt: "test", Config: providerConfig{InterfaceType: "newapi", Model: "seedance-2.0", BaseURL: "https://enterprise.beefapi.com", VideoSeconds: seconds},
+				ReferenceImages: []providerMedia{{Width: 512, Height: 512, Bytes: 1000}},
+			}
+			if err := validateVideoTask(profile, input); err == nil {
+				t.Fatalf("enum %v accepted %ss", values, seconds)
+			}
+		}
+	}
+}
+
 func TestSeedanceTotalReferenceAudioDuration(t *testing.T) {
 	for name, maximum := range map[string]int64{"seedance-2.0": 15000, "seedance-2.5": 30000, "provider/seedance-2.5": 30000, "seedance-2.5-self-developed": 30000} {
 		profile := applyModelSpecificVideoCapability(DefaultModelCapabilityConfigForModel("newapi-channel-2", name).Video, "newapi-channel-2", name)

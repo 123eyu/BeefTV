@@ -775,8 +775,9 @@ export function tightenDocumentedOutputDuration(duration: VideoCapabilityConfig[
     const minimum = 4;
     if (duration.selection === "enum") {
         const values = (duration.values || []).filter((value) => value === -1 || value >= minimum);
-        if (!values.length) return duration;
-        const kept = values.includes(duration.default) ? duration.default : values.find((value) => value !== -1) ?? values[0];
+        // 过滤后没有合法时长时保留空列表：这份配置没有可提交的时长，提交校验会拒绝，
+        // 而不是退回原来的低于 4 秒的值。
+        const kept = values.length ? (values.includes(duration.default) ? duration.default : values.find((value) => value !== -1) ?? values[0]) : duration.default;
         return { ...duration, values, default: kept };
     }
     const min = Math.max(minimum, duration.min || 0);

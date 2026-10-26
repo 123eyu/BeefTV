@@ -61,6 +61,21 @@ test("更严格的参考音频下限保留", () => {
     expect(loose.references.minAudioDurationSeconds).toBe(2);
 });
 
+test("枚举里没有任何合法时长时拒绝提交，而不是退回低于 4 秒的值", () => {
+    for (const values of [[1], [1, 2, 3]]) {
+        const profile = savedProfile("seedance-2.0", (config) => {
+            config.video!.duration = { selection: "enum", values: [...values], default: 1 };
+        });
+        expect(profile.duration.values).toEqual([]);
+        for (const seconds of ["1", "2", "3"]) {
+            expect(() => assertVideoCapability(profile, [image("i0")], [], [], seconds)).toThrow("视频时长不在当前模型支持范围内");
+        }
+        // 没有合法时长时不能凭空造出一个可提交的值。
+        expect(() => assertVideoCapability(profile, [image("i0")], [], [], "4")).toThrow("视频时长不在当前模型支持范围内");
+        expect(tightenDocumentedOutputDuration({ selection: "enum", values: [...values], default: 1 })).toEqual({ selection: "enum", values: [], default: 1 });
+    }
+});
+
 test("时长收紧函数本身对三种配置都只收紧不放宽", () => {
     expect(tightenDocumentedOutputDuration({ selection: "range", min: 5, max: 15, step: 1, default: 5 })).toEqual({ selection: "range", min: 5, max: 15, step: 1, default: 5 });
     expect(tightenDocumentedOutputDuration({ selection: "enum", values: [5, 10], default: 5 })).toEqual({ selection: "enum", values: [5, 10], default: 5 });

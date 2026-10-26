@@ -146,10 +146,12 @@ func tightenSeedanceOutputDuration(duration *VideoDurationConfig) {
 			}
 			values = append(values, seconds)
 		}
+		// 过滤后没有合法时长时保留空列表：这份配置没有可提交的时长，
+		// 让校验直接拒绝，而不是退回原来的低于 4 秒的值。
+		duration.Values = values
 		if len(values) == 0 {
 			return
 		}
-		duration.Values = values
 		if duration.Default == -1 && containsInt(values, -1) || containsInt(values, duration.Default) {
 			return
 		}
