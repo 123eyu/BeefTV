@@ -463,6 +463,9 @@ export function InfiniteCanvas({ interactive = true, containerRef, viewport, app
             <div
                 data-canvas-world-layer
                 className="canvas-world-layer absolute origin-top-left"
+                // Preserve the CSS transform before the live layout effect runs,
+                // including engines that ignore non-inheriting @property rules.
+                style={{ "--canvas-live-x": `${viewport.x}px`, "--canvas-live-y": `${viewport.y}px` } as React.CSSProperties}
             >
                 <div data-canvas-world-raster-layer className="canvas-world-raster-layer absolute origin-top-left" style={{ "--canvas-committed-scale": viewport.k } as React.CSSProperties}>
                     {children}

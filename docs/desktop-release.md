@@ -16,6 +16,8 @@
 ./scripts/build-beeftv-release.sh
 ```
 
+macOS 构建会从固定源码构建并校验原生媒体探测组件，不要求构建机预装 BeefTV。可用 `BEEFTV_FFMPEG_RUNTIME` 提供额外编码器，并用 `BEEFTV_FFMPEG_LICENSE` 指定许可文件（默认查找同目录 `ffmpeg.LICENSE`）；显式指定但缺失或不可执行时构建失败。打包时仍校验编码器目标架构和系统动态库依赖，公开分发须满足上方媒体组件交付要求。
+
 如果系统没有全局 Go，可通过 `BEEFTV_GO_DIR` 指定本地工具链目录：
 
 ```bash
