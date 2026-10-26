@@ -110,9 +110,14 @@ type Outcome struct {
 | --- | --- | --- |
 | `running` / `fetching` / `retrievable` | `blocked` | 结果可能还在，先取回；不能为同一个结果再付一次钱 |
 | `ready`（已有成片） | `allowed` | 用户看到成片后主动再生成，是新的一次生成。现有「已有图片原位生成、保留旧版本」（`canvas-image-generation-executor.ts`）和「相同内容再次生成」确认框（`use-canvas-generation-executor.ts`）照旧，不归本方案的守门管 |
-| `failed`，上游确定没扣过钱（未发出、明确拒绝、明确失败） | `allowed` | 照常重新生成 |
-| `failed`，上游**可能已生成并计费**（提交结论未确认且渠道不能按同一键安全重发、确认取不回） | `confirm` | 重新生成可能重复扣费，必须确认 |
-| `failed`，原输入本身不能再提交（审核未通过等） | `blocked`（只对「原样重跑」） | 改了输入可以重新提交，见下 |
+| `failed`，**确认未计费**（请求没发出、上游明确没接纳，或渠道声明这类失败不收费 / 会退费） | `allowed` | 照常重新生成 |
+| `failed`，**已计费或计费不明**（提交结论未确认且渠道不能按同一键安全重发、确认取不回、上游明确失败但渠道没声明退费） | `confirm` | 重新生成可能重复扣费，必须确认 |
+| `failed`，原输入本身不能再提交（审核未通过等） | `blocked`（只对「原样重跑」）；改了输入后按这次失败是否计费，走上面两行之一 | 见下 |
+
+「没有结果」和「没有计费」是两件事，要分开判。Runway 官方原话「Unlike other failures, credits are not refunded for `SAFETY.INPUT.*` failures」（[Task failures](https://docs.dev.runwayml.com/errors/task-failures/)【已核】）：输入审核没通过，什么都没生成，钱照扣。所以「上游明确返回失败」只能推出没有结果，推不出没扣钱。只有下面三种情况算「确认未计费」：
+- 请求没发出（派发状态 `not_sent`、`request_not_sent`）；
+- 上游明确没接纳、没建任务（`rejected_no_job`）；
+- 渠道的协议声明（`internal/protocol/docs/*`、插件 manifest）写明这一类失败不收费或会退费。没写的一律按计费不明处理。Runway 其他失败「会退」只是从那句「Unlike other failures」反推的，页面没逐码列出【推断】，在声明里写明前也按计费不明。
 
 「提交结论未确认」不一定落到 `confirm`：渠道核实过会按 `Idempotency-Key` 去重的，后台用同一个键原样重发，不新建、不问用户（第 3.7 节）。依据〔防重〕4.2 第 ② 条、RFC 9110 §9.2.2 的放行条件「请求语义本身幂等」。
 
@@ -121,7 +126,7 @@ type Outcome struct {
 - `confirm`：改了输入也必须先确认。上游可能已为原任务扣过费，用户是否愿意再花一次钱，与输入改没改无关；只改一个字就绕过确认，就重新放开了提示词面板绕过扣费确认的路径；
 - `allowed`：放行。`ready` 节点主动再生成属于这一类，照旧可用。
 
-只有一种情况要比较输入：原任务因审核未通过而 `blocked`。这时它拦的只是「原样重跑」，改了提示词或参考素材就放行（不扣过费，不需要确认）。比较的是**生成内容**，不是整个请求：后台已有的 `ClientOperationHash` 会把 `metadata.clientOperationId` 一起哈希，只换提交标识也会变，不能直接拿来用。实施时另写一个只覆盖提示词、参考素材、模型和参数的内容指纹，在后台用原任务存下的输入算；前端的 `failedInputFingerprint` 只用于提示，不作判断依据。〔防重〕4.3 第 ② 条认为可以更简单（审核失败直接 `allowed`，让上游再判一次），标为它自己的判断、无出处，这里保留原做法，留给评审（第七节第 1 条）。
+只有一种情况要比较输入：原任务因审核未通过而 `blocked`。这时 `blocked` 拦的只是「原样重跑」；改了提示词或参考素材，就不再算原样重跑，但**放不放行、要不要确认，仍按这次审核失败有没有计费来判**：渠道声明审核失败不收费的，改输入后 `allowed`；声明收费（如 Runway `SAFETY.INPUT.*`）或没声明的，改输入后仍是 `confirm`，必须先确认。比较的是**生成内容**，不是整个请求：后台已有的 `ClientOperationHash` 会把 `metadata.clientOperationId` 一起哈希，只换提交标识也会变，不能直接拿来用。实施时另写一个只覆盖提示词、参考素材、模型和参数的内容指纹，在后台用原任务存下的输入算；前端的 `failedInputFingerprint` 只用于提示，不作判断依据。〔防重〕4.3 第 ② 条提议「审核失败直接 `allowed`，让上游再判一次」，理由是审核失败上游没扣钱；Runway 的原文说明这个前提不成立，本方案不采用，第七节第 1 条也不再把它列为可选项。
 
 输入全部是已持久化的事实：任务 `status/stage/error`、`routeRun`、最近一次 `RouteAttempt.DispatchState`、`ImageSubmission.ResponseAccepted`、图片创建回执是否存在且完整、`ProviderRequestID`、`outputs` 的入库状态、渠道能力（第 3.7 节），加一个新列 `recovery_outcome`（第 3.2 节）。计算不读错误文案；文案分类只保留在写入失败时（`task_terminal.go` 已经这么做），不在读时重来。
 
@@ -151,11 +156,11 @@ type Outcome struct {
 每次尝试用已有的 `ClaimFailedTaskProviderRecovery` 租约，多处同时触发也只有一个执行。结果分四种写回，其中「拿不回」细分成两种，因为对用户意味着不同的事：
 
 - 取回成功：任务变 `succeeded`；
-- **确定上游没有结果**（上游明确返回失败、明确拒绝、确认没接纳）：写 `recovery_outcome = no_result`。上游没生成，也就没扣钱，`phase = failed`、`regenerate = allowed`；
+- **确定上游没有结果**（上游明确返回失败、明确拒绝、确认没接纳）：写 `recovery_outcome = no_result`，`phase = failed`。「没有结果」不等于「没扣钱」：`regenerate` 按第 3.1 节判，只有确认未计费（没接纳、`rejected_no_job`，或渠道声明这类失败不收费/会退费）才是 `allowed`，其余是 `confirm`；
 - **系统无法取回**（回执缺失、回执不完整、多条冲突回执、过了渠道保留期；上游可能已经生成并计费，只是这边拿不到）：写 `recovery_outcome = unrecoverable`。`phase = failed`、`regenerate = confirm`，文案写明「上游可能已生成并扣费，本地拿不到结果」，并保留「查看原任务」；
 - 暂时失败（读库出错、锁冲突、存储配额、网络）：什么都不写，下次再试，直到过了保留期。
 
-只有前两类拿不回的持久化事实能让 `phase` 变成 `failed`。#16 后端打 `result_unrecoverable` 的几处，按上面拆成这两类写入。这和 Replicate 的 `aborted`（不计费）/ `canceled`（计费）一致（〔状态〕2.1【推断】）。超时只能决定「不再等」，不能决定「结果不存在」（〔状态〕3.4 midjourney-proxy 的反面例子）。
+只有前两类拿不回的持久化事实能让 `phase` 变成 `failed`。#16 后端打 `result_unrecoverable` 的几处，按上面拆成这两类写入。`recovery_outcome` 只回答「结果还在不在」，「扣没扣钱」另由派发状态和渠道的计费声明回答，两者分开存、分开判。Replicate 也把两者分开：`aborted`（没开始跑，不计费）和 `canceled`（按已跑时间计费）都没有结果（〔状态〕2.1）；Runway `SAFETY.INPUT.*` 没有结果但计费（见第 3.1 节）。超时只能决定「不再等」，不能决定「结果不存在」（〔状态〕3.4 midjourney-proxy 的反面例子）。
 
 `POST /tasks/:id/recover`：留作「立即再查一次」的入口（例如本地存储满了、用户清理后想马上取，〔状态〕5.2 第 3 条），做同一件事并重置退避，不是常规操作。这个处理函数里**不引用** `store.Retry` / `RetryTask` / 任务接纳，在代码结构上就不可能新建任务。验收不按 HTTP 方法判断——现有免费取回本身就会用 POST：超分 `RecoverUpscaleResult` 调原任务的 `/recover`（`generation/upscale.go`），RunningHub 查结果也是 POST。测试断言的是：上游 mock 只收到查询/取回类请求（按协议声明的 request kind 是 `poll`/`query`/`recover`，没有 `create`）；上游任务号始终是原任务的 `ProviderRequestID`；本地任务表没有新增任务，原任务的 `routeRun` 不变。它合并现在分散的三个入口：`/retry` 里的继续下载和回执重建、`/tasks/:id/query-provider`、`/media-upscale/tasks/:id/recover` 里的取回分支。
 
@@ -282,6 +287,10 @@ CREATE TABLE regeneration_consents (
 
 - 不发确认 ID、不设 10 分钟过期、不搞桌面专用鉴权。同意随付费提交一起带上：`consent: { originalTaskId, originalRouteRun, quoteId, operationId }`。
 - 接纳事务里先核对：报价存在、属于本调用者、没过报价有效期；本次请求的内容指纹、费用、`operationId` 与报价一致；费用没有上涨、计费单位没变。任一不符返回 `paid_confirmation_required` 和新报价，**不提交上游**。
+- 报价里包含**已确认的渠道（路由）和费用上限**，接纳时把它们写进新任务（`consent_route_ids`、`consent_charge_ceiling`，列名实施时定），约束一直延续到实际派发，不只在接纳那一刻核对一次。原因：接纳之后，执行器在原渠道明确拒绝（`rejected_no_job`）时会自动换备用渠道继续提交——`task_route_executor.go` 第 113 行调 `nextRouteAttemptAfterFailure` → `model_router.go` 的 `switchTaskToNextRoute` → `modelcatalog/route_attempt.go` 第 174 行 `SwitchTaskToNextRoute`，在同一前台模型的路由里选下一个可用渠道【已核】。备用渠道可能比用户确认的那个贵。
+- 规则：带同意记录的任务，每次派发前（包括换备用渠道、图片限流后的同渠道重试）都核对「这个渠道在已确认的范围内、按它的价格不超过已确认的上限」。在范围内照常提交；超出范围或价格未知时**停止派发**，任务停在 `failed`、`recovery_outcome = no_result`（原渠道没接纳，没扣钱），`regenerate = confirm`，后台给出按新渠道算的新报价，用户重新同意后才提交。不静默换到更贵的渠道。
+- 报价生成时就决定把哪些渠道列入范围：默认只列用户看到价格的那一个（首选）渠道；如果要允许自动换备用渠道，报价里要把备用渠道和它们的价格（或「最高可能」）一起展示给用户。选哪种由第七节第 7 条定。
+- 不带同意记录的普通提交（`regenerate = allowed`）换备用渠道的行为不变；这条约束只管走过 `confirm` 的提交。
 - 然后 `INSERT`。插入成功 = 这一次额度到手，同一事务写入新任务；违反唯一约束 = 这次 `confirm` 已经用过，返回当前 `outcome`，不建任务。
 - 同一个 `operationId` 重放（双击、网络重试）先由现有 `(user_id, client_operation_id)` 唯一索引和 `admitExisting` 返回原任务，根本走不到插入；即使报价后来过期，已接纳的同一操作重放仍返回原任务，不变成新购买（〔外部〕6.6 节）。
 - 原任务的 `routeRun` 变了（被重跑过），唯一键自然换一组，旧同意不再匹配。
@@ -394,11 +403,13 @@ CREATE TABLE regeneration_consents (
 | 5 | 后到的画布快照重复认领同一节点（#263 第 1 轮） | 取回不在前端认领；后台按任务加租约（`ClaimFailedTaskProviderRecovery`），画布快照来几次都不会多触发 |
 | 6 | 恢复响应丢失，被误判为取不回（#263 第 1 轮） | 判定只看后台事实，不看某一次请求的响应；响应丢了，前端订阅到的任务也已经是 `succeeded` |
 | 7 | 自动取回和手动重新生成用的是两套判断（#263 第 1 轮） | 只有一个 `outcome`，所有入口读同一个字段 |
-| 8 | 节点锁死：任务已终态仍按「提交未确认」锁住（客户 A，#15） | 每个终态都有出口：`retrievable` 后台自动取；BeefAPI 图片同键重发；`failed` 时 `regenerate` 为 `confirm` 或 `allowed`。只剩审核未通过这类 `blocked`，它只拦原样重跑，改了输入就能直接生成（第 3.1 节） |
+| 8 | 节点锁死：任务已终态仍按「提交未确认」锁住（客户 A，#15） | 每个终态都有出口：`retrievable` 后台自动取；BeefAPI 图片同键重发；`failed` 时 `regenerate` 为 `confirm` 或 `allowed`。只剩审核未通过这类 `blocked`，它只拦原样重跑；改了输入后按这次失败是否计费，`allowed` 或 `confirm`（第 3.1 节） |
 | 9 | 查不到原任务就永远「暂勿重新生成」（客户 B 候选路径 2/3，#16 未覆盖） | 第 3.9 节：去掉画布过滤；同会话内同键自动重发；刷新后查不到就允许用户重新生成，复用同一提交标识，后台去重 |
 | 10 | 错误卡和批次子节点对「能否重试」的判断来源不同（#16 未覆盖第 2 条） | 两处都改读 `taskOutcome` |
 | 11 | 双击 `/retry` 第二次报「不能重试」（〔防重〕4.2 第 ①，本轮新增） | 同一 `clientOperationId` 重放返回原任务（第 3.3 节） |
 | 12 | 进度写入改 `updated_at`，会误作废刚做的确认（〔防重〕4.2 第 ③，本轮新增） | 同意按 `routeRun` 绑定，进度写入不影响（第 3.6 节） |
+| 13 | 审核失败被当成「没扣钱」，改提示词就绕过确认（Runway `SAFETY.INPUT.*` 不退积分，Codex 第 4 轮） | 「没有结果」和「没有计费」分开判，只有确认未计费才免确认（第 3.1、3.2 节） |
+| 14 | 用户确认的是 A 渠道的价格，原渠道拒绝后自动换到更贵的备用渠道（Codex 第 4 轮） | 同意记录带已确认的渠道和费用上限，每次派发前核对，超出就停下重新问（第 3.6 节） |
 
 ### 5.2 过去的同类修复（逐个打开核对过）
 
@@ -444,12 +455,13 @@ CREATE TABLE regeneration_consents (
 
 前两轮 Codex 评审的结论已落进正文：同意确认后重新生成；按目标节点检查，批次检查每个目标；退避按渠道定；批量查询；改输入不能免确认。第 3 轮按三份调研改动的地方，下面是还需要拍板的：
 
-1. 审核未通过后改了输入再生成：现方案要算一个只覆盖生成内容的指纹来区分「原样重跑 / 改过」；〔防重〕4.3 第 ② 条认为不必区分，审核失败直接 `allowed`，让上游再判一次（它自己标为无出处的判断）。
+1. 审核未通过后改了输入再生成：已按 Codex 第 4 轮意见定为「按这次失败是否计费判」，不统一放行（第 3.1 节）。待定的只剩：各渠道的协议声明里怎么写「这类失败收不收费 / 退不退费」，以及没写时一律按计费不明是否太保守。
 2. 刷新后自动重发（第 3.9 节）：要不要在提交前把请求体存到本地（InvokeAI 的提交日志），换取刷新后也不用用户再点。代价是多一份本地存储和清理逻辑。
 3. BeefAPI 视频的同键去重：先确认生产环境是否已开 `VIDEO_SUBMISSION_GUARD_ENABLED`；以及 BeefAPI 是否像图片那样在响应头声明视频协议，让 BeefTV 按声明启用。
 4. 火山方舟「链接 24 小时、任务 7 天」：过期后重新查询能否拿到新链接，要实测后再定截止按哪个算。火山方舟、可灵的保留期原文还没逐字核对。
 5. 外部客户端的付费权限：是给每个登记客户端一个「可以发起付费提交」的开关（默认关、用户在 BeefTV 设置里打开），还是沿用现在「可写客户端都能提交」。〔外部〕6.5 节建议由用户控制是否给某个客户端付费能力。
 6. 同意的版本：只用 `routeRun`，还是另加只在 `phase` / `regenerate` 变化时 +1 的 `outcome_version`（第 3.6 节）。
+7. 已确认的渠道范围（第 3.6 节）：报价只列首选渠道（备用渠道一旦要用就停下重新问），还是把备用渠道和价格一起列给用户、一次同意覆盖全部。前者简单但用户可能被多问一次，后者报价更复杂。
 
 ## 八、上游 Infinite Canvas
 
