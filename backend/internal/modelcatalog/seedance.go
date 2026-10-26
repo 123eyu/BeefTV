@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 
-	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 )
@@ -39,9 +38,6 @@ const (
 const (
 	// 火山方舟与腾讯 WAND 的输出时长下限都是 4 秒（2.0 为 4~15，2.5 为 4~30）。
 	documentedSeedanceOutputMinSeconds = 4
-	// 腾讯 WAND 1.0-pro（即 seedance-2.0）写明混合输入的总上限是 12 个文件；
-	// 1.5-pro 和火山方舟都没有这条，所以只对我们自己的企业网关线路、且非 2.5 的模型收紧。
-	documentedTencentReferenceFiles = 12
 )
 
 const (
@@ -96,41 +92,6 @@ func seedanceMaterialLibraryHost(baseURL string) bool {
 	}
 }
 
-// 桌面端直连企业网关时看域名；托管网页里请求走 /api/ai/system/beefapi，
-// 同一渠道的 id 也是 beefapi，这里一并认作企业网关线路。
-// WhatsToken 域名不在此列：它没有可核实的腾讯 WAND 映射，不跟着收紧。
-func seedanceEnterpriseGatewayRoute(config TaskConfig) bool {
-	if u, err := url.Parse(strings.TrimSpace(config.BaseURL)); err == nil {
-		switch strings.ToLower(u.Hostname()) {
-		case "beeftv.app", "enterprise.beefapi.com", "beefapi.com":
-			return true
-		}
-	}
-	if strings.EqualFold(strings.TrimSpace(config.ChannelID), beefapi.ChannelID) {
-		return true
-	}
-	return SystemChannelIDFromBaseURL(config.BaseURL) == beefapi.ChannelID
-}
-
-// 腾讯 WAND 映射的是 BeefAPI 公开名 seedance-2.0（含 fast/mini 后缀）。
-// 原生 Ark 名（doubao-seedance-2-0-*、dreamina-seedance-2-0-*）走的是字节官方合同，
-// 即使挂在同一个网关域名下也没有腾讯「合计 12」这条限制，不扩到它们身上。
-func tencentWandSeedance20Model(modelName string) bool {
-	parts := strings.Split(strings.ToLower(strings.TrimSpace(modelName)), "/")
-	base := parts[len(parts)-1]
-	return base == "seedance-2.0" || strings.HasPrefix(base, "seedance-2.0-")
-}
-
-func tencentWandReferenceRoute(config TaskConfig) bool {
-	if !tencentWandSeedance20Model(config.Model) {
-		return false
-	}
-	if model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(config.InterfaceType)) {
-		return false
-	}
-	return seedanceEnterpriseGatewayRoute(config)
-}
-
 // 输出时长下限官方是 4 秒：2.0 为 4~15，2.5 为 4~30。
 // 区间、连续（fractionalMin）和枚举三种已保存配置都要收紧，枚举里的 -1（自动）保留。
 func tightenSeedanceOutputDuration(duration *VideoDurationConfig) {
@@ -173,8 +134,7 @@ func tightenSeedanceOutputDuration(duration *VideoDurationConfig) {
 }
 
 // 官方文档写的下限只会收紧素材合同，不会放宽管理员已经配得更严的数值。
-// 输出时长与参考音频下限对 Seedance 2.x 的所有线路都成立；「混合输入合计 12 个」
-// 只在腾讯 WAND 1.0-pro（我们这边的 seedance-2.0）有，且只在我们自己的企业网关线路上。
+// 输出时长与参考音频下限对所有 Seedance 2.x 线路都成立。
 func tightenSeedanceDocumentedRouteLimits(config TaskConfig, value *VideoCapabilityConfig) {
 	if value == nil || !isSeedance2Family(config.InterfaceType, config.Model) {
 		return
@@ -182,12 +142,6 @@ func tightenSeedanceDocumentedRouteLimits(config TaskConfig, value *VideoCapabil
 	tightenSeedanceOutputDuration(&value.Duration)
 	if value.References.MinAudioDuration < officialSeedanceMinAudioSeconds {
 		value.References.MinAudioDuration = officialSeedanceMinAudioSeconds
-	}
-	if !tencentWandReferenceRoute(config) {
-		return
-	}
-	if value.References.MaxTotalReferences <= 0 || value.References.MaxTotalReferences > documentedTencentReferenceFiles {
-		value.References.MaxTotalReferences = documentedTencentReferenceFiles
 	}
 }
 
@@ -256,9 +210,6 @@ func validateVideoReferenceMedia(profile *VideoCapabilityConfig, input TaskInput
 	}
 	if len(input.ReferenceAudios) > refs.MaxAudios {
 		return kernel.BadAuthRequest(fmt.Sprintf("当前视频模型最多支持 %d 段参考音频", refs.MaxAudios))
-	}
-	if total := len(input.ReferenceImages) + len(input.ReferenceVideos) + len(input.ReferenceAudios); refs.MaxTotalReferences > 0 && total > refs.MaxTotalReferences {
-		return kernel.BadAuthRequest(fmt.Sprintf("当前视频模型最多支持 %d 个参考素材（图片、视频、音频合计），现在有 %d 个；请移除多余素材后再提交", refs.MaxTotalReferences, total))
 	}
 	if !videoCapabilityAllowsAudioOnly(profile) && len(input.ReferenceAudios) > 0 && len(input.ReferenceImages) == 0 && len(input.ReferenceVideos) == 0 {
 		return kernel.BadAuthRequest("当前视频模型不支持只用音频生成视频，请同时添加参考图片或参考视频")

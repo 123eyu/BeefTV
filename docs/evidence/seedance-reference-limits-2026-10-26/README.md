@@ -1,15 +1,21 @@
-# 参考素材两处官方限制的截图证据（飞书 #13 后续）
+# Seedance 参考素材下限的提示证据（2026-10-26）
 
-用仓库里真实的 `VideoSettingsPanel`（视频设置面板）和真实的模型能力配置在本机渲染后截取。没有连接后端，没有跑真实生成，也没有点任何会产生费用的按钮。
+用仓库里真实的 `CreationComposer`（创作输入框）、真实的 `assertVideoCapability` 和真实的模型能力配置（`seedance-2.0`，参考音频 2–15 秒、输出时长 4–15 秒）在本机渲染后截取。没有连接后端，没有跑真实生成，也没有点任何会产生费用的按钮。
 
 ## 文件
 
-- `01-output-duration-floor.png`：左边是 `seedance-2.0`（腾讯 WAND 1.0-pro），右边是 `seedance-2.5`（腾讯 1.5-pro）。两条时长滑块的左端都是 4s，右边分别是 15s 和 30s——输出时长下限按官方文档从 1 秒收紧到 4 秒之后的实际界面。
+- `01-blocked-notice-in-composer.png`：两条被拦下时的提示都显示在输入框里、发送按钮上方，橙黄色、始终可见：
+  - 输出时长低于下限：「输出时长为 3 秒，当前模型只支持 4–15 秒；请改成 4–15 秒后再提交」
+  - 参考音频太短：「音频「配音.wav」时长为 1.90 秒，需要改到 2–15 秒；请换一段更长的音频后再提交」
 
-## 另一处（三类合计 12 个）为什么没有截图
+两句话都写清了哪一项、现在多少秒、要改成多少秒，以及下一步该做什么。
 
-「合计最多 12 个」在界面上不新增控件，只在提交时按实际素材数量给出提示，例如：
+## 为什么不放在右上角 Toast
 
-> 当前视频模型最多支持 12 个参考素材（图片、视频、音频合计），现在有 15 个；请移除多余素材后再提交
+`web/src/styles/globals.css` 里有一条全局规则 `.ant-message, .ant-notification { display: none !important; }`，全站的右上角 Toast 都是隐藏的。所以被拦下的说明改成输入框内的 `creation-composer-notice`（`role="alert"`），在提交按钮之前渲染，和 PR #258 参考素材面板内的提示是同一个思路：不加新按钮，不加设置项。
 
-这条提示走的是现有的生成错误提示通道，所以没有新的界面元素可以拍；它的生效范围由 `web/test/seedance-reference-total.test.ts` 和后端 `TestSeedanceDocumentedRouteLimits` 覆盖：9 张图 + 3 段视频 + 3 段音频（15 个）在企业网关线路的 `seedance-2.0` 上被拒，去掉一个视频后（12 个）放行；`seedance-2.5` 和火山直连不设这条。
+## 覆盖
+
+- `web/test/creation-composer-notice.test.tsx`：断言提示渲染在输入框内、带 `role="alert"`、位置在发送按钮之前；没有提示时不渲染这段。
+- `web/test/video-reference-duration.test.ts`：断言提示文案包含素材名、当前秒数和目标范围，并能在对话记录里重新解释。
+- `backend/internal/app/model_capability_test.go`：`TestSeedanceReferenceAudioMessageNamesItemAndFix`、`TestSeedanceDocumentedOutputDurationFloor`，后端返回的同样是这份文案。

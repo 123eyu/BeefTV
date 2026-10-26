@@ -42,7 +42,7 @@ func TestReferenceDurationIndependentBounds(t *testing.T) {
 		min, max float64
 		want     string
 	}{
-		{16000, 0, 15, "不超过 15"}, {1000, 2, 0, "至少 2"}, {0, 0, 0, ""}, {15000, 0, 15, ""}, {2000, 2, 0, ""},
+		{16000, 0, 15, "需要改到 15 秒以内；请裁剪或换一段更短的音频后再提交"}, {1000, 2, 0, "需要改到 2 秒以上；请换一段更长的音频后再提交"}, {0, 0, 0, ""}, {15000, 0, 15, ""}, {2000, 2, 0, ""},
 	} {
 		err := validateReferenceDuration("音频", 0, tc.duration, tc.min, tc.max)
 		if tc.want == "" {

@@ -108,8 +108,6 @@ export function modelCompatibilityError(config: AiConfig, model: string, require
         if (visualInputCount > profile.references.maxImages) return `最多支持 ${profile.references.maxImages} 张参考图`;
         if (input.videoCount > profile.references.maxVideos) return `最多支持 ${profile.references.maxVideos} 个参考视频`;
         if (input.audioCount > profile.references.maxAudios) return `最多支持 ${profile.references.maxAudios} 个参考音频`;
-        const maxTotalReferences = profile.references.maxTotalReferences || 0;
-        if (maxTotalReferences > 0 && visualInputCount + input.videoCount + input.audioCount > maxTotalReferences) return `最多支持 ${maxTotalReferences} 个参考素材（图片、视频、音频合计）`;
         const operation = resolveVideoOperation(input, requirements.videoOperation);
         if (operation !== "concat" && !profile.operations.includes(operation)) return `不支持${videoOperationLabel(operation)}`;
         return "";

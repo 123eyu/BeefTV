@@ -16,6 +16,7 @@ import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { useExternalAssetSources } from "@/hooks/use-external-asset-sources";
 import { modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, videoDurationAllowed, videoDurationOptions } from "@/lib/model-capabilities";
 import { inferVideoOperation, resolveCompatibleModel, mergedImageCapabilityConfig, type ModelRequirements } from "@/lib/model-selection";
+import { assertVideoCapability, outputDurationNotice } from "@/services/api/video-validation";
 import type { BackendGenerationResult } from "@/services/api/generation-task";
 import type { Skill } from "@/services/api/skills";
 import type { GenerationTask } from "@/services/api/task-center";
@@ -117,6 +118,7 @@ export default function CreatePage() {
     const [count, setCount] = useState(String(Math.max(1, Math.min(4, Number(config.count) || 1))));
     const [textStreaming, setTextStreaming] = useState(() => readComposerPref(TEXT_STREAMING_PREF_KEY, true));
     const [textThinking, setTextThinking] = useState(() => readComposerPref(TEXT_THINKING_PREF_KEY, false));
+    const [composerNotice, setComposerNotice] = useState("");
     const [busy, setBusy] = useState(false);
     const [referenceReplacementBusy, setReferenceReplacementBusy] = useState(false);
     const [historyOpen, setHistoryOpen] = useState(false);
@@ -443,6 +445,7 @@ export default function CreatePage() {
 
     const selectMode = (next: CreationMode) => {
         setMode(next);
+        setComposerNotice("");
         rememberMode(next);
         const nextModels = selectableModelsByCapability(config, next);
         const current = next === "text" ? config.textModel : next === "image" ? config.imageModel : config.videoModel;
@@ -458,6 +461,8 @@ export default function CreatePage() {
     };
     const setComposerSeconds = (value: string) => {
         setSeconds(value);
+        // 用户改了时长就清掉上一轮的拦截说明，避免旧提示留在输入框里。
+        setComposerNotice("");
         if (mode === "video") rememberVideoSettings({ seconds: value });
     };
     const setComposerQuality = (value: string) => {
@@ -558,12 +563,14 @@ export default function CreatePage() {
     };
 
     const removeAttachment = (id: string) => {
+        setComposerNotice("");
         const reference = mentionReferences.find((item) => item.attachmentId === id);
         setAttachments((current) => removeCreationAttachment(current, id));
         if (reference) setPrompt((current) => removeCreationReferenceTokens(current, [reference]));
     };
 
     const clearAttachments = () => {
+        setComposerNotice("");
         const attachmentIds = new Set(attachments.map((item) => item.id));
         const references = mentionReferences.filter((item) => item.attachmentId && attachmentIds.has(item.attachmentId));
         setAttachments([]);
@@ -571,6 +578,7 @@ export default function CreatePage() {
     };
 
     const clearComposer = () => {
+        setComposerNotice("");
         promptRef.current = "";
         attachmentsRef.current = [];
         setPrompt("");
@@ -644,8 +652,19 @@ export default function CreatePage() {
             releaseRetryLock();
             return;
         }
+        // 后端对图片和视频使用不同的参考字段；先拆分，提交前核对也用它。
+        const { referenceImages, referenceVideos, referenceAudios } = splitCreationAttachments(attachments);
         if (mode === "video" && !videoDurationAllowed(videoProfile, Number(seconds))) {
-            toast.error("当前模型不支持所选视频时长，请重新选择");
+            // 右上角 Toast 被全局 CSS 隐藏，提示改成输入框内始终可见的说明。
+            setComposerNotice(outputDurationNotice(videoProfile, seconds));
+            releaseRetryLock();
+            return;
+        }
+        try {
+            // 参考素材和时长在提交前先按模型合同核对一次，避免先建一条失败消息再报错。
+            assertVideoCapability(videoProfile, referenceImages, referenceVideos, referenceAudios, seconds);
+        } catch (error) {
+            setComposerNotice(error instanceof Error ? error.message : "参考内容不符合当前模型要求，请调整后再提交");
             releaseRetryLock();
             return;
         }
@@ -656,8 +675,6 @@ export default function CreatePage() {
         }
         const settings = { ratio, seconds, quality, videoQuality, count };
         const references = selectedCreationReferences(text, mentionReferences);
-        // 后端对图片和视频使用不同的参考字段；这里先拆分，避免媒体类型在写入任务时被误判。
-        const { referenceImages, referenceVideos, referenceAudios } = splitCreationAttachments(attachments);
         const videoOperation = inferVideoOperation({
             textCount: text ? 1 : 0,
             imageCount: referenceImages.length,
@@ -683,6 +700,7 @@ export default function CreatePage() {
         const expandedPrompt = skillExecution.prompt;
         const referenceMetadata = skillExecution.metadata;
         followLatestMessageRef.current = true;
+        setComposerNotice("");
         const userMessage = newMessage("user", text, { mode, model: selectedModel, attachments, references, settings });
         const assistantMessage = newMessage("assistant", "", { mode, model: selectedModel, status: mode === "text" && textStreaming ? "streaming" : "pending", settings, ...retryContext });
         const originConversationId = activeConversation.id;
@@ -1158,6 +1176,7 @@ export default function CreatePage() {
         setTextThinking,
         promptOptimizerProvider,
         composerFocusRef,
+        notice: composerNotice,
         onPromptFocus: loadAddedSkills,
         onSubmit: () => void submit(),
     };

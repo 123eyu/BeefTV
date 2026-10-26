@@ -6,8 +6,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-
-	"infinite-canvas/backend/internal/beefapi"
 )
 
 func TestSourcedSeedanceGenerationKeepsServerLimitsAndAudio(t *testing.T) {
@@ -327,84 +325,38 @@ func TestSeedanceReferenceDurationRejectsShortAndUnknownBeforeSubmit(t *testing.
 	}
 }
 
-func TestSeedanceDocumentedRouteLimits(t *testing.T) {
-	// 腾讯 WAND 1.0-pro（我们的 seedance-2.0）写明混合输入合计最多 12 个文件，
-	// 火山方舟与 1.5-pro 都没有这条，所以只对企业网关线路收紧。
-	images := make([]providerMedia, 9)
-	for index := range images {
-		images[index] = providerMedia{Width: 512, Height: 512, Bytes: 1000}
-	}
-	videos := []providerMedia{{Width: 1280, Height: 720, DurationMs: 5000, Bytes: 1000}, {Width: 1280, Height: 720, DurationMs: 5000, Bytes: 1000}, {Width: 1280, Height: 720, DurationMs: 5000, Bytes: 1000}}
-	audios := []providerMedia{{DurationMs: 3000, Bytes: 1000}, {DurationMs: 3000, Bytes: 1000}, {DurationMs: 3000, Bytes: 1000}}
+func TestSeedanceDocumentedOutputDurationFloor(t *testing.T) {
+	// 输出时长下限官方是 4 秒：3 秒被拒、4 秒通过，提示写出现在的值和支持的范围。
 	profile := DefaultModelCapabilityConfigForModel("newapi", "seedance-2.0").Video
-	input := canvasGenerationInput{
-		Prompt:          "test",
-		Config:          providerConfig{InterfaceType: "newapi", Model: "seedance-2.0", BaseURL: "https://enterprise.beefapi.com", VideoSeconds: "5"},
-		ReferenceImages: images, ReferenceVideos: videos, ReferenceAudios: audios,
-	}
-	if err := validateVideoTask(profile, input); err == nil || !strings.Contains(err.Error(), "最多支持 12 个参考素材") {
-		t.Fatalf("gateway 15 references: %v", err)
-	}
-	input.Config.BaseURL = "https://ark.cn-beijing.volces.com/api/v3"
-	if err := validateVideoTask(profile, input); err != nil {
-		t.Fatalf("direct ark 15 references: %v", err)
-	}
-	// 托管网页里的系统渠道只有相对地址，靠渠道 id 认出企业网关。
-	input.Config.BaseURL, input.Config.ChannelID = "/api/ai/system/beefapi", beefapi.ChannelID
-	if err := validateVideoTask(profile, input); err == nil || !strings.Contains(err.Error(), "最多支持 12 个参考素材") {
-		t.Fatalf("hosted system channel 15 references: %v", err)
-	}
-	input.Config.ChannelID = ""
-	input.ReferenceVideos, input.ReferenceAudios = nil, nil
 	for _, seconds := range []string{"3", "4"} {
-		input.Config.BaseURL = "https://enterprise.beefapi.com"
-		input.Config.VideoSeconds = seconds
+		input := canvasGenerationInput{
+			Prompt: "test", Config: providerConfig{InterfaceType: "newapi", Model: "seedance-2.0", BaseURL: "https://enterprise.beefapi.com", VideoSeconds: seconds},
+			ReferenceImages: []providerMedia{{Width: 512, Height: 512, Bytes: 1000}},
+		}
 		err := validateVideoTask(profile, input)
-		if (seconds == "3") != (err != nil) {
-			t.Fatalf("%ss output duration floor: %v", seconds, err)
+		if seconds == "3" {
+			if err == nil || !strings.Contains(err.Error(), "输出时长为 3 秒") || !strings.Contains(err.Error(), "4–15 秒") {
+				t.Fatalf("3s output duration: %v", err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("4s output duration: %v", err)
 		}
 	}
 }
 
-func TestSeedanceDocumentedLimitsOnlyTightenAndSkipArkNativeNames(t *testing.T) {
-	// 已保存的配置只会被收紧，管理员配得更严的合计上限和音频下限保持不变。
-	strict := DefaultModelCapabilityConfigForModel("newapi", "seedance-2.0").Video
-	strict.References.MaxTotalReferences = 6
-	strict.References.MinAudioDuration = 5
-	input := canvasGenerationInput{Prompt: "test", Config: providerConfig{InterfaceType: "newapi", Model: "seedance-2.0", BaseURL: "https://enterprise.beefapi.com", VideoSeconds: "5"}, ReferenceImages: []providerMedia{{Width: 512, Height: 512, Bytes: 1000}}}
-	if err := validateVideoTask(strict, input); err != nil {
-		t.Fatalf("strict saved profile: %v", err)
+func TestSeedanceReferenceAudioMessageNamesItemAndFix(t *testing.T) {
+	// 提示要说清哪一段、现在多少、要改到多少，用户才知道下一步做什么。
+	profile := DefaultModelCapabilityConfigForModel("newapi", "seedance-2.0").Video
+	input := canvasGenerationInput{
+		Prompt: "test", Config: providerConfig{InterfaceType: "newapi", Model: "seedance-2.0", BaseURL: "https://enterprise.beefapi.com", VideoSeconds: "5"},
+		ReferenceImages: []providerMedia{{Width: 512, Height: 512, Bytes: 1000}},
+		ReferenceAudios: []providerMedia{{DurationMs: 1900, Bytes: 1000}},
 	}
-	if strict.References.MaxTotalReferences != 6 || strict.References.MinAudioDuration != 5 {
-		t.Fatalf("saved limits were relaxed: %#v", strict.References)
-	}
-
-	// 网关域名下的原生 Ark 名（doubao-/dreamina- 前缀）走字节合同，不加腾讯合计 12。
-	images := make([]providerMedia, 9)
-	for index := range images {
-		images[index] = providerMedia{Width: 512, Height: 512, Bytes: 1000}
-	}
-	videos := []providerMedia{{Width: 1280, Height: 720, DurationMs: 5000, Bytes: 1000}, {Width: 1280, Height: 720, DurationMs: 5000, Bytes: 1000}, {Width: 1280, Height: 720, DurationMs: 5000, Bytes: 1000}}
-	audios := []providerMedia{{DurationMs: 3000, Bytes: 1000}, {DurationMs: 3000, Bytes: 1000}, {DurationMs: 3000, Bytes: 1000}}
-	for _, name := range []string{"doubao-seedance-2-0", "dreamina-seedance-2-0-fast", "doubao-seedance-2-0-260628"} {
-		profile := DefaultModelCapabilityConfigForModel("newapi", name).Video
-		fifteen := canvasGenerationInput{
-			Prompt: "test", Config: providerConfig{InterfaceType: "newapi", Model: name, BaseURL: "https://enterprise.beefapi.com", VideoSeconds: "5"},
-			ReferenceImages: images, ReferenceVideos: videos, ReferenceAudios: audios,
-		}
-		if err := validateVideoTask(profile, fifteen); err != nil {
-			t.Fatalf("%s ark native 15 references: %v", name, err)
-		}
-	}
-
-	// 没有可核实的腾讯 WAND 映射（WhatsToken 域名）时不收紧。
-	whatsToken := DefaultModelCapabilityConfigForModel("newapi", "seedance-2.0").Video
-	fifteen := canvasGenerationInput{
-		Prompt: "test", Config: providerConfig{InterfaceType: "newapi", Model: "seedance-2.0", BaseURL: "https://whatstoken.ai", VideoSeconds: "5"},
-		ReferenceImages: images, ReferenceVideos: videos, ReferenceAudios: audios,
-	}
-	if err := validateVideoTask(whatsToken, fifteen); err != nil {
-		t.Fatalf("whatstoken 15 references: %v", err)
+	err := validateVideoTask(profile, input)
+	if err == nil || !strings.Contains(err.Error(), "第 1 段参考音频时长为 1.90 秒") || !strings.Contains(err.Error(), "需要改到 2–15 秒") || !strings.Contains(err.Error(), "请换一段更长的音频") {
+		t.Fatalf("audio duration message: %v", err)
 	}
 }
 

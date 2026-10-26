@@ -674,7 +674,7 @@ func validateVideoCapabilityConfig(value *VideoCapabilityConfig) error {
 	if value.References.PromptMaxUTF16Units < 0 || value.References.PromptMaxUTF16Units > 1000000 {
 		return kernel.BadAuthRequest("提示词最大 UTF-16 单位数必须在 0-1000000 之间，0 表示交由服务商校验")
 	}
-	for name, number := range map[string]int{"最少图片引用数": value.References.MinImages, "最大图片引用数": value.References.MaxImages, "最大视频引用数": value.References.MaxVideos, "最大音频引用数": value.References.MaxAudios, "参考素材合计上限": value.References.MaxTotalReferences} {
+	for name, number := range map[string]int{"最少图片引用数": value.References.MinImages, "最大图片引用数": value.References.MaxImages, "最大视频引用数": value.References.MaxVideos, "最大音频引用数": value.References.MaxAudios} {
 		if number < 0 || number > 100 {
 			return kernel.BadAuthRequest(name + "必须在 0-100 之间")
 		}
@@ -796,9 +796,38 @@ func validateReferenceDuration(kind string, index int, durationMs int64, minimum
 		return kernel.BadAuthRequest(fmt.Sprintf("第 %d 段参考%s的时长无法读取，请重新导入素材后再提交", index+1, kind))
 	}
 	if durationMs < durationLimitMs(minimum) || (maximum > 0 && durationMs > durationLimitMs(maximum)) {
-		return kernel.BadAuthRequest(fmt.Sprintf("第 %d 段参考%s时长为 %.2f 秒，需要 %s 秒；请裁剪或更换这段素材后再提交", index+1, kind, float64(durationMs)/1000, referenceBound(minimum, maximum)))
+		return kernel.BadAuthRequest(fmt.Sprintf("第 %d 段参考%s时长为 %.2f 秒，需要改到 %s；%s", index+1, kind, float64(durationMs)/1000, durationRequirement(minimum, maximum), durationFixAction(kind, minimum, maximum)))
 	}
 	return nil
+}
+
+// durationRequirement 写成「2–15 秒」「2 秒以上」「15 秒以内」，说明要改成多少。
+func durationRequirement(minimum, maximum float64) string {
+	if minimum <= 0 {
+		return formatDurationBound(maximum) + " 秒以内"
+	}
+	if maximum <= 0 {
+		return formatDurationBound(minimum) + " 秒以上"
+	}
+	return formatDurationBound(minimum) + "–" + formatDurationBound(maximum) + " 秒"
+}
+
+// durationFixAction 给出可直接照做的下一步，而不是笼统的「重新提交」。
+func durationFixAction(kind string, minimum, maximum float64) string {
+	if kind == "音频" {
+		if minimum > 0 {
+			return "请换一段更长的音频后再提交"
+		}
+		return "请裁剪或换一段更短的音频后再提交"
+	}
+	switch {
+	case minimum > 0 && maximum > 0:
+		return "请裁剪到这段区间内或换一段后再提交"
+	case minimum > 0:
+		return "请换一段更长的视频后再提交"
+	default:
+		return "请裁剪到上限以内或换一段更短的视频后再提交"
+	}
 }
 
 func validateVideoTask(profile *VideoCapabilityConfig, input TaskInput) error {
@@ -832,7 +861,11 @@ func validateVideoTaskParameters(profile *VideoCapabilityConfig, input TaskInput
 		}
 	}
 	if !allowed {
-		return kernel.BadAuthRequest("视频时长不在当前模型支持范围内")
+		requirement := videoDurationRequirement(profile.Duration)
+		if requirement == "" {
+			return kernel.BadAuthRequest("当前模型没有可用的输出时长，请先在模型能力里设置至少 4 秒的时长后再提交")
+		}
+		return kernel.BadAuthRequest(fmt.Sprintf("输出时长为 %s 秒，当前模型只支持 %s；请改成 %s 后再提交", strings.TrimSpace(input.Config.VideoSeconds), requirement, requirement))
 	}
 	if input.Config.Size != "" && !videoRatioAllowed(profile.Ratios, input.Config.Size) {
 		return kernel.BadAuthRequest("画面比例不在当前模型支持范围内")
@@ -1023,6 +1056,35 @@ func durationMinimum(value VideoDurationConfig) float64 {
 		return value.FractionalMin
 	}
 	return float64(value.Min)
+}
+
+// videoDurationRequirement 把模型支持的输出时长写成可直接照着改的说法：
+// 「4–15 秒」「5、10 秒」「自动或 4–15 秒」。
+func videoDurationRequirement(value VideoDurationConfig) string {
+	if value.Selection == "enum" {
+		parts := make([]string, 0, len(value.Values))
+		manual := make([]string, 0, len(value.Values))
+		for _, seconds := range value.Values {
+			if seconds == -1 {
+				parts = append(parts, "自动")
+				continue
+			}
+			manual = append(manual, strconv.Itoa(seconds))
+		}
+		if len(manual) > 0 {
+			parts = append(parts, strings.Join(manual, "、")+" 秒")
+		}
+		if len(parts) == 0 {
+			return ""
+		}
+		return strings.Join(parts, " 或 ")
+	}
+	minimum := durationMinimum(value)
+	maximum := float64(value.Max)
+	if maximum > 0 {
+		return formatDurationBound(minimum) + "–" + formatDurationBound(maximum) + " 秒"
+	}
+	return formatDurationBound(minimum) + " 秒以上"
 }
 
 func videoRatioAllowed(options []string, value string) bool {

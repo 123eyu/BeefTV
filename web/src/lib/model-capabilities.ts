@@ -91,8 +91,6 @@ export type VideoCapabilityConfig = {
         maxAudioDurationSeconds: number;
         minAudioDurationSeconds?: number;
         maxAudioTotalDurationSeconds?: number;
-        /** 图片、视频、音频三类参考素材的合计上限，0 或省略表示不限。 */
-        maxTotalReferences?: number;
     };
     duration: {
 		continuous?: boolean;
@@ -170,7 +168,6 @@ const catalogIntBounds: Record<string, [number, number]> = {
     maxImages: [0, 100],
     maxVideos: [0, 100],
     maxAudios: [0, 100],
-    maxTotalReferences: [0, 100],
     maxVideoDurationSeconds: [0, Number.MAX_SAFE_INTEGER],
     minVideoDurationSeconds: [0, Number.MAX_SAFE_INTEGER],
     maxAudioDurationSeconds: [0, Number.MAX_SAFE_INTEGER],
@@ -701,20 +698,11 @@ export function modelCapabilityConfigFor(
         if (!video || !isSeedance2Family(protocol, modelName)) return;
         let host = "";
         try { host = new URL(channel?.baseUrl || "").hostname.toLowerCase(); } catch { /* no public URL */ }
-        // 桌面端直连企业网关时看域名；托管网页里请求走 /api/ai/system/beefapi，渠道 id 也是 beefapi。
-        // WhatsToken 域名不在此列：它没有可核实的腾讯 WAND 映射，不跟着收紧。
-        const gatewayHost = ["beeftv.app", "enterprise.beefapi.com", "beefapi.com"].includes(host) || channel?.id === "beefapi";
-        const materialHost = gatewayHost || ["whatstoken.ai", "www.whatstoken.ai"].includes(host);
+        const materialHost = ["beeftv.app", "enterprise.beefapi.com", "beefapi.com", "whatstoken.ai", "www.whatstoken.ai"].includes(host) || channel?.id === "beefapi";
         if ((isVolcengineArkVideoProtocol(protocol) || materialHost) && video.references.minVideoPixels === 409600 && video.references.maxVideoPixels === 8295044) video.references.minVideoPixels = 407696;
         // 输出时长下限官方 4 秒：区间、连续（fractionalMin）和枚举三种配置都要收紧，枚举里的 -1（自动）保留。
         video.duration = tightenDocumentedOutputDuration(video.duration);
         if ((video.references.minAudioDurationSeconds || 0) < 2) video.references.minAudioDurationSeconds = 2;
-        // 腾讯 1.0-pro（= BeefAPI 公开名 seedance-2.0）写明混合输入合计最多 12 个文件；
-        // 火山方舟和 1.5-pro 都没有这条，原生 Ark 名（doubao-/dreamina- 前缀）也不是腾讯线路。
-        if (isTencentWandSeedance20Model(protocol, modelName) && gatewayHost) {
-            const total = video.references.maxTotalReferences || 0;
-            if (total <= 0 || total > 12) video.references.maxTotalReferences = 12;
-        }
     };
 
     if (!profile?.capabilityConfig) {
@@ -758,15 +746,6 @@ export function isSeedance2Family(protocol: ModelProtocol | undefined, modelName
 export function isSeedance25Model(modelName: string) {
     const base = String(modelName).trim().toLowerCase().split("/").pop() || "";
     return /^seedance-2\.5(?:-|$)/.test(base) || /^(?:doubao|dreamina)-seedance-2[.-]5(?:-|$)/.test(base);
-}
-
-// 腾讯 WAND 映射的是 BeefAPI 公开名 seedance-2.0（含 fast/mini 后缀）。
-// 原生 Ark 名（doubao-seedance-2-0-*、dreamina-seedance-2-0-*）走字节官方合同，
-// 即使挂在同一个网关域名下也没有腾讯「合计 12」这条限制。
-export function isTencentWandSeedance20Model(protocol: ModelProtocol | undefined, modelName: string) {
-    if (protocol && isVolcengineArkVideoProtocol(protocol)) return false;
-    const base = String(modelName).trim().toLowerCase().split("/").pop() || "";
-    return /^seedance-2\.0(?:-|$)/.test(base);
 }
 
 // 输出时长下限官方 4 秒：区间、连续（fractionalMin）和枚举三种已保存配置都要收紧，
@@ -1469,6 +1448,20 @@ function normalizeRangeDuration(profile: VideoCapabilityConfig, value: number) {
 	if (profile.duration.continuous) return clamped;
     const maxStep = Math.max(0, Math.floor((max - min) / step));
     return min + Math.min(maxStep, Math.max(0, Math.round((clamped - min) / step))) * step;
+}
+
+// 把模型支持的输出时长写成能照着改的说法：「4–15 秒」「5、10 秒」「自动 或 4–15 秒」。
+export function videoDurationRequirement(duration: VideoCapabilityConfig["duration"]): string {
+    if (duration.selection === "enum") {
+        const manual = (duration.values || []).filter((value) => value !== -1).map((value) => String(value));
+        const parts: string[] = [];
+        if ((duration.values || []).includes(-1)) parts.push("自动");
+        if (manual.length) parts.push(`${manual.join("、")} 秒`);
+        return parts.length ? parts.join(" 或 ") : "";
+    }
+    const min = duration.continuous ? duration.fractionalMin ?? duration.min ?? 1 : duration.min || 1;
+    const max = duration.max || min;
+    return `${min}–${max} 秒`;
 }
 
 export function videoDurationOptions(profile: VideoCapabilityConfig) {
