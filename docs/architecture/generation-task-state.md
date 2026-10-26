@@ -1,16 +1,17 @@
 # 生成任务「取回 / 重新生成 / 扣费」由后台判定：重构方案
 
-状态：方案稿，待 Codex 独立评审。只描述设计，不含代码改动。
-依据：main `3632485`；PR #263（`tds/conv-01a1766b-…`）、#16 精简版（`tds/conv-01a17704-…`）及其四轮检查记录。
+状态：方案稿第 3 轮，待架构师评审。只描述设计，不含代码改动。
+依据：main `3632485`；PR #263（`tds/conv-01a1766b-…`）、#16 精简版（`tds/conv-01a17704-…`）及其四轮检查记录；Codex 两轮评审；三份调研（见第三节开头）。
 
 ## 一、结论
 
 1. **值得重构，不是收尾 #16 就够。** 「提交成没成、结果在不在、点了扣不扣钱」现在由前端约 30 个文件、后端约 18 个文件分别推断（清单见第二节）。同一个后端接口 `POST /tasks/:id/retry` 内部有三种走法（继续下载 / 按回执免费重建 / 重新提交并扣费），前端事先不知道会走哪条，只能靠自己的推断去猜。今天四轮检查查出的问题全部出在「前端猜错了后台会怎么做」。
-2. **做法一句话：后台给每个任务算一个「下一步」结论，前端只照着显示和调用。** 这个结论不是新的状态机，是在后台已有的 `taskdelivery.Project`（它已经算出 `resultState`）旁边多算几个字段，输入全部是后台已经持久化的事实。
+2. **做法一句话：后台给每个任务算一个「下一步」结论，前端只照着显示和调用。** 和 Stripe PaymentIntent 的 `status + next_action` 同一思路（〔状态〕4.1）。这个结论不是新的状态机，是在后台已有的 `taskdelivery.Project`（它已经算出 `resultState`）旁边多算几个字段，输入全部是后台已经持久化的事实。
 3. **免费取回放到后台自动做。** 后台已有每 5 秒运行的取回循环（`startGenerationDeliveryRecovery` → 下载结果 → `recoverPendingCanvasBindings` 把结果写进画布节点）。只要在循环里加上「失败、可能已被上游接纳的图片任务按回执重建，重建不了就写明原因」这一步，客户 A 这类节点会被后台自动修好、写回画布，前端不需要任何自动取回代码。#16 里前端的自动取回扫描就不再需要。
-4. **免费和扣费拆成两个接口：** `POST /tasks/:id/recover` 结构上不可能提交上游；`POST /tasks/:id/retry` 和带 `retryOf`、对着一个已有节点的 `POST /tasks` 是唯一会扣费的入口，在「可能重复扣费」时必须带上用户刚确认过、只能用一次的确认 ID，否则后台拒绝；核对和接纳在同一个事务里。不管从画布、提示词面板、任务中心、工作流还是助手发起，守门都在后台。
+4. **免费和扣费拆成两个接口：** `POST /tasks/:id/recover` 结构上不可能提交上游；`POST /tasks/:id/retry` 和带 `retryOf`、对着一个已有节点的 `POST /tasks` 是唯一会扣费的入口。可能重复扣费时，后台先返回费用预览、这次不提交；调用方在**它自己的界面**问用户（BeefTV 弹确认框，Codex / Claude Code 等外部 MCP/CLI 在它们的界面问，内置助手要用户确认过的制作方案），同意后带同一份报价和同一个 `operationId` 再提交。后台用一条数据库唯一约束保证一次同意最多提交一次，并写明：后台无法证明调用方真的问过人，能保证的是不明确声明同意就绝不扣钱。
 5. **节点上 7 个字段收成 1 个**（`taskOutcome`，从任务抄过来，前端不写），另加只在「任务号还没拿到」时才存在的 `taskClientOperationId` / `generationSubmissionState` 两个字段。
-6. **#16 的前端改动不合并；后端的 `result_unrecoverable` 改法和全部回归测试拿来复用**（见第六节）。
+6. **已带 `Idempotency-Key` 且核实上游会去重的渠道（BeefAPI 图片、超分；BeefAPI 视频待确认生产开关），「提交未确认」用同一个键原样重发，不算再扣钱、不问用户**（第 3.7 节）。
+7. **#16 的前端改动不合并；后端的 `result_unrecoverable` 改法和全部回归测试拿来复用**（见第六节）。
 
 ## 二、盘点：现在谁在推断
 
@@ -72,6 +73,14 @@
 
 ## 三、设计
 
+本节在第 3 轮按三份调研修改。引用简称：
+
+- 〔状态〕= 生成任务状态与取回调研，`docs/research/generation-task-prior-art.md`（分支 `tds/conv-01a1789f-2760-…`）；
+- 〔外部〕= 外部 MCP/CLI 确认扣费调研，`docs/research/mcp-paid-confirmation.md`（分支 `tds/conv-01a1789f-2e99-…`）；
+- 〔防重〕= 付费防重调研，`docs/research/paid-retry-idempotency.md`（分支 `tds/conv-01a1789f-36b0-…`）。
+
+调研里标「推断」的，下面照样标【推断】；标「未核实」或经搜索摘要转述的，标【未核实】。本轮我自己读代码或原文核对过的，标【已核】。
+
 ### 3.1 后台给出「下一步」：`task.outcome`
 
 在任务的读接口（`GET /tasks/:id`、列表、订阅推送、`by-operation`）上增加一个字段，和现有的 `resultState`、`outputs` 在同一个投影函数里算：
@@ -79,19 +88,20 @@
 ```go
 // backend/internal/task/outcome.go（新文件，纯函数，表格测试）
 type Outcome struct {
-    Phase        string `json:"phase"`        // running | fetching | ready | retrievable | failed
-    Retrieve     string `json:"retrieve"`     // auto | manual | ""   只在 retrievable 时有值
-    Regenerate   string `json:"regenerate"`   // allowed | confirm | blocked
-    Reason       string `json:"reason"`       // 机器原因，前端只用来选文案
+    Phase      string `json:"phase"`      // running | fetching | ready | retrievable | failed
+    Regenerate string `json:"regenerate"` // allowed | confirm | blocked
+    Reason     string `json:"reason"`     // 机器原因，前端只用来选文案
 }
 ```
+
+上一版的 `retrieve: auto | manual` 已删掉。依据〔状态〕5.2 第 3 条、5.3 第 1 条：看过的商用 API 和开源工具都没有「需要人工继续取回」这种状态，结果要么还能查到，要么过期没了。`manual` 只是因为上一版的退避有固定上限才出现的；改成按渠道保留期一直自动查（第 3.2 节）后，`retrievable` 就只剩自动这一种【推断，〔状态〕】。形状和 Stripe PaymentIntent 的 `status + next_action` 一样小（〔状态〕4.1）。
 
 | phase | 含义 | 用户看到的 | 能做什么 |
 | --- | --- | --- | --- |
 | `running` | 排队、生成中，或后台在按回执/查上游自动取回 | 现有进度条 | 只能取消 |
 | `fetching` | 已生成，后台在下载/入库 | 现有「正在取回结果」+ 大小、速度 | 停止取回 |
 | `ready` | 结果已入库 | 成片 | — |
-| `retrievable` | 结果大概率还在，可以免费取回 | `auto`：「正在取回」；`manual`：现有「继续取回」按钮 | 继续取回（免费） |
+| `retrievable` | 结果大概率还在，后台在保留期内自动取回 | 「正在取回」 | 不用点；需要时可点「立即再查一次」（`/recover`，第 3.2 节） |
 | `failed` | 确定没有可取回的结果 | 失败原因 | 按 `regenerate` 决定 |
 
 `regenerate` 回答的问题是「**这个节点的结果还没到手时**，再新建一个付费任务会不会重复花钱」。结果已经到手（`ready`）后用户主动再生成，不归它管：
@@ -101,100 +111,244 @@ type Outcome struct {
 | `running` / `fetching` / `retrievable` | `blocked` | 结果可能还在，先取回；不能为同一个结果再付一次钱 |
 | `ready`（已有成片） | `allowed` | 用户看到成片后主动再生成，是新的一次生成。现有「已有图片原位生成、保留旧版本」（`canvas-image-generation-executor.ts`）和「相同内容再次生成」确认框（`use-canvas-generation-executor.ts`）照旧，不归本方案的守门管 |
 | `failed`，上游确定没扣过钱（未发出、明确拒绝、明确失败） | `allowed` | 照常重新生成 |
-| `failed`，上游**可能已生成并计费**（提交结论未确认、确认取不回） | `confirm` | 重新生成可能重复扣费，必须确认 |
+| `failed`，上游**可能已生成并计费**（提交结论未确认且渠道不能按同一键安全重发、确认取不回） | `confirm` | 重新生成可能重复扣费，必须确认 |
 | `failed`，原输入本身不能再提交（审核未通过等） | `blocked`（只对「原样重跑」） | 改了输入可以重新提交，见下 |
+
+「提交结论未确认」不一定落到 `confirm`：渠道核实过会按 `Idempotency-Key` 去重的，后台用同一个键原样重发，不新建、不问用户（第 3.7 节）。依据〔防重〕4.2 第 ② 条、RFC 9110 §9.2.2 的放行条件「请求语义本身幂等」。
 
 对着已有节点的新提交（包括 `/retry`、带 `retryOf` 的提交、提示词面板的「生成」）一律按节点当前任务的 `regenerate` 判，**改没改输入都一样**：
 - `blocked`（`running / fetching / retrievable`）：拒绝，结果还没回来时不再买一份；
 - `confirm`：改了输入也必须先确认。上游可能已为原任务扣过费，用户是否愿意再花一次钱，与输入改没改无关；只改一个字就绕过确认，就重新放开了提示词面板绕过扣费确认的路径；
 - `allowed`：放行。`ready` 节点主动再生成属于这一类，照旧可用。
 
-只有一种情况要比较输入：原任务因审核未通过而 `blocked`。这时它拦的只是「原样重跑」，改了提示词或参考素材就放行（不扣过费，不需要确认）。比较的是**生成内容**，不是整个请求：后台已有的 `ClientOperationHash` 会把 `metadata.clientOperationId` 一起哈希，只换提交标识也会变，不能直接拿来用。实施时另写一个只覆盖提示词、参考素材、模型和参数的内容指纹，在后台用原任务存下的输入算；前端的 `failedInputFingerprint` 只用于提示，不作判断依据。
+只有一种情况要比较输入：原任务因审核未通过而 `blocked`。这时它拦的只是「原样重跑」，改了提示词或参考素材就放行（不扣过费，不需要确认）。比较的是**生成内容**，不是整个请求：后台已有的 `ClientOperationHash` 会把 `metadata.clientOperationId` 一起哈希，只换提交标识也会变，不能直接拿来用。实施时另写一个只覆盖提示词、参考素材、模型和参数的内容指纹，在后台用原任务存下的输入算；前端的 `failedInputFingerprint` 只用于提示，不作判断依据。〔防重〕4.3 第 ② 条认为可以更简单（审核失败直接 `allowed`，让上游再判一次），标为它自己的判断、无出处，这里保留原做法，留给评审（第七节第 1 条）。
 
-输入全部是已持久化的事实：任务 `status/stage/error`、最近一次 `RouteAttempt.DispatchState`、`ImageSubmission.ResponseAccepted`、图片创建回执是否存在且完整、`ProviderRequestID`、`outputs` 的入库状态，加一个新列 `recovery_outcome`（下一节）。计算不读错误文案；文案分类只保留在写入失败时（`task_terminal.go` 已经这么做），不在读时重来。
+输入全部是已持久化的事实：任务 `status/stage/error`、`routeRun`、最近一次 `RouteAttempt.DispatchState`、`ImageSubmission.ResponseAccepted`、图片创建回执是否存在且完整、`ProviderRequestID`、`outputs` 的入库状态、渠道能力（第 3.7 节），加一个新列 `recovery_outcome`（第 3.2 节）。计算不读错误文案；文案分类只保留在写入失败时（`task_terminal.go` 已经这么做），不在读时重来。
 
-确认不用读接口返回的 token。读到 token 不等于用户确认过，而且一个只表示「状态版本」的 token 可以被多个不同提交标识的 `POST /tasks` 重复使用，一次确认买到多份。改成**一次确认只换一次付费提交**：
+这不是第二个状态机：没有新的状态转移，`Outcome` 是对已有事实的只读函数；`resultState` 并入 `phase` 的计算，过渡期两个字段都返回。ComfyUI `/api/jobs/{id}` 也是每次读取时从队列和历史现算状态（〔状态〕3.1、4.1）。
 
-1. 用户在确认框点「仍然重新生成」后，前端调 `POST /tasks/:id/regenerate-confirmations`，请求体带这次要用的 `clientOperationId`。后台检查原任务此刻 `regenerate = confirm`，写一条确认记录：`(原任务 ID, 原任务的 routeRun 与 updatedAt, clientOperationId, 创建时间)`，返回确认 ID。这个接口**只接受桌面界面本身的请求**：
-   - 不能用 `requireTrustedDesktopWritePrincipal`：它会放行可写的外部调用方（`externalBusiness`），而 `businessRouteAllowed` 把 `/tasks` 下所有路径都暴露给 business tools，外部程序就能自己申请确认 ID、自己扣费；
-   - 校验改用 `trustedDesktopUI`（本机回环 + 桌面外壳信任），并且请求里带 `X-Beeftv-Client` 或任何 business 身份时一律拒绝；Docker/网页部署没有桌面外壳信任，改用已有的本机所有者令牌校验（`requireDesktopUITrust` 里的 `OwnerTokenMatches` 那一套）；
-   - 在 `businessRouteAllowed` 里显式排除这个路径，business tools 目录里不出现它；
-   - 回归测试：外部调用方（可写令牌）、助手宿主、带 `X-Beeftv-Client` 的请求调用这个接口都返回 403。
-2. 扣费提交带上确认 ID。后台在**接纳新任务的同一个事务**里核对并消耗它：确认记录存在、未用过、`clientOperationId` 一致、原任务的 `routeRun/updatedAt` 没变、没超过有效期（例如 10 分钟），然后把记录标成已用、写入新任务，同一事务提交。
-3. 同一次确认重放（网络重试、双击）时，`clientOperationId` 相同，走已有的 `admitExisting`，返回同一个任务；换一个 `clientOperationId` 用同一个确认 ID，会被拒绝。
-4. 确认框打开期间后台把结果取回了，原任务的 `updatedAt` 变化，确认作废，提交被拒并返回最新 `outcome`。
-5. 助手：保留现有人工授权（`SubmitAuthorizedGeneration` 只认用户确认过的制作方案，#261），助手自己不能创建确认记录。方案卡里包含 `confirm` 节点时，用户在桌面界面上确认方案这一步由后台同时生成这些节点的确认记录，助手只能消耗、不能新建。外部调用方（business tools）**不能**对 `confirm` 任务重跑：它们拿不到确认 ID，遇到这类任务后台返回 409，提示到桌面界面里确认。`allowed` 任务照旧按「由外部调用方审批」的约定处理。
-
-这不是第二个状态机：没有新的状态转移，`Outcome` 是对已有事实的只读函数；`resultState` 并入 `phase` 的计算，过渡期两个字段都返回。
-
-### 3.2 免费取回：后台自动做，接口只有一个
+### 3.2 免费取回：后台自动做
 
 在现有取回循环 `startGenerationDeliveryRecovery`（每 5 秒）里加一步「失败但可能可取回的任务」：
 
 - 图片：扫描范围是**所有**「`failed` 且可能已被上游接纳」的图片任务，不要求回执完整，也不要求有路由记录。判定「可能已被接纳」的依据，满足任一条即可：最近一次派发状态是 `accepted/submission_unknown`；`stage = submission_unknown`；存在任何一条图片创建回执（包括没有路由记录的历史任务，`TestRetryAcceptedImageUsesOriginalReceiptWithoutCreate` 就是这种，必须继续能恢复）。对每个任务调 `recoverAcceptedImage`：回执完整就重建，成功后任务变成 `succeeded`，后面完全走已有的下载 → `recoverPendingCanvasBindings` 写回画布；回执缺失或不完整就按下面的分类写结论，不会被扫描漏掉、停在没有出口的状态。
-- 视频 / 超分：`failed` + 有 `ProviderRequestID` → 按退避（例如 1、5、15、60 分钟，24 小时内）调 `queryFailedVideoTask`。这是查询请求，不创建上游任务。
+- 视频 / 超分：`failed` + 有 `ProviderRequestID` → 按退避调 `queryFailedVideoTask`。这是查询请求，不创建上游任务。**截止时间按渠道的结果保留期定**，不再统一 24 小时，见下表。
 - 已有的「成功但未入库」继续走原逻辑。
+
+截止时间改动依据〔状态〕2.4、5.2 第 1 条：各家保留期从 10 分钟到 30 天不等，统一 24 小时对 Replicate 类太长、对可灵太短。做法【推断，〔状态〕】：在每个渠道的协议声明（`internal/protocol/docs/*`、插件 manifest）里写「结果保留期」，退避在保留期内一直进行，过期写 `recovery_outcome = unrecoverable`（上游可能已扣费）。各家数据：
+
+| 渠道 | 保留期 | 来源与核实情况 |
+| --- | --- | --- |
+| OpenAI 后台任务（Responses `background`） | 约 10 分钟（`store=true` 才更久） | 〔状态〕2.4 原文引用 |
+| Replicate | 1 小时后输入输出被删除 | 〔状态〕2.4 原文引用 |
+| 火山方舟视频 | `video_url` 24 小时有效；任务记录 7 天后清除，只能查最近 7 天；`execution_expires_after` 默认 48 小时（可设 1–72 小时），超时状态变 `expired` | 〔状态〕标「经搜索摘要转述」。本轮再查：官方页面正文抓不到，搜索结果仍是对官方三页（[查询任务](https://docs.volcengine.com/docs/ark/get-video-generation-task-api?lang=zh)、[创建任务](https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh)、[任务列表](https://docs.volcengine.com/docs/ark/list-video-generation-tasks-api?lang=zh)）的摘要，**仍未逐字核对原文**【未核实】 |
+| 可灵 | 生成的图片/视频 30 天后删除 | 〔状态〕标「经搜索摘要转述」。本轮再查：官方页面抓取只拿到标题，搜索摘要称 [Omni 旧版](https://kling.ai/document-api/api/video/o1/video-omni/legacy)、[文生视频](https://kling.ai/document-api/apiReference/model/textToVideo)、[图生视频](https://kling.ai/document-api/apiReference/model/imageToVideo) 的 `url` 字段都写了 30 天，**仍未逐字核对原文**【未核实】 |
+| Runway | 输出链接「will expire within 24-48 hours of accessing the API」；没写文件本身保留多久 | 〔状态〕只写了「临时」。本轮直接读到 [Outputs](https://docs.dev.runwayml.com/assets/outputs/) 页面原文【已核】；状态集合和轮询建议仍来自搜索摘要【未核实】 |
+| fal.ai | 按用户的媒体过期设置；过期后永久删除 | 〔状态〕2.4 原文引用 |
+
+火山方舟这类「链接 24 小时、任务 7 天可查」的，重新查询能不能拿到新链接文档没写，要先实测再定截止按哪个算（〔状态〕2.4【推断】）。BeefAPI 自己的图片回执保留 24 小时（BeefAPI 仓库 `service/image_receipt.go` 的 `ImageReceiptRetention = 24 * time.Hour`【已核】），BeefTV 现有 `imageRecoveryLifetime = 23h` 正是为它留的余量。
 
 每次尝试用已有的 `ClaimFailedTaskProviderRecovery` 租约，多处同时触发也只有一个执行。结果分四种写回，其中「拿不回」细分成两种，因为对用户意味着不同的事：
 
 - 取回成功：任务变 `succeeded`；
 - **确定上游没有结果**（上游明确返回失败、明确拒绝、确认没接纳）：写 `recovery_outcome = no_result`。上游没生成，也就没扣钱，`phase = failed`、`regenerate = allowed`；
-- **系统无法取回**（回执缺失、回执不完整、多条冲突回执、回执里的链接已过期；上游可能已经生成并计费，只是这边拿不到）：写 `recovery_outcome = unrecoverable`。`phase = failed`、`regenerate = confirm`，文案写明「上游可能已生成并扣费，本地拿不到结果」，并保留「查看原任务」；
-- 暂时失败（读库出错、锁冲突、存储配额、网络）：什么都不写，下次再试；退避用尽后 `retrieve` 从 `auto` 变 `manual`。
+- **系统无法取回**（回执缺失、回执不完整、多条冲突回执、过了渠道保留期；上游可能已经生成并计费，只是这边拿不到）：写 `recovery_outcome = unrecoverable`。`phase = failed`、`regenerate = confirm`，文案写明「上游可能已生成并扣费，本地拿不到结果」，并保留「查看原任务」；
+- 暂时失败（读库出错、锁冲突、存储配额、网络）：什么都不写，下次再试，直到过了保留期。
 
-只有前两类拿不回的持久化事实能让 `phase` 变成 `failed`。#16 后端打 `result_unrecoverable` 的几处，按上面拆成这两类写入。
+只有前两类拿不回的持久化事实能让 `phase` 变成 `failed`。#16 后端打 `result_unrecoverable` 的几处，按上面拆成这两类写入。这和 Replicate 的 `aborted`（不计费）/ `canceled`（计费）一致（〔状态〕2.1【推断】）。超时只能决定「不再等」，不能决定「结果不存在」（〔状态〕3.4 midjourney-proxy 的反面例子）。
 
-`POST /tasks/:id/recover`：用户点「继续取回」时调用，做同一件事并重置退避。这个处理函数里**不引用** `store.Retry` / `RetryTask` / 任务接纳，在代码结构上就不可能新建任务。验收不按 HTTP 方法判断——现有免费取回本身就会用 POST：超分 `RecoverUpscaleResult` 调原任务的 `/recover`（`generation/upscale.go`），RunningHub 查结果也是 POST。测试断言的是：上游 mock 只收到查询/取回类请求（按协议声明的 request kind 是 `poll`/`query`/`recover`，没有 `create`）；上游任务号始终是原任务的 `ProviderRequestID`；本地任务表没有新增任务，原任务的 `routeRun` 不变。它合并现在分散的三个入口：`/retry` 里的继续下载和回执重建、`/tasks/:id/query-provider`、`/media-upscale/tasks/:id/recover` 里的取回分支。
+`POST /tasks/:id/recover`：留作「立即再查一次」的入口（例如本地存储满了、用户清理后想马上取，〔状态〕5.2 第 3 条），做同一件事并重置退避，不是常规操作。这个处理函数里**不引用** `store.Retry` / `RetryTask` / 任务接纳，在代码结构上就不可能新建任务。验收不按 HTTP 方法判断——现有免费取回本身就会用 POST：超分 `RecoverUpscaleResult` 调原任务的 `/recover`（`generation/upscale.go`），RunningHub 查结果也是 POST。测试断言的是：上游 mock 只收到查询/取回类请求（按协议声明的 request kind 是 `poll`/`query`/`recover`，没有 `create`）；上游任务号始终是原任务的 `ProviderRequestID`；本地任务表没有新增任务，原任务的 `routeRun` 不变。它合并现在分散的三个入口：`/retry` 里的继续下载和回执重建、`/tasks/:id/query-provider`、`/media-upscale/tasks/:id/recover` 里的取回分支。
+
+**重启时不把执行中的任务改成取消。** 依据〔状态〕3.2、5.2 第 4 条：InvokeAI 启动时把 `in_progress` 一律改成 `canceled`，是因为它的计算在本进程里；BeefTV 的上游任务在别人的服务器上，重启后可能还在跑、甚至已出结果，不能照搬。现在的代码【已核】已经是这么做的：
+- `repository.go` 的 `ClaimNextTask` 领取条件是 `status = queued` 或「`status = running` 且租约已过期」，重启后旧租约（默认 45 秒）一过期，`running` 任务就被重新领取，状态不改成取消；
+- 重新领取后，`modelcatalog/route_attempt.go` 的 `DecideExistingAttempt` 按最近一次派发记录决定：有上游任务号就 `AttemptReuseAccepted` 接着查（`generation/executor.go` 里 `ResumedProviderRequestID` 非空时不进入 create 分支）；`submission_unknown` 且没有任务号就停在「上一次提交结果不明确，为避免重复创建上游任务已停止自动重发」，不重发；图片有 `ImageSubmission` 记录时按原字节、原键恢复。
+方案保持这个行为，只把它写成显式约束，并在第 1 步的表格测试里加「重启后 `running` 任务不变成 `cancelled`」一条。
 
 ### 3.3 扣费入口：后台守门
 
-会新建上游任务的只有三条路：`POST /tasks/:id/retry`、带 `metadata.retryOf` 的 `POST /tasks`、对着已有画布节点的 `POST /tasks`。后台统一检查：
+会新建上游任务的只有三条路：`POST /tasks/:id/retry`、带 `metadata.retryOf` 的 `POST /tasks`、对着已有画布节点的 `POST /tasks`。〔外部〕第 2 节指出，business tools 直接暴露了 `/tasks`、`/tasks/:id/retry`（`handler/business_catalog.go`），只改 `canvas.generation.submit` 不够，这三条路都要过同一道检查。后台统一检查：
 
 1. 先找出**目标节点当前的任务**：任务表里「目标为这个画布、这个节点」的最近一个任务（任务输入里已有目标节点，见 `TargetBindingFromInput`，实施时加成可索引的列）。批次和多输出提交按 `outputNodeIds` 展开，每个目标节点都要查。不依赖前端或画布文档告诉后台节点以前生成过什么。
 2. 带了 `retryOf`（或走 `/retry`）时，`retryOf` 必须**等于**目标节点当前的任务，且这个任务的目标节点就是本次的目标节点；不一致就拒绝（409，返回当前任务的 `outcome`）。这样旧快照指着失败任务 A、节点其实已经提交了任务 B 时，调用方没法拿 A 绕过 B 的检查。
 3. 按第 3.1 节的表判当前任务的 `regenerate`：
    - `blocked` → 409，返回最新的 `outcome`，前端照着刷新显示；
-   - `confirm` → 必须带有效的确认 ID（第 3.1 节），否则 409；
+   - `confirm` → 请求里必须带有效的同意（第 3.4 节），否则返回 `paid_confirmation_required` 和费用预览，**这次不提交上游**；
    - `allowed` → 放行。
-4. 第 1–3 步的读取和核对，与新任务的接纳**放在同一个事务里**（现有 `retryTask` 已用 `withImmediateTransaction`，接纳新任务也要放进同一种写事务）。两个并发请求不会都看到「当前任务是 A」然后各建一个新任务。
+4. 第 1–3 步的读取和核对、同意记录的写入，与新任务的接纳**放在同一个事务里**（现有 `retryTask` 已用 `withImmediateTransaction`，接纳新任务也要放进同一种写事务）。两个并发请求不会都看到「当前任务是 A」然后各建一个新任务。依据〔防重〕2.2 AWS Builders' Library 原话：记录幂等 token 和所有变更必须是一个 ACID 操作。
+
+**`/retry` 被重复提交（双击、网络重试）返回上一次的结果，不返回 409。** 依据〔防重〕4.2 第 ① 条、Google AIP-155「If a duplicate request is detected, the server should return the response for the previously successful request」。现状【已核】：`repository/local_runtime.go` 的 `retryTask` 用 `WHERE status IN (failed, cancelled)` 条件更新，第二次点击匹配 0 行，返回 `ErrTaskNotRetryable`（`lifecycle.go` 里转成 `RetryNotRetryableMessage`）——不会多扣钱，但用户看到一次失败。改法：`/retry` 也接受 `clientOperationId`。后台按「同一用户、同一提交标识、同一次重跑」记录，第二次带同一标识时直接返回同一个任务（含它当前的 `outcome`）；没带标识的旧客户端，在条件更新匹配 0 行且任务的 `routeRun` 恰好比请求前读到的大 1 时，返回当前任务而不是报错【推断】。
 
 另外三处随之调整：
 - `/retry` 不再做回执重建和继续下载（已挪到 `/recover`），只做扣费重跑。旧客户端的「继续取回」也调 `/retry`，所以过渡期的处理见第四节，不能直接删。
 - `RecoverMediaUpscale` 里 `not_sent → RetryTask` 的分支删掉，改为 `outcome.regenerate = allowed`，由用户走扣费入口。
 - 工作流「重试失败步骤」（`canvas_workflow_run.go`）同样先过这道检查。
 
-提示词面板、悬浮工具条、错误卡、批次子节点、任务中心、助手——不管哪个入口，过的都是同一道检查。
+提示词面板、悬浮工具条、错误卡、批次子节点、任务中心、内置助手、外部 MCP/CLI——不管哪个入口，过的都是同一道检查。
 
-外部调用方（business tools）对 `confirm` 任务重跑同样需要确认 ID；这一点要写进 `openapi.yaml`。
+### 3.4 用户同意：谁来问、后台存什么
 
-### 3.4 前端只照着做
+上一版要求「确认只能在 BeefTV 桌面上申请，外部程序一律 403/409」，本轮删掉。用户原话（2026-10-26）：「要是有人想用mcp调用beeftv beeftvcli呢 肯定是他们的页面上面确认啊 比如说codex调用beeftv codex就会寻求用户的确认」。依据〔外部〕结论第 1、4 条、7.1 节：MCP elicitation 本来就是服务端经客户端向用户询问的机制，Codex、Claude Code 都支持；现有 `canvas.generation.submit` 也已经写明「外部 MCP/CLI 由调用方审批」（`operations/generation_submit.go`）。
 
-- `bindGenerationTask` 把 `task.outcome` 原样存到节点 `metadata.taskOutcome`。所有「能不能重新生成 / 显示继续取回 / 是否锁住」的判断只读这一个字段，集中在一个 `lib/task-outcome.ts` 里给出按钮和文案。错误卡、批次子节点、悬浮工具条、提示词面板、任务中心共用它，消除来源不同的问题。
+**流程（三类调用方共用同一个后台合同）：**
+
+1. 调用方发起会扣费的提交。节点当前任务是 `confirm` 而请求里没有有效同意时，后台返回 `paid_confirmation_required`，附一份**费用预览**，并明确写「本次没有提交上游」。
+2. 调用方在**它自己的界面**问用户：
+   - BeefTV 自己的界面：照旧弹现有的确认框；
+   - 外部 MCP / CLI（Codex、Claude Code 等）：在它们的界面上问，方式见第 3.5 节；
+   - 内置助手：照旧要用户确认过的制作方案（`SubmitAuthorizedGeneration` 只认用户确认过的方案，#261），**助手不能自己签**。方案卡里包含 `confirm` 节点时，方案卡要显示这些节点的费用预览，用户确认方案即视为对这几个节点的同意。
+3. 用户同意后，调用方带着**同一份报价**（`quoteId`）和**同一个 `operationId`**（即 `clientOperationId`）再次提交。后台在接纳事务里核对报价没被换、没涨价、输入没变，写入同意记录、接纳新任务。
+
+**费用预览**的内容依据〔外部〕6.1 节，扩展已有的 `canvas.generation.propose`（它已返回模型、节点、`proposalId` 和两个版本号，但没有金额，〔外部〕第 2 节【已核于该调研】）：
+
+- 原任务、画布、全部目标节点、生成数量、模型、渠道；后台保存完整输入指纹；
+- `willSubmitUpstream`、`mayChargeAgain` 由后台计算，不能由调用方或模型自填；
+- 费用：单位（积分 / 人民币 / 上游币种分开，不假设兑换比例）、预计值、能否硬限上限、价格来源和版本。**不确定就写「未知」并写明计费依据，不能写 0**；只有估算不能叫「最高扣费」；
+- 写明「原任务可能已经扣过一次」，但不写成「已确定扣过」；
+- 报价的有效期、画布与模型配置版本、原任务的 `routeRun`、`operationId`、调用者。
+
+报价 `quoteId` 只证明「报价没被换掉」，**不能单凭拿到它就视作用户已同意**（〔外部〕结论第 5 条、6.1 节）。
+
+**后台能保证什么、不能保证什么**（依据〔外部〕结论第 3 条、6.5 节，这一段要原样写进 business tools 说明）：
+
+- 后台**无法证明**调用方真的问过人。标准 MCP 没有可验证的「真人已确认这笔金额」证明；form 的 `accept`、CLI 的 `--confirm`、调用方的同意声明都来自调用程序。Claude Code 的 elicitation hook 甚至可以程序化地直接回答 `accept`（〔外部〕4.2 节）。
+- 后台**能保证**的是：**调用方不明确声明同意，就绝不扣钱**；一次同意最多接纳一次约定的生成操作；同一操作重放返回原结果；换输入、换报价、涨价，原同意失效。
+- 后台把外部同意记录成「调用方报告已取得用户同意」，不记成「服务端独立核实了人工点击」。只读令牌不能靠请求体里的 `confirmed` 获得写权限（〔外部〕6.5 节）。
+- 如果以后要求「即便调用方恶意也绝不能擅自消费」，那是更强的需求，要用独立认证的确认页面或可信签名凭据，或者干脆不给该客户端付费权限（〔外部〕6.5 节）。本方案不做。
+
+### 3.5 MCP 工具和 CLI 怎么暴露「这次会再扣钱」
+
+依据〔外部〕第 6 节，以下为建议，未实现。现状【已核】：`cmd/beeftv/main.go`、`business.go` 注册 MCP 工具时只填了 `ReadOnlyHint`，没有 elicitation 调用、没有费用确认对话、没有 `structuredContent`。
+
+**工具分开**（〔外部〕6.2 节）：
+
+| 工具 | 行为 | 标注 |
+| --- | --- | --- |
+| `task.get` / 费用预览 | 返回事实、`outcome`、费用和报价，不发生成请求 | 真正纯读才标 `readOnlyHint=true`；签发报价若产生用户可见状态，按实际副作用标 |
+| `task.recover`（建议名称） | 只取回原结果，绝不转成新生成 | 免费不等于只读，标 `readOnlyHint=false` |
+| `canvas.generation.submit` / `task.regenerate`（后者为建议名称） | 带报价与稳定 `operationId` 的付费执行，过第 3.3 节的检查 | `readOnlyHint=false`；Claude Code 加 `_meta: {"anthropic/requiresUserInteraction": true}` |
+| business 直连工具、原始 HTTP | 过同一道费用和授权检查 | 不能因为没走新工具就免确认 |
+
+MCP 标准注解（`readOnlyHint`、`destructiveHint`、`idempotentHint`、`openWorldHint`）规范原话是「all properties in ToolAnnotations are hints」，**不是付费审批开关**，也没有金额字段（〔外部〕3.2 节）。工具说明里直接写「新建生成，按所选渠道收费；原任务可能已经收费」；每次的金额放在报价、elicitation 信息和执行参数里，不靠修改 `tools/list` 冒充逐笔报价。
+
+**各客户端怎么问**（〔外部〕第 4 节、6.3 节）：
+
+- **Claude Code**：对付费执行工具加 `anthropic/requiresUserInteraction: true`，官方说明这会让每次调用都要人工审批，普通 allow 规则和 `auto` / `bypassPermissions` 都跳不过（〔外部〕[A1]）。这是 Anthropic 私有扩展，不是所有 MCP 客户端的合同。
+- **Codex**：安装说明里给用户一个配置示例，对付费执行工具设 `approval_mode = "prompt"`（〔外部〕4.1 节），不能静默替用户改配置。Codex 源码在「需要审批但审批策略为 never」时拒绝调用而不是放行（〔外部〕[C6]）。
+  ```toml
+  [mcp_servers.beeftv.tools."task.regenerate"]
+  approval_mode = "prompt"
+  ```
+- **支持 form elicitation 的客户端**：执行付费工具时，后台用冻结的报价组一条 form，金额和风险是展示文字，回答只用一个布尔值，不预选同意。只有 `action=accept` **且** `confirmed=true` 才算同意；拒绝、取消、超时、断线都不算。`2025-11-25` 用 `elicitation/create`，`2026-07-28` 用 `inputRequests` / `inputResponses`，两种由协议适配层承载，业务合同只有一份（〔外部〕3.3 节）。当前 `go-sdk v1.8.0` 对新版的兼容性未验证【未核实，〔外部〕】。
+- **没有 elicitation 的客户端**：返回结构化的 `paid_confirmation_required`（同时给 `structuredContent` 和等价文本），写明「这次没有提交上游」；调用方用自己的对话或审批界面问用户，再带同一报价、同一 `operationId` 和同意声明提交。拿不到同意就停，不自动改成已确认。`paid_confirmation_required` 是 BeefTV 业务原因，不冒充 JSON-RPC 标准错误码（〔外部〕6.3 节）。
+- **Cursor、Claude Desktop**：URL 模式、`2026-07-28` 支持情况未找到官方承诺，列为待实测，先按「没有 elicitation」的路径兜底【未核实，〔外部〕第 4 节】。
+- 同时开 form elicitation 和 `requiresUserInteraction` 可能问两遍；按客户端选一种，并写明由调用方承担取得同意的责任（〔外部〕6.3 节）。
+
+**CLI**（〔外部〕6.4 节，命令为建议，现在不存在；现有 `ops call` / `business call` 照样要过后台检查）：
+
+```sh
+beeftv task regenerate task_example --preview --json                            # 只预览
+beeftv task regenerate task_example --quote q_example --op-id op_example         # 人在终端：显示报价后在 TTY 里问
+beeftv task regenerate task_example --quote q_example --op-id op_example --confirm --json  # 外部助手已在自己界面取得同意
+```
+
+- 人用终端时显示模型、数量、费用（或「未知」）、原任务可能已收费，再明确问；回车不默认成同意。
+- 非交互环境默认返回需确认的 JSON 和非零退出码，不等待 stdin，不自动接受；沿用现有 precondition 退出码 `5`（`cmd/beeftv/main.go` 的 `exitPrecondition = 5`【已核】）。
+- `--confirm` 表示**调用方声明已经取得本次同意**，不是 BeefTV 核实了终端前有人。不做一个全局 `--yes` 解锁以后所有消费。
+- 网络失败后保留同一 `operationId`、报价和输入，先查原接纳结果，不换成另一次购买。
+
+### 3.6 一次同意只扣一次：一条唯一约束
+
+上一版用「确认 ID + 10 分钟过期 + 桌面专用鉴权 + `POST /tasks/:id/regenerate-confirmations` 接口」，本轮简化。依据〔防重〕3 节 Q2、4.3 第 ① 条：业界没有服务端「发确认令牌」的通用做法，Stripe / AWS / Google 靠的是请求自带身份 + 同事务记账；这个接口实际想证明的「界面真的弹过框」服务端本来就证明不了（〔外部〕6.5 节）。
+
+改成一张表、一条唯一约束，在接纳新任务的同一事务里写入并消费：
+
+```sql
+-- 示意，列名实施时定；依据〔防重〕第三节 Q2 的示例【推断，〔防重〕】
+CREATE TABLE regeneration_consents (
+  user_id            TEXT NOT NULL,
+  target_node_id     TEXT NOT NULL,
+  original_task_id   TEXT NOT NULL,
+  original_route_run INTEGER NOT NULL,
+  client_operation_id TEXT NOT NULL,   -- 本次付费提交的 operationId
+  input_fingerprint  TEXT NOT NULL,    -- 本次生成内容指纹（第 3.1 节那个内容指纹）
+  quote_id           TEXT NOT NULL,
+  charge_snapshot    TEXT NOT NULL,    -- 报价里的费用：单位、预计值、上限、价格版本
+  caller             TEXT NOT NULL,    -- desktop_ui / assistant_proposal / external:<client>
+  consented_at       DATETIME NOT NULL,
+  consumed_task_id   TEXT NOT NULL,
+  UNIQUE (user_id, target_node_id, original_task_id, original_route_run)
+);
+```
+
+- 不发确认 ID、不设 10 分钟过期、不搞桌面专用鉴权。同意随付费提交一起带上：`consent: { originalTaskId, originalRouteRun, quoteId, operationId }`。
+- 接纳事务里先核对：报价存在、属于本调用者、没过报价有效期；本次请求的内容指纹、费用、`operationId` 与报价一致；费用没有上涨、计费单位没变。任一不符返回 `paid_confirmation_required` 和新报价，**不提交上游**。
+- 然后 `INSERT`。插入成功 = 这一次额度到手，同一事务写入新任务；违反唯一约束 = 这次 `confirm` 已经用过，返回当前 `outcome`，不建任务。
+- 同一个 `operationId` 重放（双击、网络重试）先由现有 `(user_id, client_operation_id)` 唯一索引和 `admitExisting` 返回原任务，根本走不到插入；即使报价后来过期，已接纳的同一操作重放仍返回原任务，不变成新购买（〔外部〕6.6 节）。
+- 原任务的 `routeRun` 变了（被重跑过），唯一键自然换一组，旧同意不再匹配。
+- 批次：一次同意覆盖用户明确看见数量和总费用的一个批次，每个目标节点一行；部分接纳后的重放不重做已接纳项（〔外部〕6.6 节）。
+
+**同意失效用 `routeRun` 判断，不用 `updatedAt`。** 依据〔防重〕4.2 第 ③ 条，代码【已核】：`backend/internal/repository/repository.go` 的 `UpdateTaskProgress`（第 380 行）和 `UpdateTaskProgressForLease`（第 387 行）每写一次进度、阶段都设 `updated_at: time.Now()`；`ReleaseTaskProviderRecovery` 释放租约时也会改。用户看确认框的几秒内一次无关写入就会把同意作废。要防的是「确认期间结果被取回了」——那是 `phase` / `regenerate` 变了，接纳事务里重算一次 `Outcome`、发现不再是 `confirm` 就拒绝即可；`routeRun` 只在重跑时 +1（`local_runtime.go` 第 361 行 `route_run + 1`【已核】），用它做同意的版本。如果评审觉得不够，再加一个只在 `phase` / `regenerate` 变化时 +1 的 `outcome_version`（〔防重〕4.2 第 ③ 条）。
+
+后台能保证的措辞固定为「**一次同意最多提交一次**」，不说「不会重复扣费」。BeefTV 没有本地积分账本，钱扣在用户自己配置的上游渠道上，做不到「账上不可能扣两次」，只能做到「不可能提交两次」（〔防重〕2.6【推断】）。
+
+### 3.7 上游已带 `Idempotency-Key` 的渠道：核实结果
+
+依据〔防重〕4.2 第 ② 条、第五节：上游按同一个键去重的渠道，用同一 attempt 的同一个键原样重发，上游只执行一次，「提交未确认」不必升级成「让用户确认」。〔防重〕第六节第 3 条说明它没有逐家核实上游行为，要求先核实。本轮逐家核对的结果：
+
+| 渠道 | BeefTV 发送端 | 上游是否按键去重 | 结论 |
+| --- | --- | --- | --- |
+| BeefAPI 图片（`/v1/images/generations`、`/v1/images/edits`） | `app/image_submission.go` 把 `Idempotency-Key` 存进加密的 `ImageSubmission` 原请求，同键原字节重发；只在 `/models` 响应头声明 `X-Image-Submission-Protocol: idempotency-key-v1` 时启用（`generation/image_recovery.go`）【已核】 | **是**。BeefAPI 仓库（`codex-enhance` 分支 `39ea36f`）`middleware/image_submission.go` 的 `ImageSubmissionGuard`：同键同体返回保存的响应并带 `Idempotency-Replayed: true`；同键异体返回 409 `idempotency_conflict`；处理中返回 409 `image_submission_pending`；超过 10 分钟仍无结果返回 `image_result_unknown`；回执超过 24 小时返回 410 `image_result_expired`，「This key will not generate another image」。`router/relay-router.go` 第 113 行的 `/v1/models` 发出协议声明【已核】 | 原样重发**不算会扣钱**，不必问用户。`image_result_unknown`、`image_result_expired` 两种情况上游不再生成，BeefTV 应落到 `unrecoverable` + `confirm` |
+| BeefAPI 视频（`/v1/videos`） | `generation/video.go` 只对 BeefAPI 视频配置用 `PostJSONWithSubmissionKey` 设 `Idempotency-Key`；键按 `taskID:attemptID` 派生（`provider_submission.go`）【已核】 | **有条件是**。BeefAPI `middleware/video_submission.go` 的 `VideoSubmissionGuard` 同样按键去重并返回原回执，但只在环境变量 `VIDEO_SUBMISSION_GUARD_ENABLED=true` 时生效，**默认 `false`**（`docker-compose.ghcr.yml` 第 129 行 `${VIDEO_SUBMISSION_GUARD_ENABLED:-false}`；运维手册 `docs/runbooks/video-submission-hardening.md` 写「迁移后受控启用」）【已核】。生产环境是否已开启，本轮无法从代码确认【未核实】 | 只有生产环境确认开启后，原样重发才不算会扣钱。确认前照旧当作可能扣钱。建议 BeefAPI 像图片那样在响应头声明协议，BeefTV 按声明启用，不按域名判断 |
+| BeefAPI 超分（`/media-upscale/tasks`） | `generation/upscale.go` 用 `postJSONWithSubmissionKey`【已核】 | **是，且强制**。BeefAPI `middleware/fal_upscale.go` 在 `VIDEO_SUBMISSION_GUARD_ENABLED` 关闭时直接拒绝创建（503 `upscale_unavailable`），开启时同视频去重；`router/video-router.go` 第 13 行接在 `VideoSubmissionGuard` 后面【已核】 | 能创建成功就说明去重已生效，原样重发不算会扣钱 |
+| 声明式插件（`generation/protocol.go`） | 宿主把键放进 `request.extra.idempotencyKey`，插件可以映射到请求头，不映射就不发【已核】 | 仓库里只有 `plugin-packages/full-video/manifest.json` 映射了 `Idempotency-Key`【已核】。它是「全参 2.0 / 2.5」第三方服务，上游是否去重查不到【未核实】 | 当作可能扣钱。插件 manifest 以后可以加一个「上游按幂等键去重」的声明，由插件作者负责，后台按声明启用 |
+| 其他直连渠道（火山方舟、可灵、Runway、OpenAI 直连、RunningHub 等） | 不带 `Idempotency-Key` 或没有协议声明 | — | 当作可能扣钱，「提交未确认」照旧落到 `confirm` |
+
+做法【推断，〔防重〕4.2 第 ②】：渠道能力加两个字段 `supports_idempotent_submit`、`supports_query_by_request_id`，只由协议声明（BeefAPI 的响应头、插件 manifest）打开，不按域名猜。`supports_idempotent_submit` 为真且原请求还在（图片的 `ImageSubmission`）时，`submission_unknown` 的 `Outcome` 是 `retrievable`：后台用同一 attempt、同一键原样重发，不新建任务、不问用户。
+
+同时把「发起上游请求前，带幂等键的 attempt 必须已经提交到数据库」写成显式不变量（〔防重〕2.2【推断】）：`modelcatalog/route_attempt.go` 已在派发前把状态写成 `submission_unknown`，键由 `taskID:attemptID` 派生、跨重启稳定，这一层已经有，方案只是把它从实现细节提为约束，并加测试。
+
+### 3.8 前端只照着做
+
+- `bindGenerationTask` 把 `task.outcome` 原样存到节点 `metadata.taskOutcome`。所有「能不能重新生成 / 是否锁住」的判断只读这一个字段，集中在一个 `lib/task-outcome.ts` 里给出按钮和文案。错误卡、批次子节点、悬浮工具条、提示词面板、任务中心共用它，消除来源不同的问题。
 - 删除：`resourceReloadAvailable`、`isKeptGenerationResultCode`、`canvasGenerationRetryBlocked`、`imageSubmissionUnknown`、`canvasImageGenerationHasPendingResult`、`taskRetryBlocked`、`canRetrieveVideoResult`、`generationTaskCanReloadResource`，以及 #263/#16 新增的 `canvasTaskProvesSubmissionUnknown` 一类判定。
 - `taskStatus / taskStage / taskProgress` 保留为显示用的副本，只由 `bindGenerationTask` 写；加一个测试：判定函数不允许读这几个字段。
-- `lib/generation-error.ts` 不再分类**任务**的错误，只用于前端本地错误（还没发出请求时的网络、参数、保存失败），任务失败的文案由 `outcome.reason` 选。这部分可以在第 5 步之后慢慢缩，不阻塞上线。
+- `lib/generation-error.ts` 不再分类**任务**的错误，只用于前端本地错误（还没发出请求时的网络、参数、保存失败），任务失败的文案由 `outcome.reason` 选。这部分可以在守门上线之后慢慢缩，不阻塞上线。
 - 前端不再有任何自动调用 `/retry` 或 `/recover` 的代码。加载画布时的恢复扫描（`use-canvas-generation.ts`）只负责订阅任务、把 `ready` 的结果写回节点，这是现在已有的流程。
+- BeefTV 界面的确认框：收到 `paid_confirmation_required` 时显示后台给的费用预览（费用未知时显示「未知」和计费依据），用户点确认后带着同一 `quoteId`、同一 `clientOperationId` 再提交一次。
 
-### 3.5 唯一留在前端的状态：任务号还没拿到
+### 3.9 唯一留在前端的状态：任务号还没拿到
 
-点下生成到拿到任务号之间，只有前端知道「我发过一个请求」，这一段仍用 `taskClientOperationId` + `generationSubmissionState: submitting | unknown`。改两点：
+点下生成到拿到任务号之间，只有前端知道「我发过一个请求」，这一段仍用 `taskClientOperationId` + `generationSubmissionState: submitting | unknown`。
 
-1. `GET /tasks/by-operation/:operationId` 去掉画布过滤，按用户 + 提交标识查（#16 说明「未覆盖」第 3 条指出画布过滤会把已有任务误判为不存在）；画布不一致单独报错。
-2. 桌面版后端是本机进程，接纳任务在一个事务里完成。所以「发出超过 2 分钟、按标识确实查不到」可以判定为后台没接纳、也没扣钱，节点直接变成 `failed + regenerate: allowed`。这解决客户 B 的候选路径 2/3（节点停在「尚未查到上次提交的任务……暂勿重新生成」）。重新生成时复用同一个 `clientOperationId`，后台 `admitExisting` 去重，即使判断错了也不会建出第二个任务。2 分钟要大于后端接纳请求的超时，实施时以代码里的超时为准。
+上一版的「发出超过 2 分钟、按标识查不到就判定后台没接纳」已删掉。依据〔防重〕4.2 第 ④ 条、RFC 9110「超时或失败不代表副作用没发生」；〔状态〕5.2 第 2 条：Stripe、ComfyUI、InvokeAI 都是带同一个键重发，由服务端去重，不等一个固定时长。改成：
 
-### 3.6 四种任务共用一套
+1. 节点处于 `submitting` / `unknown` 时，前端**带原来的请求体和原来的 `clientOperationId`** 重发 `POST /tasks`。后台已接纳就由 `admitExisting` 返回原任务；没接纳就这次接纳——上次没接纳也就没扣钱，这次接纳的是用户原本那一次点击，不是重复购买。
+2. `GET /tasks/by-operation/:operationId` 去掉画布过滤，按用户 + 提交标识查（#16 说明「未覆盖」第 3 条指出画布过滤会把已有任务误判为不存在）；画布不一致单独报错。
 
-`Outcome` 的字段对所有任务类型相同，不同的只是「去哪里找可取回的结果」：
+**前提要核实：前端本地有没有保存原请求。** 本轮核对代码【已核】：
+- 前端**没有**持久化原请求体。`services/api/generation-submission.ts` 的 `submitGenerationCommand` 只在内存里 `structuredClone(input)`，同一次调用内重放；页面刷新后就没了。`persistCanvasGenerationTarget`（`services/canvas-generation-target.ts`）在提交前只把 `taskClientOperationId` 和 `generationSubmissionState: "submitting"` 写进画布文档，不存请求体。`lib/canvas/canvas-project-generation.ts` 的 `runGenerationOperationOnce` 也只是内存里的锁。
+- 深度捕捉存了 `taskClientOperationInput`，但它只是 `localExecutorFrozenInputKey` 拼出来的识别串（`JSON.stringify(["depth_capture", projectId, resourceId])`），不是完整请求。
+
+所以分两种情况：
+- **同一会话内**（没刷新）：内存里还有原请求，按上面第 1 条自动重发，不需要用户看。
+- **刷新或重启之后**：原请求已经丢了，不能自动重发。前端用 `taskClientOperationId` 查 `by-operation`：查到就绑定原任务；查不到就显示「上次提交没有找到，可以重新生成」，用户点「重新生成」时**复用同一个 `clientOperationId`**、用当前画布重新组请求。后台 `admitExisting` 按标识去重：原请求其实已被接纳的，内容一致就返回原任务，不一致就返回 409 `ClientOperationConflictMessage`，不会建出第二个任务。桌面版后端是本机进程、接纳在一个事务里完成，查不到就是没接纳（〔状态〕3.2 对 InvokeAI 的分析【推断】），这里不再加计时判断。
+- 如果要做到刷新后也能自动重发，需要在提交前把请求体存到本地（InvokeAI 的做法：「Journal writes precede submission」，〔状态〕3.2）。这会增加一份本地存储和清理逻辑，本方案不做，列为第七节第 2 条。
+
+`generationSubmissionState` 的 `submitting` / `unknown` 对用户的含义已经一样（都是「可以再点，会去重」），展示上合并成一种；字段是否只留 `taskClientOperationId`，按〔防重〕4.3 第 ③ 条留给实施时定。
+
+### 3.10 四种任务共用一套
+
+`Outcome` 的字段对所有任务类型相同，不同的只是「去哪里找可取回的结果」和「渠道保留期」：
 
 | 类型 | 免费取回的来源 | 重新生成 |
 | --- | --- | --- |
-| 图片 `canvas_image` | 创建回执 / `ImageSubmission` | 走扣费入口 |
-| 视频 `canvas_video` | `ProviderRequestID` 查上游 | 走扣费入口 |
+| 图片 `canvas_image` | 创建回执 / `ImageSubmission`；BeefAPI 图片同键重发 | 走扣费入口 |
+| 视频 `canvas_video` | `ProviderRequestID` 查上游，截止按渠道保留期 | 走扣费入口 |
 | 超分（按 `UpscaleMediaType(model)` 识别） | `ProviderRequestID` 查上游 | 走扣费入口 |
 | 深度捕捉 `depth_capture` | 本地执行器的产物 | 本地计算不扣费，`regenerate` 只会是 `allowed` / `blocked` |
 | 文本 `canvas_text` | 无（流式结果已在本地） | 走扣费入口 |
 
-这个分派写在后台一个函数里（按类型选来源），前端不知道这些区别。深度任务里前端自己写 `taskStage: "submission_unknown"` 的两处（`use-canvas-media-tools.ts`）改为由后台根据执行器状态给出。
+这个分派写在后台一个函数里（按类型选来源），前端不知道这些区别。深度任务里前端自己写 `taskStage: "submission_unknown"` 的两处（`use-canvas-media-tools.ts`）改为由后台根据执行器状态给出。对应 Google AIP-151「各接口不要各自定义长任务接口」（〔状态〕4.1）。
 
 ## 四、迁移：每步单独上线、单独回退
 
@@ -202,25 +356,26 @@ type Outcome struct {
 
 旧前端的请求在新后端上怎么处理：
 - 旧前端的「继续取回」调的是 `POST /tasks/:id/retry`（`use-canvas-resource-handoff.ts`）。新后端的 `/retry` 在任务处于 `fetching` / `retrievable`、或者成功但暂停下载时，**一律按 `/recover` 处理**（免费取回，不新建任务），永远不会把这个请求理解成扣费重跑。这个兼容分支一直保留，到确认不再有旧客户端为止。
-- 旧前端发起的扣费重跑（`/retry`、`POST /tasks`）不带确认 ID。遇到 `confirm` 任务时后台拒绝，返回的提示文案让用户刷新页面或升级。被拒绝只会让用户多走一步，不会多扣钱。
+- 旧前端发起的扣费重跑（`/retry`、`POST /tasks`）不带同意。遇到 `confirm` 任务时后台返回 `paid_confirmation_required`，提示刷新页面或升级。被拒绝只会让用户多走一步，不会多扣钱。
+- 已发出去的外部 MCP/CLI：它们现在不认 `paid_confirmation_required`，遇到 `confirm` 任务会看到一条错误并停下，不会扣钱。
 
 | 步 | 改什么 | 用户能感觉到的 | 回退 |
 | --- | --- | --- | --- |
-| 1 | 后台：`Outcome` 纯函数 + 表格测试，挂到任务读接口上，只增字段 | 无 | 删字段 |
-| 2 | 后台：取回循环自动恢复图片（第 3.2 节的完整扫描范围，含没有路由记录的历史回执）；`recovery_outcome` 列（新增可空列）；`/retry` 现有的回执重建分支**原样保留** | **客户 A 的节点自己好了**：后台重建 → 下载 → 写回画布，旧前端照常显示成片；手动点也还能恢复 | 关掉循环里这一步 |
-| 3 | 后台：`POST /tasks/:id/recover`；视频/超分自动查上游（带退避）；`/retry` 加上面的兼容分支 | 视频失败后能自己取回 | 关闭自动查询，接口保留 |
-| 4 | 后台：确认接口上线，扣费入口守门（第 3.3 节）**先只记日志、不拒绝**。前端只做最小改动：现有的扣费确认框（重新生成、提示词面板、任务中心、批次）在用户点确认后多调一次确认接口，把确认 ID 带进提交；其余前端保护不动。观察一个版本：日志里出现的每一次「本应拦下」都要能对上前端确实带了确认 ID | 无（确认框还是原来那个） | 关掉日志；前端多出的那一次调用可以保留，后台不守门时它不起作用 |
-| 5 | 后台：守门改成拒绝；`RecoverMediaUpscale` 去掉扣费分支 | 可能重复扣费时，任何入口都要先确认；第 4 步起前端已经会带确认 ID，确认后能正常重新生成 | 见下 |
-| 6 | 前端：所有判断改读 `taskOutcome`；「继续取回」调 `/recover`；删掉第 3.4 节列出的推断函数和 `resourceReloadAvailable` | 错误卡、批次子节点、任务中心按钮一致；不再出现节点锁死 | 回退到第 5 步的前端：它会申请并携带确认 ID，回退后重新生成照样可用 |
-| 7 | 清理：`by-operation` 去掉画布过滤；2 分钟判定；前端不再分类任务错误 | 「查不到原任务」不再锁死 | 单独回退 |
+| 1 | 后台：`Outcome` 纯函数 + 表格测试（含「重启后 `running` 不变 `cancelled`」），挂到任务读接口上，只增字段 | 无 | 删字段 |
+| 2 | 后台：取回循环自动恢复图片（第 3.2 节的完整扫描范围，含没有路由记录的历史回执）；`recovery_outcome` 列（新增可空列）；`/retry` 现有的回执重建分支**原样保留**；BeefAPI 图片「提交未确认」按同键自动重发（第 3.7 节） | **客户 A 的节点自己好了**：后台重建 → 下载 → 写回画布，旧前端照常显示成片；手动点也还能恢复 | 关掉循环里这一步 |
+| 3 | 后台：`POST /tasks/:id/recover`；视频/超分按渠道保留期自动查上游；`/retry` 加上面的兼容分支、加同一 `clientOperationId` 重放返回原任务 | 视频失败后能自己取回；双击「重新生成」不再报错 | 关闭自动查询，接口保留 |
+| 4 | 后台：费用预览、同意表、扣费入口守门**先只记日志、不拒绝**。前端只做最小改动：BeefTV 现有的扣费确认框（重新生成、提示词面板、任务中心、批次）点确认后带上 `quoteId` 和同一 `clientOperationId`；内置助手的方案卡显示费用预览；其余前端保护不动。观察一个版本：日志里每一次「本应拦下」都要能对上前端确实带了同意 | 确认框里多了费用 | 关掉日志；前端多带的字段可以保留，后台不守门时不起作用 |
+| 5 | 后台：守门改成拒绝；`RecoverMediaUpscale` 去掉扣费分支；MCP/CLI 新工具与 `paid_confirmation_required`（第 3.5 节）同版上线 | 可能重复扣费时，任何入口都要先确认；外部调用方在自己的界面里问 | 见下 |
+| 6 | 前端：所有判断改读 `taskOutcome`；「继续取回」按钮去掉，只留「立即再查一次」；删掉第 3.8 节列出的推断函数和 `resourceReloadAvailable` | 错误卡、批次子节点、任务中心按钮一致；不再出现节点锁死 | 回退到第 5 步的前端：它会带同意，回退后重新生成照样可用 |
+| 7 | 清理：`by-operation` 去掉画布过滤；同会话内同键自动重发（第 3.9 节）；前端不再分类任务错误 | 「查不到原任务」不再锁死 | 单独回退 |
 
 顺序的约束：
 - 只记日志的观察期（第 4 步）必须在移除任何前端保护（第 6 步）**之前**完成。第 5 步守门切到拒绝之后，就**不能**靠关掉守门回退：第 6 步之后前端已经不再自己拦，关掉守门等于放开未确认的付费提交。第 5 步之后如果守门误拦，只能修判定规则或发修复版本。
-- 申请和携带确认 ID 的前端改动在第 4 步就上线，早于第 5 步开始拒绝，所以不会出现「后台要确认 ID、前端还不会给」的版本。第 4、5 步之间前后端各有一道保护，但用户只看到一个确认框：前端原有的确认框点了确认，就顺带申请确认 ID。
-- 旧前端（Docker 分开部署、升级前打开的页面）不会申请确认 ID。第 5 步之后它在 `confirm` 任务上重新生成会被拒绝，提示刷新或升级；`allowed` 和 `ready` 的再次生成不受影响。
-- 回退第 6 步时连同前端一起回退到第 5 步的版本，而不是只回退某几个文件。第 5 步的前端已经接好确认接口，回退后确认入口仍然可用。
+- 带同意的前端改动在第 4 步就上线，早于第 5 步开始拒绝，所以不会出现「后台要同意、前端还不会给」的版本。第 4、5 步之间用户只看到一个确认框。
+- 旧前端（Docker 分开部署、升级前打开的页面）不会带同意。第 5 步之后它在 `confirm` 任务上重新生成会被拒绝，提示刷新或升级；`allowed` 和 `ready` 的再次生成不受影响。
+- 回退第 6 步时连同前端一起回退到第 5 步的版本，而不是只回退某几个文件。第 5 步的前端已经接好同意，回退后确认入口仍然可用。
 
-如果 v2.0.4 只带第 1、2 步，`/retry` 的手动回执恢复仍在，历史任务的恢复能力不会少；自动扫描是在这之上加的。
+如果 v2.0.4 只带第 1、2 步，`/retry` 的手动回执恢复仍在，历史任务的恢复能力不会少；自动扫描是在这之上加的。〔状态〕5.3 第 5 条也建议先发不依赖同意的几步（状态投影、后台自动取回、`/recover`）【推断】。
 
 旧画布文档：读取时忽略 `resourceReloadAvailable` 和前端写的 `generationErrorCode`，节点的成败以重新拉到的任务 `outcome` 为准；`canvas-document-rebase.ts` 的字段清单同步删掉。没有 `taskId` 的历史节点保持现状（显示「页面刷新后本地生成已中断」）。
 
@@ -233,15 +388,17 @@ type Outcome struct {
 | # | 问题（来源） | 新设计下 |
 | --- | --- | --- |
 | 1 | 客户端写的错误码触发自动扣费重试（#16 第 1 轮 P1） | 前端没有任何自动调用扣费接口的代码；自动取回在后台，只走 `/recover`，那里不引用重试逻辑 |
-| 2 | 提示词面板绕过扣费确认（#16 第 1 轮 P1） | 守门在后台：对着已有节点的 `POST /tasks` 先找该节点最近一个任务的 `outcome`，需要确认时不带有效的一次性确认 ID 就拒绝；`retryOf` 指向的不是节点当前任务也拒绝；前端漏不漏弹框都扣不了钱 |
+| 2 | 提示词面板绕过扣费确认（#16 第 1 轮 P1） | 守门在后台：对着已有节点的 `POST /tasks` 先找该节点最近一个任务的 `outcome`，`confirm` 时不带与报价一致的同意就返回 `paid_confirmation_required`、不提交；`retryOf` 指向的不是节点当前任务也拒绝；前端漏不漏弹框都扣不了钱 |
 | 3 | 恢复锁冲突（400）、存储配额（403）被当成拿不回（#16 第 1 轮 P2） | 「拿不回」只来自持久化的 `recovery_outcome`（`no_result` / `unrecoverable`）；`/recover` 的任何报错都不改变 `phase`，前端也不根据 HTTP 状态做判断 |
 | 4 | 读回执时数据库临时出错被当成拿不回，靠匹配文案判断（#16 第 2 轮） | 同上；读库出错时不写 `recovery_outcome`，下一轮循环再试。#16 后端加的 `result_unrecoverable` 判断点正好就是写 `recovery_outcome` 的位置 |
 | 5 | 后到的画布快照重复认领同一节点（#263 第 1 轮） | 取回不在前端认领；后台按任务加租约（`ClaimFailedTaskProviderRecovery`），画布快照来几次都不会多触发 |
 | 6 | 恢复响应丢失，被误判为取不回（#263 第 1 轮） | 判定只看后台事实，不看某一次请求的响应；响应丢了，前端订阅到的任务也已经是 `succeeded` |
 | 7 | 自动取回和手动重新生成用的是两套判断（#263 第 1 轮） | 只有一个 `outcome`，所有入口读同一个字段 |
-| 8 | 节点锁死：任务已终态仍按「提交未确认」锁住（客户 A，#15） | 每个终态都有出口：`retrievable` 后台自动取；`failed` 时 `regenerate` 为 `confirm` 或 `allowed`。只剩审核未通过这类 `blocked`，它只拦原样重跑，改了输入就能直接生成（第 3.1 节） |
-| 9 | 查不到原任务就永远「暂勿重新生成」（客户 B 候选路径 2/3，#16 未覆盖） | 第 3.5 节：去掉画布过滤 + 超过 2 分钟查不到即判定未接纳；重新生成复用同一提交标识，后台去重 |
+| 8 | 节点锁死：任务已终态仍按「提交未确认」锁住（客户 A，#15） | 每个终态都有出口：`retrievable` 后台自动取；BeefAPI 图片同键重发；`failed` 时 `regenerate` 为 `confirm` 或 `allowed`。只剩审核未通过这类 `blocked`，它只拦原样重跑，改了输入就能直接生成（第 3.1 节） |
+| 9 | 查不到原任务就永远「暂勿重新生成」（客户 B 候选路径 2/3，#16 未覆盖） | 第 3.9 节：去掉画布过滤；同会话内同键自动重发；刷新后查不到就允许用户重新生成，复用同一提交标识，后台去重 |
 | 10 | 错误卡和批次子节点对「能否重试」的判断来源不同（#16 未覆盖第 2 条） | 两处都改读 `taskOutcome` |
+| 11 | 双击 `/retry` 第二次报「不能重试」（〔防重〕4.2 第 ①，本轮新增） | 同一 `clientOperationId` 重放返回原任务（第 3.3 节） |
+| 12 | 进度写入改 `updated_at`，会误作废刚做的确认（〔防重〕4.2 第 ③，本轮新增） | 同意按 `routeRun` 绑定，进度写入不影响（第 3.6 节） |
 
 ### 5.2 过去的同类修复（逐个打开核对过）
 
@@ -254,19 +411,21 @@ type Outcome struct {
 | `ceb3173` 区分人工与自动重试 | 准备失败时自动重试会重发 | 自动路径不再有重试，只有取回；人工重试的条件由 `regenerate` 给 |
 | `2a58c3b` 区分「未发出」和「提交未确认」 | 两者混在一起 | 后台事实层已经区分（`not_sent` / `request_not_sent`）；新设计把它集中到 `Outcome` 的一张测试表里，前端不再另做一遍 |
 | `cfbe1ff`（#178）VOD 错误提示与恢复后原任务保护 | VOD 错误码前后端各一份 | 前端只用 `reason` 选文案，不再维护判定表 |
-| `21af10c`（#142）深度任务恢复与重试 | 深度任务特殊处理散在前端 | 第 3.6 节，深度只是一种取回来源 |
+| `21af10c`（#142）深度任务恢复与重试 | 深度任务特殊处理散在前端 | 第 3.10 节，深度只是一种取回来源 |
 | `5cee841`、`2a3b343` 视频原任务取回校验身份 | 取回时核对任务身份 | 已在后台，保留 |
 | `0ecf309`、`907d36d` 拒绝不完整回执、恢复原图下载 | 回执有效性校验 | 已在后台，保留，并从「只有手动才跑」改为循环自动跑 |
 | `1049faa` 路由或取消前保留未确认提交 | 派发状态记录时机 | **新设计管不到**：这是事实层的记录错误 |
 | `da5cfae` 多张图片输出贯穿恢复与重试 | 多输出只恢复了一张 | 部分覆盖：`outputs` 已按序号投影；`Outcome` 是任务级的，部分输出失败时用 `fetching` / `retrievable`，需要在表格测试里加多输出用例 |
 
+
 ### 5.3 新设计也防不住的
 
 - **事实记错了**：派发状态、回执落库、上游错误分类本身出错（如 `1049faa`），`Outcome` 会照着错误的事实给出错误结论。好处只是这类错误只需要在后端一处修、一张测试表里补用例。
-- **上游自己的问题**：上游返回成功却没有图、查询接口报错、资源链接过期，只能落到 `failed + confirm`，由用户决定是否重新生成、可能重复扣费。
-- **第 3.5 节的 2 分钟判定**：极端情况下（本机后端卡住超过 2 分钟后才接纳），会把已接纳的任务判为未接纳。复用同一提交标识重新生成时后台会认出是同一个任务，所以不会重复扣钱，但用户会看到一次多余的「重新生成」入口。
-- **外部调用方**：对 `confirm` 任务，外部程序无法再重跑，只能让用户到桌面界面里确认。这是有意收紧，business tools 的说明里要写清楚。
-- **一次确认的有效期内**：用户确认后 10 分钟内，这一个提交标识可以重放，不会多建任务；但用户确认本身可能是误点（像 memoh 误点那次），本方案只能保证「一次确认最多一次付费」，不能保证确认不是误点。
+- **上游自己的问题**：上游返回成功却没有图、查询接口报错、过了渠道保留期，只能落到 `failed + confirm`，由用户决定是否重新生成、可能重复扣费。
+- **上游幂等声明本身不可靠**：第 3.7 节「同键重发不算会扣钱」只对核实过的渠道成立；BeefAPI 视频要等生产环境确认 `VIDEO_SUBMISSION_GUARD_ENABLED` 开启。声明式插件作者如果声明错了，后台会照着错的声明重发。
+- **调用方没真的问人**：后台只能保证「不明确声明同意就不扣钱」，不能证明外部 MCP/CLI 真的问过人；Claude Code 的 hook、Codex 的自动批准都可能替用户回答（〔外部〕4.2、6.5 节）。用户给某个客户端付费权限，就等于把「问不问人」交给了它。
+- **同意本身可能是误点**（像 memoh 误点那次）：本方案只能保证「一次同意最多提交一次」，不能保证同意不是误点。
+- **刷新后原请求丢失**：第 3.9 节刷新后不能自动重发，用户要再点一次；如果当前画布和原请求内容不同，后台按同一标识返回 409，用户要换一个新提交（这时节点当前任务是什么，就按第 3.1 节判）。
 
 ## 六、#263 和 #16 里能直接用的
 
@@ -275,23 +434,23 @@ type Outcome struct {
 | #16 后端 `ResultUnrecoverable` 的几处判断（`image_result_recovery.go`、`image_submission.go`、`lifecycle.go`）和 `repository.ErrAmbiguousImageCreateReceipts` | **直接复用**，改成在这些位置写 `recovery_outcome`，替代返回 `reason` |
 | #16 后端测试 `TestImageReceiptRecoveryReasonSeparatesUnrecoverableFromTemporaryFailure`、`TestRetryUnknownAcceptanceAndImageReceiptStayOnOriginalTask` 新增断言 | 改成断言 `Outcome`，进第 1、2 步 |
 | #16 前端测试 `canvas-generation-failure`、`canvas-task-result-recovery`、`canvas-settled-retry-confirmation`、`canvas-late-generation-recovery.browser`、`canvas-uncertain-recovery.browser`、`generation-preflight` 夹具 | 场景全部保留作验收（第五节第 1–7、10 条）；断言从「前端判定函数返回什么」改成「给定后台 `outcome`，界面显示什么、请求发了几次」 |
-| #16 错误卡的三种文案（正在自动取回 / 确认取不回可重新生成 / 未定只能查看）和三张截图 | 直接对应 `retrievable+auto`、`failed+confirm`、`running`，文案复用，不加新按钮 |
+| #16 错误卡的三种文案（正在自动取回 / 确认取不回可重新生成 / 未定只能查看）和三张截图 | 直接对应 `retrievable`、`failed+confirm`、`running`，文案复用，不加新按钮 |
 | #16 / #263 前端的 `canvasTaskProvesSubmissionUnknown`、`canvasNodeNeedsOriginalResultRecovery`、`recoverCanvasTaskResult`、恢复扫描里的自动取回分支、提示词面板付费确认分支 | 不合并，由后台取代 |
 | #15 根因说明（`docs/review-evidence/canvas-uncertain-result-recovery/README.md`） | 作为背景材料保留 |
 
 如果 v2.0.4 等不及后面几步，最小止血是只发第 1、2 步：只改后端，`/retry` 现有的手动回执恢复原样保留，客户 A 这类节点会被后台自动修好，前端一行不改。这需要先在本机用一份带完整回执的失败任务验证一次「后台重建 → 下载 → 写回画布 → 旧前端显示成片」这条链路。本方案没有跑过这条链路，这是推断。
 
-## 七、待评审确认的点
+## 七、待架构师评审的点
 
-第 2 轮评审（Codex）已对 1–6 条给出意见，方案已按意见改：1 同意确认后重新生成；2 同意按目标节点检查，批次检查每个目标；3 同意按渠道限流定退避；4 同意批量查询；5 不向外部调用方开放确认接口（第 3.1 节已改）；6 不允许改输入免确认（第 3.1 节已改）。下面保留原文备查。
+前两轮 Codex 评审的结论已落进正文：同意确认后重新生成；按目标节点检查，批次检查每个目标；退避按渠道定；批量查询；改输入不能免确认。第 3 轮按三份调研改动的地方，下面是还需要拍板的：
 
-1. `failed + confirm`（上游可能已扣费、但确认取不回）时允许用户确认后重新生成，这是沿用 #16 已定的做法；另一种做法是只给「联系支持」，不开放重新生成。
-2. 守门按「目标为同一画布、同一节点的最近任务」找原任务。用户把节点复制成新节点再生成，就不算同一个节点，不会弹确认——这和现在「复制节点后点生成可能再次计费」的提示（`use-canvas-node-operations.ts`）一致，但要评审确认是否接受。另外批次子节点、多输出任务的目标节点要按 `outputNodeIds` 展开核对。
-3. 视频/超分自动查上游的退避和总时长（方案里写的是 24 小时内 1、5、15、60 分钟）要按各渠道查询接口的限流来定。
-4. 列表接口要多查回执是否存在、派发状态，需要批量查询，避免一条任务一次查询。
-5. 确认接口（`regenerate-confirmations`）是否对 business tools 外部调用方开放。不开放更安全，但外部调用方就无法重跑 `confirm` 类任务。
-6. 「改了输入就不受 `confirm` 约束」：用户只改一个字再生成，等于绕过了确认。另一种做法是只要节点当前任务是 `confirm`，任何新提交都要确认。前者照顾正常编辑，后者更保守。
+1. 审核未通过后改了输入再生成：现方案要算一个只覆盖生成内容的指纹来区分「原样重跑 / 改过」；〔防重〕4.3 第 ② 条认为不必区分，审核失败直接 `allowed`，让上游再判一次（它自己标为无出处的判断）。
+2. 刷新后自动重发（第 3.9 节）：要不要在提交前把请求体存到本地（InvokeAI 的提交日志），换取刷新后也不用用户再点。代价是多一份本地存储和清理逻辑。
+3. BeefAPI 视频的同键去重：先确认生产环境是否已开 `VIDEO_SUBMISSION_GUARD_ENABLED`；以及 BeefAPI 是否像图片那样在响应头声明视频协议，让 BeefTV 按声明启用。
+4. 火山方舟「链接 24 小时、任务 7 天」：过期后重新查询能否拿到新链接，要实测后再定截止按哪个算。火山方舟、可灵的保留期原文还没逐字核对。
+5. 外部客户端的付费权限：是给每个登记客户端一个「可以发起付费提交」的开关（默认关、用户在 BeefTV 设置里打开），还是沿用现在「可写客户端都能提交」。〔外部〕6.5 节建议由用户控制是否给某个客户端付费能力。
+6. 同意的版本：只用 `routeRun`，还是另加只在 `phase` / `regenerate` 变化时 +1 的 `outcome_version`（第 3.6 节）。
 
 ## 八、上游 Infinite Canvas
 
-`github.com/basketikun/infinite-canvas` 没有任务中心、异步任务和恢复层（#15 根因说明里的对照），这部分没有可照搬的做法，按 BeefTV 已有的任务、回执、取回循环来收拢。
+`github.com/basketikun/infinite-canvas` 没有任务中心、异步任务和恢复层（#15 根因说明里的对照），这部分没有可照搬的做法，按 BeefTV 已有的任务、回执、取回循环来收拢。〔状态〕〔防重〕两份调研也确认看过的开源项目里没有可整段照搬的付费确认实现，能借鉴的是模式（幂等键、同事务记账、按保留期查询）。
