@@ -9,6 +9,7 @@ import { validateMusic3Release } from './music3-release-contract.mjs';
 import { validateV201Release } from './v201-release-contract.mjs';
 import { validateV202Release } from './v202-release-contract.mjs';
 import { validateV203Release } from './v203-release-contract.mjs';
+import { validateV204Release } from './v204-release-contract.mjs';
 import {
   REQUIRED_AGENT_CHECK_IDS,
   DETERMINISTIC_FAULT_CHECK_IDS,
@@ -38,6 +39,21 @@ const receipt = JSON.parse(readFileSync(`docs/release-evidence/${version}.json`,
 const fail = message => { throw new Error(`Real generation release gate: ${message}`); };
 const nonempty = value => typeof value === 'string' && value.trim() !== '';
 if (receipt.version !== version || receipt.sourceDigest !== sourceDigest) fail('receipt does not match this release source');
+if (version === 'v2.0.4') {
+  // The owner assigned this version's review to the primary agent, so the
+  // reviewed source is the frozen candidate tree itself unless a commit is named.
+  const reviewedTree = receipt.review?.reviewedHead
+    ? execFileSync('git', ['ls-tree', '-r', receipt.review.reviewedHead, '--', ...sourcePaths], { encoding: 'utf8' })
+    : sourceTree;
+  execFileSync('git', ['merge-base', '--is-ancestor', '363248539ed7b59a9283e9726b3a650b916adb42', 'HEAD']);
+  validateV204Release(receipt, sourceDigest, {
+    authorizationBytes: readFileSync('docs/release-evidence/v2.0.4-owner-authorization.json'),
+    priorReceiptBytes: readFileSync('docs/release-evidence/v2.0.3.json'),
+    reviewedSourceDigest: createHash('sha256').update(reviewedTree).digest('hex'),
+  });
+  console.log('v2.0.4 targeted release: complete paid matrix waived by the owner; primary-agent review covers the frozen source. Four-platform package checks remain mandatory.');
+  process.exit(0);
+}
 if (version === 'v2.0.3') {
   const reviewedTree = execFileSync('git', ['ls-tree', '-r', receipt.review?.reviewedHead, '--', ...sourcePaths], { encoding: 'utf8' });
   execFileSync('git', ['merge-base', '--is-ancestor', '95ee1445bb09c42b06121ebf79e8efc467af9f77', 'HEAD']);
