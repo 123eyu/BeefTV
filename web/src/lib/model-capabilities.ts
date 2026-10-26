@@ -91,6 +91,8 @@ export type VideoCapabilityConfig = {
         maxAudioDurationSeconds: number;
         minAudioDurationSeconds?: number;
         maxAudioTotalDurationSeconds?: number;
+        /** 图片、视频、音频三类参考素材的合计上限，0 或省略表示不限。 */
+        maxTotalReferences?: number;
     };
     duration: {
 		continuous?: boolean;
@@ -168,6 +170,7 @@ const catalogIntBounds: Record<string, [number, number]> = {
     maxImages: [0, 100],
     maxVideos: [0, 100],
     maxAudios: [0, 100],
+    maxTotalReferences: [0, 100],
     maxVideoDurationSeconds: [0, Number.MAX_SAFE_INTEGER],
     minVideoDurationSeconds: [0, Number.MAX_SAFE_INTEGER],
     maxAudioDurationSeconds: [0, Number.MAX_SAFE_INTEGER],
@@ -642,7 +645,6 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
     if (isSeedance2Family(protocol, model)) {
         if (protocol === "newapi") video.generateAudio = { supported: true, default: true };
         video.references = overlayOfficialSeedance2References(video.references, isSeedance25Model(model));
-        if (protocol === "volcengine-ark-video" || protocol === "volcengine-ark-agent-plan-video") video.references.minAudioDurationSeconds = 2;
         video.operations = Array.from(new Set([...video.operations, "reference_to_video", ...(isSeedance25Model(model) ? ["audio_to_video" as const] : [])]));
         if (isSeedance25Model(model) && video.duration.selection === "range" && (video.duration.max || 0) < 30) {
             video.duration = { ...video.duration, max: 30 };
@@ -693,21 +695,28 @@ export function modelCapabilityConfigFor(
     try {
         if (protocol === "openai-image" && beefAPIImageContract(modelName)?.fixedOutputs && ["beeftv.app", "beefapi.com", "enterprise.beefapi.com", "whatstoken.ai", "www.whatstoken.ai"].includes(new URL(channel?.baseUrl || "").hostname.toLowerCase())) return fallback;
     } catch { /* Config without a public endpoint uses its stored capabilities. */ }
-    const alignMaterialPixels = (video: VideoCapabilityConfig | undefined) => {
+    // 官方文档写的下限只收紧、不放宽，所以旧安装里存下来的 1 秒输出、1.8 秒音频也会被改到文档值。
+    const alignDocumentedRouteLimits = (video: VideoCapabilityConfig | undefined) => {
+        if (!video || !isSeedance2Family(protocol, modelName)) return;
         let host = "";
         try { host = new URL(channel?.baseUrl || "").hostname.toLowerCase(); } catch { /* no public URL */ }
-        const materialHost = ["beeftv.app", "enterprise.beefapi.com", "beefapi.com", "whatstoken.ai", "www.whatstoken.ai"].includes(host);
-        if (video && isSeedance2Family(protocol, modelName) && (isVolcengineArkVideoProtocol(protocol) || materialHost) && video.references.minVideoPixels === 409600 && video.references.maxVideoPixels === 8295044) video.references.minVideoPixels = 407696;
+        // 桌面端直连企业网关时看域名；托管网页里请求走 /api/ai/system/beefapi，渠道 id 也是 beefapi。
+        const materialHost = ["beeftv.app", "enterprise.beefapi.com", "beefapi.com", "whatstoken.ai", "www.whatstoken.ai"].includes(host) || channel?.id === "beefapi";
+        if ((isVolcengineArkVideoProtocol(protocol) || materialHost) && video.references.minVideoPixels === 409600 && video.references.maxVideoPixels === 8295044) video.references.minVideoPixels = 407696;
+        if (video.duration.selection === "range" && (video.duration.min || 0) < 4) video.duration = { ...video.duration, min: 4, ...(video.duration.default < 4 ? { default: 4 } : {}) };
+        if ((video.references.minAudioDurationSeconds || 0) < 2) video.references.minAudioDurationSeconds = 2;
+        // 腾讯 1.0-pro（= seedance-2.0）写明混合输入合计最多 12 个文件；火山方舟没有这条，1.5-pro 也没写。
+        if (!isSeedance25Model(modelName) && materialHost && (video.references.maxTotalReferences || 0) < 12) video.references.maxTotalReferences = 12;
     };
 
     if (!profile?.capabilityConfig) {
-        alignMaterialPixels(fallback.video);
+        alignDocumentedRouteLimits(fallback.video);
         return fallback;
     }
     const capabilityConfig = normalizeModelCapabilityConfig(profile.capabilityConfig);
     const text = capabilityConfig.text ? { ...fallback.text!, ...capabilityConfig.text, references: { ...fallback.text!.references, ...capabilityConfig.text.references } } : fallback.text;
     const video = (capabilityConfig.video ? { ...fallback.video!, ...capabilityConfig.video, references: { ...fallback.video!.references, ...capabilityConfig.video.references, promptMaxUtf16Units: capabilityConfig.video.references.promptMaxUtf16Units ?? 0 } } : fallback.video)!;
-    alignMaterialPixels(video);
+    alignDocumentedRouteLimits(video);
     const configuredImage = capabilityConfig.image;
     const image = configuredImage
         ? (() => {
@@ -755,7 +764,7 @@ function overlayOfficialSeedance2References(base: VideoCapabilityConfig["referen
         maxAudios: is25 ? 10 : 3,
         maxAudioBytes: 15 * 1024 * 1024,
         maxAudioDurationSeconds: is25 ? 30 : 15,
-        minAudioDurationSeconds: 1.8,
+        minAudioDurationSeconds: 2,
         maxAudioTotalDurationSeconds: is25 ? 30 : 15,
         maxImageBytes: base.maxImageBytes || 30 * 1024 * 1024,
         minImageWidth: 300,

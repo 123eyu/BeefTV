@@ -116,6 +116,8 @@ type VideoReferenceConfig struct {
 	MaxAudioDuration      int     `json:"maxAudioDurationSeconds"`
 	MinAudioDuration      float64 `json:"minAudioDurationSeconds,omitempty"`
 	MaxAudioTotalDuration int     `json:"maxAudioTotalDurationSeconds,omitempty"`
+	// MaxTotalReferences 限制图片、视频、音频三类参考素材的合计个数，0 表示不限。
+	MaxTotalReferences int `json:"maxTotalReferences,omitempty"`
 }
 
 // DefaultVideoPromptMaxChars 为 0 时不假设供应商未公开的字符硬限。

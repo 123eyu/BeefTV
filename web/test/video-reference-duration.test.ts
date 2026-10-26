@@ -44,7 +44,8 @@ for (const protocol of ["newapi-channel-2", "newapi", "openai"] as const) {
             expect(() => assertVideoCapability(profile, validImages, [], [audio(2500), audio(900)], "5")).toThrow("第 2 段参考音频时长为 0.90 秒");
             expect(() => assertVideoCapability(profile, validImages, [], [audio(0)], "5")).toThrow("时长无法读取");
             expect(() => assertVideoCapability(profile, validImages, [], [audio(1700)], "5")).toThrow("1.70");
-            expect(() => assertVideoCapability(profile, validImages, [], [audio(1800)], "5")).not.toThrow();
+            expect(() => assertVideoCapability(profile, validImages, [], [audio(1800)], "5")).toThrow("1.80");
+            expect(() => assertVideoCapability(profile, validImages, [], [audio(2000)], "5")).not.toThrow();
             const failure = explainGenerationError("第 2 段参考音频时长为 0.90 秒，需要 2–30 秒；请裁剪或更换这段素材后再提交");
             expect(failure.category).toBe("invalid_params");
             expect(failure.reason).toContain("第 2 段");
@@ -148,7 +149,7 @@ test("image geometry and request size are checked before submit", () => {
 
 test("legacy channel protocol without model profiles still applies Seedance duration limits", () => {
     const profile = modelCapabilityConfigFor({ channels: [{ id: "legacy", interfaceType: "openai", models: ["seedance-2.5"] }] }, "legacy::seedance-2.5").video!;
-    expect(profile.references.minAudioDurationSeconds).toBe(1.8);
+    expect(profile.references.minAudioDurationSeconds).toBe(2);
     expect(profile.references.maxAudioDurationSeconds).toBe(30);
 });
 

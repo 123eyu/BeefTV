@@ -255,8 +255,12 @@ func DefaultModelCapabilityConfigForModel(protocol string, modelName string) *Mo
 			video.GenerateAudio = VideoBooleanConfig{Supported: true, Default: true}
 		}
 		video.References = overlayOfficialSeedance2References(video.References, isSeedance25Model(modelName))
-		if model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(protocol)) {
-			video.References.MinAudioDuration = 2
+		// 输出时长下限官方是 4 秒：2.0 为 4~15，2.5 为 4~30。
+		if video.Duration.Selection == "range" && video.Duration.Min < documentedSeedanceOutputMinSeconds {
+			video.Duration.Min = documentedSeedanceOutputMinSeconds
+			if video.Duration.Default < documentedSeedanceOutputMinSeconds {
+				video.Duration.Default = documentedSeedanceOutputMinSeconds
+			}
 		}
 		video.Operations = appendUniqueString(video.Operations, "reference_to_video")
 		if isSeedance25Model(modelName) {
@@ -670,7 +674,7 @@ func validateVideoCapabilityConfig(value *VideoCapabilityConfig) error {
 	if value.References.PromptMaxUTF16Units < 0 || value.References.PromptMaxUTF16Units > 1000000 {
 		return kernel.BadAuthRequest("提示词最大 UTF-16 单位数必须在 0-1000000 之间，0 表示交由服务商校验")
 	}
-	for name, number := range map[string]int{"最少图片引用数": value.References.MinImages, "最大图片引用数": value.References.MaxImages, "最大视频引用数": value.References.MaxVideos, "最大音频引用数": value.References.MaxAudios} {
+	for name, number := range map[string]int{"最少图片引用数": value.References.MinImages, "最大图片引用数": value.References.MaxImages, "最大视频引用数": value.References.MaxVideos, "最大音频引用数": value.References.MaxAudios, "参考素材合计上限": value.References.MaxTotalReferences} {
 		if number < 0 || number > 100 {
 			return kernel.BadAuthRequest(name + "必须在 0-100 之间")
 		}
@@ -814,6 +818,7 @@ func validateVideoTaskParameters(profile *VideoCapabilityConfig, input TaskInput
 	if profile == nil {
 		return kernel.BadAuthRequest("当前视频模型能力参数无效")
 	}
+	profile = tightenedVideoCapability(input.Config, profile)
 	if err := validateVideoPromptLength(input.Prompt, profile.References); err != nil {
 		return err
 	}

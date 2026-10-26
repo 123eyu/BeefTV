@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 )
@@ -25,13 +26,22 @@ func referenceDurationIsOpaqueAsset(media MediaRef) bool {
 }
 
 const (
-	OfficialSeedanceImageMinEdge    = 300
-	OfficialSeedanceImageMaxEdge    = 6000
-	OfficialSeedanceImageMinAspect  = 0.4
-	OfficialSeedanceImageMaxAspect  = 2.5
-	OfficialSeedanceVideoMinPixels  = 409600
-	OfficialSeedanceVideoMaxPixels  = 8295044
-	OfficialSeedanceMinAudioSeconds = 1.8
+	OfficialSeedanceImageMinEdge   = 300
+	OfficialSeedanceImageMaxEdge   = 6000
+	OfficialSeedanceImageMinAspect = 0.4
+	OfficialSeedanceImageMaxAspect = 2.5
+	OfficialSeedanceVideoMinPixels = 409600
+	OfficialSeedanceVideoMaxPixels = 8295044
+	// 火山方舟与腾讯 WAND 的 Seedance 文档都把参考音频单段下限写成 2 秒。
+	OfficialSeedanceMinAudioSeconds = 2
+)
+
+const (
+	// 火山方舟与腾讯 WAND 的输出时长下限都是 4 秒（2.0 为 4~15，2.5 为 4~30）。
+	documentedSeedanceOutputMinSeconds = 4
+	// 腾讯 WAND 1.0-pro（即 seedance-2.0）写明混合输入的总上限是 12 个文件；
+	// 1.5-pro 和火山方舟都没有这条，所以只对我们自己的企业网关线路、且非 2.5 的模型收紧。
+	documentedTencentReferenceFiles = 12
 )
 
 const (
@@ -86,6 +96,53 @@ func seedanceMaterialLibraryHost(baseURL string) bool {
 	}
 }
 
+// 桌面端直连企业网关时看域名；托管网页里请求走 /api/ai/system/beefapi，
+// 同一渠道的 id 也是 beefapi，这里一并认作企业网关线路。
+func seedanceEnterpriseGatewayRoute(config TaskConfig) bool {
+	if seedanceMaterialLibraryHost(config.BaseURL) {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(config.ChannelID), beefapi.ChannelID) {
+		return true
+	}
+	return SystemChannelIDFromBaseURL(config.BaseURL) == beefapi.ChannelID
+}
+
+// 官方文档写的下限只会收紧素材合同，不会放宽管理员已经配得更严的数值。
+// 输出时长与参考音频下限对 Seedance 2.x 的所有线路都成立；「混合输入合计 12 个」
+// 只在腾讯 WAND 1.0-pro（我们这边的 seedance-2.0）有，走企业网关时才收紧。
+func tightenSeedanceDocumentedRouteLimits(config TaskConfig, value *VideoCapabilityConfig) {
+	if value == nil || !isSeedance2Family(config.InterfaceType, config.Model) {
+		return
+	}
+	if value.Duration.Selection == "range" && durationMinimum(value.Duration) < float64(documentedSeedanceOutputMinSeconds) {
+		value.Duration.Min = documentedSeedanceOutputMinSeconds
+		value.Duration.FractionalMin = 0
+		if value.Duration.Default < documentedSeedanceOutputMinSeconds {
+			value.Duration.Default = documentedSeedanceOutputMinSeconds
+		}
+	}
+	if value.References.MinAudioDuration < officialSeedanceMinAudioSeconds {
+		value.References.MinAudioDuration = officialSeedanceMinAudioSeconds
+	}
+	if isSeedance25Model(config.Model) || !seedanceEnterpriseGatewayRoute(config) {
+		return
+	}
+	if value.References.MaxTotalReferences <= 0 || value.References.MaxTotalReferences > documentedTencentReferenceFiles {
+		value.References.MaxTotalReferences = documentedTencentReferenceFiles
+	}
+}
+
+func tightenedVideoCapability(config TaskConfig, profile *VideoCapabilityConfig) *VideoCapabilityConfig {
+	if profile == nil {
+		return nil
+	}
+	value := *profile
+	value.References = profile.References
+	tightenSeedanceDocumentedRouteLimits(config, &value)
+	return &value
+}
+
 func overlayOfficialSeedance2References(base VideoReferenceConfig, is25 bool) VideoReferenceConfig {
 	refs := base
 	if is25 {
@@ -126,6 +183,7 @@ func validateVideoReferenceMedia(profile *VideoCapabilityConfig, input TaskInput
 	if profile == nil {
 		return kernel.BadAuthRequest("当前视频模型能力参数无效")
 	}
+	profile = tightenedVideoCapability(input.Config, profile)
 	refs := profile.References
 	applySeedanceDocumentedVideoPixelFloor(input.Config, &refs)
 	if isNativeDreaminaSeedance(input.Config.InterfaceType, input.Config.Model) && isSeedance25Model(input.Config.Model) && metadataString(input.Metadata, "videoEditOperation") == "inpaint" && refs.MinVideoDuration < 4 {
@@ -140,6 +198,9 @@ func validateVideoReferenceMedia(profile *VideoCapabilityConfig, input TaskInput
 	}
 	if len(input.ReferenceAudios) > refs.MaxAudios {
 		return kernel.BadAuthRequest(fmt.Sprintf("当前视频模型最多支持 %d 段参考音频", refs.MaxAudios))
+	}
+	if total := len(input.ReferenceImages) + len(input.ReferenceVideos) + len(input.ReferenceAudios); refs.MaxTotalReferences > 0 && total > refs.MaxTotalReferences {
+		return kernel.BadAuthRequest(fmt.Sprintf("当前视频模型最多支持 %d 个参考素材（图片、视频、音频合计），现在有 %d 个；请移除多余素材后再提交", refs.MaxTotalReferences, total))
 	}
 	if !videoCapabilityAllowsAudioOnly(profile) && len(input.ReferenceAudios) > 0 && len(input.ReferenceImages) == 0 && len(input.ReferenceVideos) == 0 {
 		return kernel.BadAuthRequest("当前视频模型不支持只用音频生成视频，请同时添加参考图片或参考视频")

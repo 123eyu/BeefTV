@@ -114,6 +114,7 @@ func normalizeCatalogReferences(input map[string]any) (map[string]any, bool) {
 		"maxImages":                    {0, 100},
 		"maxVideos":                    {0, 100},
 		"maxAudios":                    {0, 100},
+		"maxTotalReferences":           {0, 100},
 		"maxVideoDurationSeconds":      {0, math.MaxInt32},
 		"minVideoDurationSeconds":      {0, math.MaxInt32},
 		"maxAudioDurationSeconds":      {0, math.MaxInt32},

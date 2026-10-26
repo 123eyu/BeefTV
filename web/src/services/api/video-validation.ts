@@ -18,6 +18,11 @@ export function assertVideoCapability(
     if (references.length > refs.maxImages) throw new Error(`当前视频模型最多支持 ${refs.maxImages} 张参考图`);
     if (videoReferences.length > refs.maxVideos) throw new Error(`当前视频模型最多支持 ${refs.maxVideos} 个参考视频`);
     if (audioReferences.length > refs.maxAudios) throw new Error(`当前视频模型最多支持 ${refs.maxAudios} 段参考音频`);
+    const maxTotalReferences = refs.maxTotalReferences || 0;
+    if (maxTotalReferences > 0) {
+        const totalReferences = references.length + videoReferences.length + audioReferences.length;
+        if (totalReferences > maxTotalReferences) throw new Error(`当前视频模型最多支持 ${maxTotalReferences} 个参考素材（图片、视频、音频合计），现在有 ${totalReferences} 个；请移除多余素材后再提交`);
+    }
     if (audioReferences.length && !references.length && !videoReferences.length && !profile.operations.includes("audio_to_video")) throw new Error("当前视频模型不支持只用音频生成视频，请同时添加参考图片或参考视频");
     if (references.length < refs.minImages) throw new Error(`当前视频模型至少需要 ${refs.minImages} 张参考图`);
     if (!videoDurationAllowed(profile, Number(seconds))) throw new Error("视频时长不在当前模型支持范围内");

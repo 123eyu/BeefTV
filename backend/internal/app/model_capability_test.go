@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"infinite-canvas/backend/internal/beefapi"
 )
 
 func TestSourcedSeedanceGenerationKeepsServerLimitsAndAudio(t *testing.T) {
@@ -221,8 +223,11 @@ func TestDefaultSeedance25UsesOfficialCounts(t *testing.T) {
 	if profile.References.MaxImages != 30 || profile.References.MaxVideos != 10 || profile.References.MaxAudios != 10 {
 		t.Fatalf("default 2.5 counts = %#v", profile.References)
 	}
-	if profile.References.MinAudioDuration != 1.8 {
+	if profile.References.MinAudioDuration != 2 {
 		t.Fatalf("default 2.5 min audio = %v", profile.References.MinAudioDuration)
+	}
+	if profile.Duration.Min != 4 {
+		t.Fatalf("default 2.5 output duration min = %d", profile.Duration.Min)
 	}
 	if profile.Duration.Max < 30 {
 		t.Fatalf("default 2.5 output duration max = %d", profile.Duration.Max)
@@ -310,13 +315,52 @@ func TestSeedanceReferenceDurationRejectsShortAndUnknownBeforeSubmit(t *testing.
 		if err := validateVideoTask(profile, input); err == nil || !strings.Contains(err.Error(), "时长无法读取") {
 			t.Fatalf("unknown duration: %v", err)
 		}
-		input.ReferenceAudios[1].DurationMs = 1700
-		if err := validateVideoTask(profile, input); err == nil || !strings.Contains(err.Error(), "1.70") || !strings.Contains(err.Error(), "1.8") {
-			t.Fatalf("1.7s audio: %v", err)
-		}
 		input.ReferenceAudios[1].DurationMs = 1800
-		if err := validateVideoTask(profile, input); err != nil {
+		if err := validateVideoTask(profile, input); err == nil || !strings.Contains(err.Error(), "1.80") || !strings.Contains(err.Error(), "2–") {
 			t.Fatalf("1.8s audio: %v", err)
+		}
+		input.ReferenceAudios[1].DurationMs = 2000
+		if err := validateVideoTask(profile, input); err != nil {
+			t.Fatalf("2s audio: %v", err)
+		}
+	}
+}
+
+func TestSeedanceDocumentedRouteLimits(t *testing.T) {
+	// 腾讯 WAND 1.0-pro（我们的 seedance-2.0）写明混合输入合计最多 12 个文件，
+	// 火山方舟与 1.5-pro 都没有这条，所以只对企业网关线路收紧。
+	images := make([]providerMedia, 9)
+	for index := range images {
+		images[index] = providerMedia{Width: 512, Height: 512, Bytes: 1000}
+	}
+	videos := []providerMedia{{Width: 1280, Height: 720, DurationMs: 5000, Bytes: 1000}, {Width: 1280, Height: 720, DurationMs: 5000, Bytes: 1000}, {Width: 1280, Height: 720, DurationMs: 5000, Bytes: 1000}}
+	audios := []providerMedia{{DurationMs: 3000, Bytes: 1000}, {DurationMs: 3000, Bytes: 1000}, {DurationMs: 3000, Bytes: 1000}}
+	profile := DefaultModelCapabilityConfigForModel("newapi", "seedance-2.0").Video
+	input := canvasGenerationInput{
+		Prompt:          "test",
+		Config:          providerConfig{InterfaceType: "newapi", Model: "seedance-2.0", BaseURL: "https://enterprise.beefapi.com", VideoSeconds: "5"},
+		ReferenceImages: images, ReferenceVideos: videos, ReferenceAudios: audios,
+	}
+	if err := validateVideoTask(profile, input); err == nil || !strings.Contains(err.Error(), "最多支持 12 个参考素材") {
+		t.Fatalf("gateway 15 references: %v", err)
+	}
+	input.Config.BaseURL = "https://ark.cn-beijing.volces.com/api/v3"
+	if err := validateVideoTask(profile, input); err != nil {
+		t.Fatalf("direct ark 15 references: %v", err)
+	}
+	// 托管网页里的系统渠道只有相对地址，靠渠道 id 认出企业网关。
+	input.Config.BaseURL, input.Config.ChannelID = "/api/ai/system/beefapi", beefapi.ChannelID
+	if err := validateVideoTask(profile, input); err == nil || !strings.Contains(err.Error(), "最多支持 12 个参考素材") {
+		t.Fatalf("hosted system channel 15 references: %v", err)
+	}
+	input.Config.ChannelID = ""
+	input.ReferenceVideos, input.ReferenceAudios = nil, nil
+	for _, seconds := range []string{"3", "4"} {
+		input.Config.BaseURL = "https://enterprise.beefapi.com"
+		input.Config.VideoSeconds = seconds
+		err := validateVideoTask(profile, input)
+		if (seconds == "3") != (err != nil) {
+			t.Fatalf("%ss output duration floor: %v", seconds, err)
 		}
 	}
 }
