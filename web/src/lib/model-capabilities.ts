@@ -695,18 +695,26 @@ export function modelCapabilityConfigFor(
     try {
         if (protocol === "openai-image" && beefAPIImageContract(modelName)?.fixedOutputs && ["beeftv.app", "beefapi.com", "enterprise.beefapi.com", "whatstoken.ai", "www.whatstoken.ai"].includes(new URL(channel?.baseUrl || "").hostname.toLowerCase())) return fallback;
     } catch { /* Config without a public endpoint uses its stored capabilities. */ }
-    // 官方文档写的下限只收紧、不放宽，所以旧安装里存下来的 1 秒输出、1.8 秒音频也会被改到文档值。
+    // 官方文档写的下限只收紧、不放宽，所以旧安装里存下来的 1 秒输出、1.8 秒音频也会被改到文档值；
+    // 管理员已经配得更严的数值保持不变。
     const alignDocumentedRouteLimits = (video: VideoCapabilityConfig | undefined) => {
         if (!video || !isSeedance2Family(protocol, modelName)) return;
         let host = "";
         try { host = new URL(channel?.baseUrl || "").hostname.toLowerCase(); } catch { /* no public URL */ }
         // 桌面端直连企业网关时看域名；托管网页里请求走 /api/ai/system/beefapi，渠道 id 也是 beefapi。
-        const materialHost = ["beeftv.app", "enterprise.beefapi.com", "beefapi.com", "whatstoken.ai", "www.whatstoken.ai"].includes(host) || channel?.id === "beefapi";
+        // WhatsToken 域名不在此列：它没有可核实的腾讯 WAND 映射，不跟着收紧。
+        const gatewayHost = ["beeftv.app", "enterprise.beefapi.com", "beefapi.com"].includes(host) || channel?.id === "beefapi";
+        const materialHost = gatewayHost || ["whatstoken.ai", "www.whatstoken.ai"].includes(host);
         if ((isVolcengineArkVideoProtocol(protocol) || materialHost) && video.references.minVideoPixels === 409600 && video.references.maxVideoPixels === 8295044) video.references.minVideoPixels = 407696;
-        if (video.duration.selection === "range" && (video.duration.min || 0) < 4) video.duration = { ...video.duration, min: 4, ...(video.duration.default < 4 ? { default: 4 } : {}) };
+        // 输出时长下限官方 4 秒：区间、连续（fractionalMin）和枚举三种配置都要收紧，枚举里的 -1（自动）保留。
+        video.duration = tightenDocumentedOutputDuration(video.duration);
         if ((video.references.minAudioDurationSeconds || 0) < 2) video.references.minAudioDurationSeconds = 2;
-        // 腾讯 1.0-pro（= seedance-2.0）写明混合输入合计最多 12 个文件；火山方舟没有这条，1.5-pro 也没写。
-        if (!isSeedance25Model(modelName) && materialHost && (video.references.maxTotalReferences || 0) < 12) video.references.maxTotalReferences = 12;
+        // 腾讯 1.0-pro（= BeefAPI 公开名 seedance-2.0）写明混合输入合计最多 12 个文件；
+        // 火山方舟和 1.5-pro 都没有这条，原生 Ark 名（doubao-/dreamina- 前缀）也不是腾讯线路。
+        if (isTencentWandSeedance20Model(protocol, modelName) && gatewayHost) {
+            const total = video.references.maxTotalReferences || 0;
+            if (total <= 0 || total > 12) video.references.maxTotalReferences = 12;
+        }
     };
 
     if (!profile?.capabilityConfig) {
@@ -750,6 +758,32 @@ export function isSeedance2Family(protocol: ModelProtocol | undefined, modelName
 export function isSeedance25Model(modelName: string) {
     const base = String(modelName).trim().toLowerCase().split("/").pop() || "";
     return /^seedance-2\.5(?:-|$)/.test(base) || /^(?:doubao|dreamina)-seedance-2[.-]5(?:-|$)/.test(base);
+}
+
+// 腾讯 WAND 映射的是 BeefAPI 公开名 seedance-2.0（含 fast/mini 后缀）。
+// 原生 Ark 名（doubao-seedance-2-0-*、dreamina-seedance-2-0-*）走字节官方合同，
+// 即使挂在同一个网关域名下也没有腾讯「合计 12」这条限制。
+export function isTencentWandSeedance20Model(protocol: ModelProtocol | undefined, modelName: string) {
+    if (protocol && isVolcengineArkVideoProtocol(protocol)) return false;
+    const base = String(modelName).trim().toLowerCase().split("/").pop() || "";
+    return /^seedance-2\.0(?:-|$)/.test(base);
+}
+
+// 输出时长下限官方 4 秒：区间、连续（fractionalMin）和枚举三种已保存配置都要收紧，
+// 枚举里的 -1（自动）保留，管理员配得更严的数值（比如枚举只剩 [5,10]）不受影响。
+export function tightenDocumentedOutputDuration(duration: VideoCapabilityConfig["duration"]): VideoCapabilityConfig["duration"] {
+    const minimum = 4;
+    if (duration.selection === "enum") {
+        const values = (duration.values || []).filter((value) => value === -1 || value >= minimum);
+        if (!values.length) return duration;
+        const kept = values.includes(duration.default) ? duration.default : values.find((value) => value !== -1) ?? values[0];
+        return { ...duration, values, default: kept };
+    }
+    const min = Math.max(minimum, duration.min || 0);
+    const fractionalMin = duration.continuous && duration.fractionalMin && duration.fractionalMin < minimum ? minimum : duration.fractionalMin;
+    const fallback = Math.max(minimum, duration.default);
+    if (min === duration.min && fractionalMin === duration.fractionalMin && fallback === duration.default) return duration;
+    return { ...duration, min, ...(duration.continuous ? { fractionalMin } : {}), default: fallback };
 }
 
 function overlayOfficialSeedance2References(base: VideoCapabilityConfig["references"], is25: boolean): VideoCapabilityConfig["references"] {

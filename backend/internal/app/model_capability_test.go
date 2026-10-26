@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -362,6 +363,71 @@ func TestSeedanceDocumentedRouteLimits(t *testing.T) {
 		if (seconds == "3") != (err != nil) {
 			t.Fatalf("%ss output duration floor: %v", seconds, err)
 		}
+	}
+}
+
+func TestSeedanceDocumentedLimitsOnlyTightenAndSkipArkNativeNames(t *testing.T) {
+	// 已保存的配置只会被收紧，管理员配得更严的合计上限和音频下限保持不变。
+	strict := DefaultModelCapabilityConfigForModel("newapi", "seedance-2.0").Video
+	strict.References.MaxTotalReferences = 6
+	strict.References.MinAudioDuration = 5
+	input := canvasGenerationInput{Prompt: "test", Config: providerConfig{InterfaceType: "newapi", Model: "seedance-2.0", BaseURL: "https://enterprise.beefapi.com", VideoSeconds: "5"}, ReferenceImages: []providerMedia{{Width: 512, Height: 512, Bytes: 1000}}}
+	if err := validateVideoTask(strict, input); err != nil {
+		t.Fatalf("strict saved profile: %v", err)
+	}
+	if strict.References.MaxTotalReferences != 6 || strict.References.MinAudioDuration != 5 {
+		t.Fatalf("saved limits were relaxed: %#v", strict.References)
+	}
+
+	// 网关域名下的原生 Ark 名（doubao-/dreamina- 前缀）走字节合同，不加腾讯合计 12。
+	images := make([]providerMedia, 9)
+	for index := range images {
+		images[index] = providerMedia{Width: 512, Height: 512, Bytes: 1000}
+	}
+	videos := []providerMedia{{Width: 1280, Height: 720, DurationMs: 5000, Bytes: 1000}, {Width: 1280, Height: 720, DurationMs: 5000, Bytes: 1000}, {Width: 1280, Height: 720, DurationMs: 5000, Bytes: 1000}}
+	audios := []providerMedia{{DurationMs: 3000, Bytes: 1000}, {DurationMs: 3000, Bytes: 1000}, {DurationMs: 3000, Bytes: 1000}}
+	for _, name := range []string{"doubao-seedance-2-0", "dreamina-seedance-2-0-fast", "doubao-seedance-2-0-260628"} {
+		profile := DefaultModelCapabilityConfigForModel("newapi", name).Video
+		fifteen := canvasGenerationInput{
+			Prompt: "test", Config: providerConfig{InterfaceType: "newapi", Model: name, BaseURL: "https://enterprise.beefapi.com", VideoSeconds: "5"},
+			ReferenceImages: images, ReferenceVideos: videos, ReferenceAudios: audios,
+		}
+		if err := validateVideoTask(profile, fifteen); err != nil {
+			t.Fatalf("%s ark native 15 references: %v", name, err)
+		}
+	}
+
+	// 没有可核实的腾讯 WAND 映射（WhatsToken 域名）时不收紧。
+	whatsToken := DefaultModelCapabilityConfigForModel("newapi", "seedance-2.0").Video
+	fifteen := canvasGenerationInput{
+		Prompt: "test", Config: providerConfig{InterfaceType: "newapi", Model: "seedance-2.0", BaseURL: "https://whatstoken.ai", VideoSeconds: "5"},
+		ReferenceImages: images, ReferenceVideos: videos, ReferenceAudios: audios,
+	}
+	if err := validateVideoTask(whatsToken, fifteen); err != nil {
+		t.Fatalf("whatstoken 15 references: %v", err)
+	}
+}
+
+func TestSeedanceSavedEnumAndContinuousDurationsRespectDocumentedFloor(t *testing.T) {
+	enumProfile := DefaultModelCapabilityConfigForModel("newapi", "seedance-2.0").Video
+	enumProfile.Duration = VideoDurationConfig{Selection: "enum", Values: []int{-1, 1, 2, 3, 4, 5}, Default: 5}
+	continuous := DefaultModelCapabilityConfigForModel("newapi", "seedance-2.0").Video
+	continuous.Duration = VideoDurationConfig{Selection: "range", Min: 1, Max: 15, Step: 1, FractionalMin: 0.92, Continuous: true, Default: 5}
+	for label, profile := range map[string]*VideoCapabilityConfig{"enum": enumProfile, "continuous": continuous} {
+		for seconds, wantRejected := range map[string]bool{"1": true, "3": true, "4": false, "5": false} {
+			input := canvasGenerationInput{
+				Prompt: "test", Config: providerConfig{InterfaceType: "newapi", Model: "seedance-2.0", BaseURL: "https://enterprise.beefapi.com", VideoSeconds: seconds},
+				ReferenceImages: []providerMedia{{Width: 512, Height: 512, Bytes: 1000}},
+			}
+			err := validateVideoTask(profile, input)
+			if wantRejected != (err != nil) {
+				t.Fatalf("%s %ss duration: rejected=%t err=%v", label, seconds, err != nil, err)
+			}
+		}
+	}
+	// 自动时长（-1）在枚举里保留。
+	if !slices.Contains(enumProfile.Duration.Values, -1) {
+		t.Fatalf("auto duration dropped: %v", enumProfile.Duration.Values)
 	}
 }
 
