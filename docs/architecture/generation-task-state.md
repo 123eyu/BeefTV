@@ -276,6 +276,7 @@ CREATE TABLE regeneration_consents (
   original_route_run INTEGER NOT NULL,
   client_operation_id TEXT NOT NULL,   -- 本次付费提交的 operationId
   input_fingerprint  TEXT NOT NULL,    -- 本次生成内容指纹（第 3.1 节那个内容指纹）
+  logical_model_revision_id TEXT NOT NULL, -- 同意绑定的前台模型版本；换渠道不影响，换模型或版本失效
   quote_id           TEXT NOT NULL,
   charge_snapshot    TEXT NOT NULL,    -- 报价里的费用：单位、预计值、上限、价格版本
   caller             TEXT NOT NULL,    -- desktop_ui / assistant_proposal / external:<client>
@@ -286,11 +287,18 @@ CREATE TABLE regeneration_consents (
 ```
 
 - 不发确认 ID、不设 10 分钟过期、不搞桌面专用鉴权。同意随付费提交一起带上：`consent: { originalTaskId, originalRouteRun, quoteId, operationId }`。
-- 接纳事务里先核对：报价存在、属于本调用者、没过报价有效期；本次请求的内容指纹、费用、`operationId` 与报价一致；费用没有上涨、计费单位没变。任一不符返回 `paid_confirmation_required` 和新报价，**不提交上游**。
-- 报价里包含**已确认的渠道（路由）和费用上限**，接纳时把它们写进新任务（`consent_route_ids`、`consent_charge_ceiling`，列名实施时定），约束一直延续到实际派发，不只在接纳那一刻核对一次。原因：接纳之后，执行器在原渠道明确拒绝（`rejected_no_job`）时会自动换备用渠道继续提交——`task_route_executor.go` 第 113 行调 `nextRouteAttemptAfterFailure` → `model_router.go` 的 `switchTaskToNextRoute` → `modelcatalog/route_attempt.go` 第 174 行 `SwitchTaskToNextRoute`，在同一前台模型的路由里选下一个可用渠道【已核】。备用渠道可能比用户确认的那个贵。
-- 规则：带同意记录的任务，每次派发前（包括换备用渠道、图片限流后的同渠道重试）都核对「这个渠道在已确认的范围内、按它的价格不超过已确认的上限」。在范围内照常提交；超出范围或价格未知时**停止派发**，任务停在 `failed`、`recovery_outcome = no_result`（原渠道没接纳，没扣钱），`regenerate = confirm`，后台给出按新渠道算的新报价，用户重新同意后才提交。不静默换到更贵的渠道。
-- 报价生成时就决定把哪些渠道列入范围：默认只列用户看到价格的那一个（首选）渠道；如果要允许自动换备用渠道，报价里要把备用渠道和它们的价格（或「最高可能」）一起展示给用户。选哪种由第七节第 7 条定。
-- 不带同意记录的普通提交（`regenerate = allowed`）换备用渠道的行为不变；这条约束只管走过 `confirm` 的提交。
+- 接纳事务里先核对：报价存在、属于本调用者、没过报价有效期；本次请求的内容指纹、前台模型版本、费用、`operationId` 与报价一致；费用没有上涨、计费单位没变。任一不符返回 `paid_confirmation_required` 和新报价，**不提交上游**。
+- **同意绑定的是模型（前台模型版本）和输入，不绑定渠道。** 用户 2026-10-26 原话：「怎么会有更贵的渠道？ 我们模型都是唯一定价啊 除非换模型」。BeefTV 里同一个模型只有一个价格，换哪个渠道去跑都按这个模型的价格算；`ChannelModel` 上没有价格字段（`modelcatalog/types_route.go` 里价格 `videoPricing` 挂在模型目录项上）【已核】。
+- 因此同一模型内自动换备用渠道照常进行，不需要重新确认：原渠道明确拒绝（`rejected_no_job`）后，`task_route_executor.go` 第 113 行 → `nextRouteAttemptAfterFailure` → `modelcatalog/route_attempt.go` 第 174 行 `SwitchTaskToNextRoute` 只在 `task.LogicalModelRevisionID` 对应版本的路由里选下一个渠道，不换模型，同意不失效。
+- 只有模型变了才让同意失效、需要重新确认，包括前台模型版本变了。接纳事务里核对：本次提交解析出的前台模型和前台模型版本，与报价、同意记录里的一致；不一致就返回 `paid_confirmation_required` 和按新模型算的新报价，不提交上游。
+- 核对过现有代码，**没有任何自动路径会换到别的模型**【已核】：
+  - 换备用渠道：`SwitchTaskToNextRoute` 读取 `task.LogicalModelID` 和 `task.LogicalModelRevisionID`，版本不属于该模型就报错，路由只从这个版本的 `LogicalModelRoutes(revision.ID)` 里选；
+  - 图片限流重试：`app/image_submission.go` 第 135 行把上一次的 `LogicalModelID`、`LogicalModelRevisionID`、`RouteID`、`ChannelID` 原样抄给新尝试，连渠道都不换；
+  - 重启后恢复：沿用原任务的派发记录和路由（第 3.2 节），不重新选模型；
+  - 任务接纳：`task/admission.go` 第 146–147 行把用户选的模型和版本写进任务，之后执行器不改。
+- 有两处会改到模型或版本，但都是用户主动发起、不是自动路径，方案里照上一条处理：
+  - 用户点重跑（`/retry`）：`PrepareLogicalTaskRetry`（`route_attempt.go` 第 286 行）按 `task.LogicalModelID` 重新解析**当前**快照，第 319 行把 `task.LogicalModelRevisionID` 改成当前版本——前台模型如果在原任务之后发过新版本，这次重跑用的是新版本。模型没换，但版本可能变，按上一条视为「模型变了」，同意失效、重新报价。模型已归档时走 `ResolveArchivedTaskRoute`，保留原版本。
+  - 工作流节点换模型：`app/canvas_workflow_models.go` 的 `selectWorkflowModel` 按工作流里用户选的模型选项改写配置。这是用户在工作流里改了选择，等于一次新提交，同样按模型核对。
 - 然后 `INSERT`。插入成功 = 这一次额度到手，同一事务写入新任务；违反唯一约束 = 这次 `confirm` 已经用过，返回当前 `outcome`，不建任务。
 - 同一个 `operationId` 重放（双击、网络重试）先由现有 `(user_id, client_operation_id)` 唯一索引和 `admitExisting` 返回原任务，根本走不到插入；即使报价后来过期，已接纳的同一操作重放仍返回原任务，不变成新购买（〔外部〕6.6 节）。
 - 原任务的 `routeRun` 变了（被重跑过），唯一键自然换一组，旧同意不再匹配。
@@ -409,7 +417,7 @@ CREATE TABLE regeneration_consents (
 | 11 | 双击 `/retry` 第二次报「不能重试」（〔防重〕4.2 第 ①，本轮新增） | 同一 `clientOperationId` 重放返回原任务（第 3.3 节） |
 | 12 | 进度写入改 `updated_at`，会误作废刚做的确认（〔防重〕4.2 第 ③，本轮新增） | 同意按 `routeRun` 绑定，进度写入不影响（第 3.6 节） |
 | 13 | 审核失败被当成「没扣钱」，改提示词就绕过确认（Runway `SAFETY.INPUT.*` 不退积分，Codex 第 4 轮） | 「没有结果」和「没有计费」分开判，只有确认未计费才免确认（第 3.1、3.2 节） |
-| 14 | 用户确认的是 A 渠道的价格，原渠道拒绝后自动换到更贵的备用渠道（Codex 第 4 轮） | 同意记录带已确认的渠道和费用上限，每次派发前核对，超出就停下重新问（第 3.6 节） |
+| 14 | 原渠道拒绝后自动换备用渠道，担心价格变（Codex 第 4 轮） | 同一模型唯一定价，换渠道不换模型（`SwitchTaskToNextRoute` 只在同一前台模型版本内选路由），同意不失效；只有模型或版本变了才重新确认（第 3.6 节） |
 
 ### 5.2 过去的同类修复（逐个打开核对过）
 
@@ -461,7 +469,6 @@ CREATE TABLE regeneration_consents (
 4. 火山方舟「链接 24 小时、任务 7 天」：过期后重新查询能否拿到新链接，要实测后再定截止按哪个算。火山方舟、可灵的保留期原文还没逐字核对。
 5. 外部客户端的付费权限：是给每个登记客户端一个「可以发起付费提交」的开关（默认关、用户在 BeefTV 设置里打开），还是沿用现在「可写客户端都能提交」。〔外部〕6.5 节建议由用户控制是否给某个客户端付费能力。
 6. 同意的版本：只用 `routeRun`，还是另加只在 `phase` / `regenerate` 变化时 +1 的 `outcome_version`（第 3.6 节）。
-7. 已确认的渠道范围（第 3.6 节）：报价只列首选渠道（备用渠道一旦要用就停下重新问），还是把备用渠道和价格一起列给用户、一次同意覆盖全部。前者简单但用户可能被多问一次，后者报价更复杂。
 
 ## 八、上游 Infinite Canvas
 
