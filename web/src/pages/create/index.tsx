@@ -21,7 +21,7 @@ import type { BackendGenerationResult } from "@/services/api/generation-task";
 import type { Skill } from "@/services/api/skills";
 import type { GenerationTask } from "@/services/api/task-center";
 import { acceptSavedCreationConversation, conversationHasConflict, deleteCreationConversation, hasParkedCreationConversationDraft, loadCreationConversations, loadLocalCreationConversationDrafts, pendingCreationTaskIds, removeCreationConversationSnapshot, restoreParkedCreationConversation, saveCreationConversations, updateCreationConversationSnapshot } from "@/services/creation-conversation-store";
-import { resolveModelChannel, selectableModelsByCapability, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { modelOptionName, resolveModelChannel, selectableModelsByCapability, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useCreationPreferencesStore } from "@/stores/use-creation-preferences-store";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { useAppearanceStore } from "@/stores/use-appearance-store";
@@ -31,7 +31,7 @@ import type { PromptOptimizerProvider } from "@/lib/plugins/plugin-types";
 import { promptOptimizerPlugin, PROMPT_OPTIMIZER_PLUGIN_ID } from "@/lib/plugins/builtin/prompt-optimizer";
 import { createPluginHostContext } from "@/services/plugin-host";
 import { usePluginStore } from "@/stores/use-plugin-store";
-import { buildCreationMentionReferences, expandCreationPrompt, reconcileCreationAttachmentLimit, removeCreationReferenceTokens, replaceCreationAttachmentReference, selectedCreationReferences, type CreationReference } from "./creation-references";
+import { buildCreationMentionReferences, creationReferenceKindMessage, creationReferenceLimitsFor, creationReferenceOverflowMessage, expandCreationPrompt, fitCreationAttachmentsToLimits, reconcileCreationAttachmentLimit, removeCreationReferenceTokens, replaceCreationAttachmentReference, selectedCreationReferences, type CreationReference } from "./creation-references";
 import { creationAttachmentFromAsset, creationAttachmentFromAudio, creationAttachmentFromAudioAsset, creationAttachmentFromDocument, creationAttachmentFromExternalAsset, creationAttachmentFromImage, creationAttachmentFromVideo, creationAttachmentFromVideoAsset, creationAttachmentKind, creationAudioAsset, creationFileAccepted, creationImageAsset, creationMediaAspectRatio, creationUploadAccept, creationVideoAsset, removeCreationAttachment, splitCreationAttachments, type CreationAttachment } from "./creation-assets";
 import { defaultCreationMode, modeLabels, type CreationConversation, type CreationMessage, type CreationMode, type CreationRetryContext, type CreationSettings, type CreationShotRailEntry, type CreationStatus } from "./creation-types";
 import { attachCreationTaskContexts, completedCreationGenerationTask, conversationTimestamp, creationShotRail, creationVideoShotOrdinal, isImageAttachment, isVideoAttachment, materializeCreationTaskResults, newConversation, newMessage, reconcileCreationTaskMessages } from "./creation-conversations";
@@ -123,6 +123,9 @@ export default function CreatePage() {
     const [referenceReplacementBusy, setReferenceReplacementBusy] = useState(false);
     const [historyOpen, setHistoryOpen] = useState(false);
     const [libraryOpen, setLibraryOpen] = useState(false);
+    // 全站关闭了右上角 Toast（globals.css 里 .ant-message 被隐藏），
+    // 参考素材超限这类必须让用户看见的说明改在参考内容面板里就地显示。
+    const [referenceNotice, setReferenceNotice] = useState("");
     const externalAssetSources = useExternalAssetSources(libraryOpen);
     const abortRef = useRef<AbortController | null>(null);
     const composerFocusRef = useRef<HTMLTextAreaElement>(null);
@@ -167,7 +170,14 @@ export default function CreatePage() {
     const selectedModel = resolveCompatibleModel(config, preferredModel, modelRequirements) || preferredModel;
     const imageProfile = useMemo(() => modelCapabilityConfigFor(config, selectedModel).image!, [config, selectedModel]);
     const videoProfile = useMemo(() => modelCapabilityConfigFor(config, selectedModel).video!, [config, selectedModel]);
-    const maxReferences = mode === "video" ? videoProfile.operations.includes("image_to_video") ? videoProfile.references.maxImages : 0 : mode === "image" ? imageProfile.references.maxImages : 6;
+    // 参考素材上限按官方文档分类型取（视频：图 / 视频 / 音频各自限量，见 Seedance 2.0 的 9/3/3），
+    // 不再自己合成一个总数上限。
+    const referenceLimits = useMemo(() => {
+        // 只有显式配置过能力的文字模型才按它声明的图片/视频引用上限来限制；
+        // 没配 capabilityConfig 的自定义渠道拿到的是默认补出的 0，不能当成“不支持参考素材”。
+        const textReferencesDeclared = Boolean(resolveModelChannel(config, selectedModel).modelProfiles?.find((item) => item.model === modelOptionName(selectedModel))?.capabilityConfig?.text);
+        return creationReferenceLimitsFor(mode, modelCapabilityConfigFor(config, selectedModel), { textReferencesDeclared });
+    }, [config, mode, selectedModel]);
     const referenceImageSize = useMemo(() => {
         const imageAttachments = attachments.filter(isImageAttachment);
         if (imageAttachments.length !== 1) return undefined;
@@ -246,16 +256,14 @@ export default function CreatePage() {
         setSeconds(normalized.seconds);
         setRatio(normalized.ratio);
         setVideoQuality(normalized.resolution.replace(/p$/i, ""));
-        const maxReferences = videoProfile.operations.includes("image_to_video") ? videoProfile.references.maxImages : 0;
-        if (attachments.length > maxReferences) setAttachments((current) => current.slice(0, maxReferences));
     }, [composerPreferencesHydrated, composerPreferencesInitialized, mode, selectedModel, videoProfile]);
 
     useEffect(() => {
-        const reconciled = reconcileCreationAttachmentLimit(attachments, mentionReferences, maxReferences);
+        const reconciled = reconcileCreationAttachmentLimit(attachments, mentionReferences, referenceLimits);
         if (reconciled.attachments === attachments) return;
         setAttachments(reconciled.attachments);
         if (reconciled.removedReferences.length) setPrompt((current) => removeCreationReferenceTokens(current, reconciled.removedReferences));
-    }, [attachments, maxReferences, mentionReferences]);
+    }, [attachments, mentionReferences, referenceLimits]);
 
     useEffect(() => {
         let cancelled = false;
@@ -444,6 +452,7 @@ export default function CreatePage() {
     }, []);
 
     const selectMode = (next: CreationMode) => {
+        setReferenceNotice("");
         setMode(next);
         setComposerNotice("");
         rememberMode(next);
@@ -558,11 +567,15 @@ export default function CreatePage() {
             return external ? [creationAttachmentFromExternalAsset(external)] : [];
         });
         if (!next.length) return;
-        setAttachments((current) => [...current.filter((item) => !next.some((candidate) => candidate.id === item.id)), ...next].slice(0, maxReferences));
+        const merged = [...attachments.filter((item) => !next.some((candidate) => candidate.id === item.id)), ...next];
+        const fitted = fitCreationAttachmentsToLimits(merged, referenceLimits);
+        setReferenceNotice(fitted.dropped.length ? `${creationReferenceKindMessage(referenceLimits, fitted.dropped[0])}，超出的 ${fitted.dropped.length} 个素材没有加入` : "");
+        setAttachments(fitted.attachments);
         setLibraryOpen(false);
     };
 
     const removeAttachment = (id: string) => {
+        setReferenceNotice("");
         setComposerNotice("");
         const reference = mentionReferences.find((item) => item.attachmentId === id);
         setAttachments((current) => removeCreationAttachment(current, id));
@@ -570,6 +583,7 @@ export default function CreatePage() {
     };
 
     const clearAttachments = () => {
+        setReferenceNotice("");
         setComposerNotice("");
         const attachmentIds = new Set(attachments.map((item) => item.id));
         const references = mentionReferences.filter((item) => item.attachmentId && attachmentIds.has(item.attachmentId));
@@ -578,6 +592,7 @@ export default function CreatePage() {
     };
 
     const clearComposer = () => {
+        setReferenceNotice("");
         setComposerNotice("");
         promptRef.current = "";
         attachmentsRef.current = [];
@@ -663,8 +678,9 @@ export default function CreatePage() {
                 return;
             }
         }
-        if (attachments.length > maxReferences) {
-            toast.warning("参考内容正在按当前模型能力调整，请稍后重试");
+        const overflowMessage = creationReferenceOverflowMessage(referenceLimits, attachments);
+        if (overflowMessage) {
+            setReferenceNotice(overflowMessage);
             releaseRetryLock();
             return;
         }
@@ -723,6 +739,7 @@ export default function CreatePage() {
         setPrompt("");
         setAttachments([]);
         setDraftReferences([]);
+        setReferenceNotice("");
         setBusy(true);
         const controller = new AbortController();
         const requestLifecycle = runtime.beginGenerationConsumer(controller.signal);
@@ -891,6 +908,7 @@ export default function CreatePage() {
         setPrompt("");
         setAttachments([]);
         setDraftReferences([]);
+        setReferenceNotice("");
         setHistoryOpen(false);
     };
 
@@ -937,6 +955,7 @@ export default function CreatePage() {
         setPrompt("");
         setAttachments([]);
         setDraftReferences([]);
+        setReferenceNotice("");
         setHistoryOpen(false);
         setConflictOpen(false);
         const epoch = captureUserScopeEpoch();
@@ -1028,6 +1047,7 @@ export default function CreatePage() {
                         setPrompt("");
                         setAttachments([]);
                         setDraftReferences([]);
+                        setReferenceNotice("");
                     }
                     toastRef.current.success("历史对话已删除，素材仍保留");
                 } catch (error) {
@@ -1139,7 +1159,8 @@ export default function CreatePage() {
         referenceReplacementBusy,
         attachments,
         referenceImageSize,
-        maxReferences,
+        referenceLimits,
+        referenceNotice,
         references: mentionReferences,
         onRemoveAttachment: removeAttachment,
         onClearAttachments: clearAttachments,
@@ -1154,7 +1175,11 @@ export default function CreatePage() {
         imageProfile,
         videoProfile,
         config,
-        onModelChange: (value: string) => updateConfig(mode === "text" ? "textModel" : mode === "image" ? "imageModel" : "videoModel", value),
+        onModelChange: (value: string) => {
+            // 换模型后各类上限会变，上一轮的超限说明不再成立。
+            setReferenceNotice("");
+            updateConfig(mode === "text" ? "textModel" : mode === "image" ? "imageModel" : "videoModel", value);
+        },
         ratio,
         setRatio: setComposerRatio,
         seconds,

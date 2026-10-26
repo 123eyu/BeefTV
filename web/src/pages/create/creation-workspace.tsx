@@ -43,6 +43,7 @@ import { useUserStore } from "@/stores/use-user-store";
 import type { PromptOptimizerProvider } from "@/lib/plugins/plugin-types";
 import { displayCreationPrompt, type CreationReference } from "./creation-references";
 import { creationAttachmentKind, creationMediaAspectRatio, removeCreationAttachment, type CreationAttachment, type CreationMode } from "./creation-assets";
+import { creationReferenceCounts, creationReferenceHasRoom, creationReferenceKinds, creationReferenceLimit, creationReferenceLimitMessage, creationReferenceLimitsLabel, type CreationReferenceLimits } from "./creation-references";
 import { conversationTimestamp, isImageAttachment, isVideoAttachment } from "./creation-conversations";
 import { conversationTimeFormatter, countOptions, historyDayFormatter, messageTimeFormatter, modeLabels, qualityOptions, ratioOptions, resolutionOptions, shotScriptLabels, type CreationConversation, type CreationMessage, type CreationShotRailEntry, type CreationStatus } from "./creation-types";
 import "./creation-product.css";
@@ -345,7 +346,9 @@ type ComposerProps = {
     referenceReplacementBusy: boolean;
     attachments: CreationAttachment[];
     referenceImageSize?: { width: number; height: number };
-    maxReferences: number;
+    referenceLimits: CreationReferenceLimits;
+    /** 页内可见的超限说明：全站已关闭右上角 Toast，提示必须留在页面里。 */
+    referenceNotice?: string;
     references: CreationReference[];
     onRemoveAttachment: (id: string) => void;
     onClearAttachments: () => void;
@@ -418,13 +421,17 @@ export function CreationComposer(props: ComposerProps) {
     const emptyPlaceholder = "输入你的镜头、画面或故事。也可以添加参考图开始创作";
     const imageReferencesSupported = props.imageProfile.references.maxImages > 0;
     const referencesSupported = props.mode === "image" ? imageReferencesSupported : props.mode !== "video" || props.videoProfile.operations.includes("image_to_video");
-    const canAddMoreReferences = referencesSupported && props.attachments.length < props.maxReferences;
-    const addReferenceLabel = interactionBusy ? (props.referenceReplacementBusy ? "正在替换参考图" : "生成中暂不能添加参考内容") : canAddMoreReferences ? "添加更多参考内容" : `已达到当前模型的参考内容上限（${props.maxReferences} 个）`;
-    const referenceCounts = useMemo(() => props.attachments.reduce((counts, attachment) => {
-        const kind = creationAttachmentKind(attachment);
-        counts[kind] += 1;
-        return counts;
-    }, { image: 0, video: 0, audio: 0, file: 0 }), [props.attachments]);
+    const referenceCounts = useMemo(() => creationReferenceCounts(props.attachments), [props.attachments]);
+    // 参考素材按官方文档分类型限量，只要还有任意一类没满就能继续添加。
+    const canAddMoreReferences = referencesSupported && creationReferenceKinds.some((kind) => creationReferenceHasRoom(props.referenceLimits, referenceCounts, kind));
+    const referenceLimitsLabel = creationReferenceLimitsLabel(props.referenceLimits);
+    const addReferenceLabel = interactionBusy
+        ? props.referenceReplacementBusy
+            ? "正在替换参考图"
+            : "生成中暂不能添加参考内容"
+        : canAddMoreReferences
+          ? "添加更多参考内容"
+          : `已达到当前模型的参考内容上限${referenceLimitsLabel ? `（${referenceLimitsLabel}）` : ""}`;
     const visibleAttachments = useMemo(() => referenceFilter === "all"
         ? props.attachments
         : props.attachments.filter((attachment) => creationAttachmentKind(attachment) === referenceFilter), [props.attachments, referenceFilter]);
@@ -530,18 +537,19 @@ export function CreationComposer(props: ComposerProps) {
                     {trackState.isExpanded ? <div className="creation-reference-panel-header">
                         <div className="creation-reference-filter-tabs" role="group" aria-label="筛选参考内容">
                             {([
-                                { id: "all", label: "全部", count: props.attachments.length },
-                                { id: "image", label: "图片", count: referenceCounts.image },
-                                { id: "video", label: "视频", count: referenceCounts.video },
-                                { id: "audio", label: "音频", count: referenceCounts.audio },
-                                { id: "file", label: "文件", count: referenceCounts.file },
-                            ] as const).map((filter) => <button key={filter.id} type="button" aria-pressed={referenceFilter === filter.id} className={referenceFilter === filter.id ? "is-active" : undefined} onClick={() => setReferenceFilter(filter.id)}>{filter.label}{filter.count ? ` (${filter.count})` : ""}</button>)}
+                                { id: "all", label: "全部", count: props.attachments.length, limit: undefined },
+                                { id: "image", label: "图片", count: referenceCounts.image, limit: creationReferenceLimit(props.referenceLimits, "image") },
+                                { id: "video", label: "视频", count: referenceCounts.video, limit: creationReferenceLimit(props.referenceLimits, "video") },
+                                { id: "audio", label: "音频", count: referenceCounts.audio, limit: creationReferenceLimit(props.referenceLimits, "audio") },
+                                { id: "file", label: "文件", count: referenceCounts.file, limit: creationReferenceLimit(props.referenceLimits, "file") },
+                            ] as const).map((filter) => <button key={filter.id} type="button" aria-pressed={referenceFilter === filter.id} title={filter.limit === undefined ? undefined : creationReferenceLimitMessage(props.referenceLimits, filter.id)} className={referenceFilter === filter.id ? "is-active" : undefined} onClick={() => setReferenceFilter(filter.id)}>{filter.label}{filter.count ? ` (${filter.count}${filter.limit ? `/${filter.limit}` : ""})` : ""}</button>)}
                         </div>
                         <div className="creation-reference-panel-actions">
                             {props.attachments.length ? <button type="button" onClick={props.onClearAttachments} disabled={interactionBusy}>清空全部素材</button> : null}
                             <Tooltip title="收起素材面板"><button type="button" className="creation-reference-panel-collapse" onClick={() => setReferencePanelExpanded(false)} aria-label="收起素材面板"><Minimize2 aria-hidden="true" /></button></Tooltip>
                         </div>
                     </div> : null}
+                    {props.referenceNotice ? <p className="creation-reference-notice" role="status">{props.referenceNotice}</p> : null}
                     <div className="creation-reference-track-wrapper">
                         <div className="creation-reference-stack-shell">
                             {trackState.canScrollLeft ? <button type="button" className="creation-reference-track-button is-left" onClick={() => scrollAttachmentTrack(-1)} aria-label="向左浏览参考内容" title="向左浏览参考内容"><ChevronLeft aria-hidden="true" /></button> : null}
