@@ -47,6 +47,9 @@ for (const protocol of ["newapi-channel-2", "newapi", "openai"] as const) {
             expect(() => assertVideoCapability(profile, validImages, [], [audio(1700)], "5")).toThrow("1.70");
             expect(() => assertVideoCapability(profile, validImages, [], [audio(1800)], "5")).toThrow("1.80");
             expect(() => assertVideoCapability(profile, validImages, [], [audio(2000)], "5")).not.toThrow();
+            // 过长要说裁短，过短才说换更长；照做才能通过。
+            const tooLong = (profile.references.maxAudioDurationSeconds + 1) * 1000;
+            expect(() => assertVideoCapability(profile, validImages, [], [audio(tooLong)], "5")).toThrow("请裁剪或换一段更短的音频后再提交");
             // 只有序号没有素材名时退回序号写法。
             expect(() => assertReferenceDuration("音频", 1, 900, 2, 0)).toThrow("第 2 段参考音频时长为 0.90 秒");
             const failure = explainGenerationError("音频「配音.wav」时长为 0.90 秒，需要改到 2 秒以上；请换一段更长的音频后再提交");

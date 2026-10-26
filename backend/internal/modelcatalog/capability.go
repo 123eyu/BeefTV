@@ -795,8 +795,10 @@ func validateReferenceDuration(kind string, index int, durationMs int64, minimum
 	if durationMs <= 0 {
 		return kernel.BadAuthRequest(fmt.Sprintf("第 %d 段参考%s的时长无法读取，请重新导入素材后再提交", index+1, kind))
 	}
-	if durationMs < durationLimitMs(minimum) || (maximum > 0 && durationMs > durationLimitMs(maximum)) {
-		return kernel.BadAuthRequest(fmt.Sprintf("第 %d 段参考%s时长为 %.2f 秒，需要改到 %s；%s", index+1, kind, float64(durationMs)/1000, durationRequirement(minimum, maximum), durationFixAction(kind, minimum, maximum)))
+	// 按实际违反的是下限还是上限给建议：2–15 秒的限制下，16 秒的素材要往短改。
+	tooShort := durationMs < durationLimitMs(minimum)
+	if tooShort || (maximum > 0 && durationMs > durationLimitMs(maximum)) {
+		return kernel.BadAuthRequest(fmt.Sprintf("第 %d 段参考%s时长为 %.2f 秒，需要改到 %s；%s", index+1, kind, float64(durationMs)/1000, durationRequirement(minimum, maximum), durationFixAction(kind, tooShort)))
 	}
 	return nil
 }
@@ -812,22 +814,13 @@ func durationRequirement(minimum, maximum float64) string {
 	return formatDurationBound(minimum) + "–" + formatDurationBound(maximum) + " 秒"
 }
 
-// durationFixAction 给出可直接照做的下一步，而不是笼统的「重新提交」。
-func durationFixAction(kind string, minimum, maximum float64) string {
-	if kind == "音频" {
-		if minimum > 0 {
-			return "请换一段更长的音频后再提交"
-		}
-		return "请裁剪或换一段更短的音频后再提交"
+// durationFixAction 按实际违反的是哪一侧给出可直接照做的下一步。
+func durationFixAction(kind string, tooShort bool) string {
+	noun := kind
+	if tooShort {
+		return "请换一段更长的" + noun + "后再提交"
 	}
-	switch {
-	case minimum > 0 && maximum > 0:
-		return "请裁剪到这段区间内或换一段后再提交"
-	case minimum > 0:
-		return "请换一段更长的视频后再提交"
-	default:
-		return "请裁剪到上限以内或换一段更短的视频后再提交"
-	}
+	return "请裁剪或换一段更短的" + noun + "后再提交"
 }
 
 func validateVideoTask(profile *VideoCapabilityConfig, input TaskInput) error {

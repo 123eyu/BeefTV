@@ -55,8 +55,10 @@ export function assertReferenceDuration(kind: "音频" | "视频", index: number
     if (!Number.isFinite(durationMs) || !durationMs || durationMs <= 0) throw new Error(`${label}的时长无法读取，请重新导入素材后再提交`);
     const minMs = Math.round(minimum * 1000);
     const maxMs = maximum > 0 ? Math.round(maximum * 1000) : 0;
-    if (durationMs < minMs || (maxMs > 0 && durationMs > maxMs)) {
-        throw new Error(`${label}时长为 ${(durationMs / 1000).toFixed(2)} 秒，需要改到 ${durationRequirement(minimum, maximum)}；${durationFixAction(kind, minimum)}`);
+    // 按实际违反的是下限还是上限给建议：2–15 秒的限制下，16 秒的素材要往短改。
+    const tooShort = durationMs < minMs;
+    if (tooShort || (maxMs > 0 && durationMs > maxMs)) {
+        throw new Error(`${label}时长为 ${(durationMs / 1000).toFixed(2)} 秒，需要改到 ${durationRequirement(minimum, maximum)}；${durationFixAction(kind, tooShort)}`);
     }
 }
 
@@ -72,9 +74,9 @@ function referenceBound(minimum: number, maximum: number) {
     return `${minimum}–${maximum}`;
 }
 
-function durationFixAction(kind: "音频" | "视频", minimum: number) {
-    if (minimum > 0) return kind === "音频" ? "请换一段更长的音频后再提交" : "请换一段更长的视频后再提交";
-    return kind === "音频" ? "请裁剪或换一段更短的音频后再提交" : "请裁剪或换一段更短的视频后再提交";
+function durationFixAction(kind: "音频" | "视频", tooShort: boolean) {
+    const noun = kind === "音频" ? "音频" : "视频";
+    return tooShort ? `请换一段更长的${noun}后再提交` : `请裁剪或换一段更短的${noun}后再提交`;
 }
 
 // 输出时长不在模型范围内时的提示，写清现在的值和可选的时长。

@@ -14,9 +14,9 @@ import { assertUserScope, captureUserScope, userScopeMatches, type CapturedUserS
 import { continueCreationConversationOnCanvas } from "@/services/creation-canvas-conversation";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { useExternalAssetSources } from "@/hooks/use-external-asset-sources";
-import { modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, videoDurationAllowed, videoDurationOptions } from "@/lib/model-capabilities";
+import { modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, videoDurationOptions } from "@/lib/model-capabilities";
 import { inferVideoOperation, resolveCompatibleModel, mergedImageCapabilityConfig, type ModelRequirements } from "@/lib/model-selection";
-import { assertVideoCapability, outputDurationNotice } from "@/services/api/video-validation";
+import { videoSubmitNotice } from "./creation-submit-guard";
 import type { BackendGenerationResult } from "@/services/api/generation-task";
 import type { Skill } from "@/services/api/skills";
 import type { GenerationTask } from "@/services/api/task-center";
@@ -654,19 +654,14 @@ export default function CreatePage() {
         }
         // 后端对图片和视频使用不同的参考字段；先拆分，提交前核对也用它。
         const { referenceImages, referenceVideos, referenceAudios } = splitCreationAttachments(attachments);
-        if (mode === "video" && !videoDurationAllowed(videoProfile, Number(seconds))) {
-            // 右上角 Toast 被全局 CSS 隐藏，提示改成输入框内始终可见的说明。
-            setComposerNotice(outputDurationNotice(videoProfile, seconds));
-            releaseRetryLock();
-            return;
-        }
-        try {
-            // 参考素材和时长在提交前先按模型合同核对一次，避免先建一条失败消息再报错。
-            assertVideoCapability(videoProfile, referenceImages, referenceVideos, referenceAudios, seconds);
-        } catch (error) {
-            setComposerNotice(error instanceof Error ? error.message : "参考内容不符合当前模型要求，请调整后再提交");
-            releaseRetryLock();
-            return;
+        if (mode === "video") {
+            const notice = videoSubmitNotice(mode, videoProfile, seconds, { referenceImages, referenceVideos, referenceAudios });
+            if (notice) {
+                // 右上角 Toast 被全局 CSS 隐藏，提示改成输入框内始终可见的说明。
+                setComposerNotice(notice);
+                releaseRetryLock();
+                return;
+            }
         }
         if (attachments.length > maxReferences) {
             toast.warning("参考内容正在按当前模型能力调整，请稍后重试");
