@@ -3,6 +3,7 @@ package app
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -61,7 +62,10 @@ func (s *Service) ConfirmAssistantProduction(userID, turnID string, input Assist
 		plan := operations.GenerationAuthorization{SourceTurnID: turnID, ProposalID: input.ProposalID, Targets: current}
 		encoded, _ := json.Marshal(plan)
 		if source.GenerationAuthorizationJSON != "" && source.GenerationAuthorizationJSON != string(encoded) {
-			return operations.Conflict("production_changed", "这一轮已确认了不同的制作方案", nil)
+			var existing operations.GenerationAuthorization
+			if json.Unmarshal([]byte(source.GenerationAuthorizationJSON), &existing) != nil || existing.SourceTurnID != "" {
+				return operations.Conflict("production_changed", "这一轮已确认了不同的制作方案", nil)
+			}
 		}
 		if err = tx.Model(&source).Update("generation_authorization_json", string(encoded)).Error; err != nil {
 			return err
@@ -106,6 +110,31 @@ func productionTaskKey(plan operations.GenerationAuthorization, nodeID string) s
 	return "proposal:" + plan.ProposalID + ":" + nodeID
 }
 
+func (s *operationSession) RecordAssistantGenerationProposal(userID, turnID, canvasID string, proposal operations.GenerationAuthorization) error {
+	if strings.TrimSpace(turnID) == "" || strings.TrimSpace(proposal.ProposalID) == "" || len(proposal.Targets) == 0 {
+		return nil
+	}
+	var turn model.AssistantTurn
+	if err := s.tx.First(&turn, "turn_id = ? AND user_id = ? AND canvas_id = ?", turnID, userID, canvasID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	if turn.GenerationAuthorizationJSON != "" {
+		var existing operations.GenerationAuthorization
+		if json.Unmarshal([]byte(turn.GenerationAuthorizationJSON), &existing) == nil && existing.SourceTurnID != "" {
+			return nil
+		}
+	}
+	proposal.SourceTurnID = ""
+	encoded, err := json.Marshal(proposal)
+	if err != nil {
+		return err
+	}
+	return s.tx.Model(&turn).Update("generation_authorization_json", string(encoded)).Error
+}
+
 func (s *operationSession) SubmitAuthorizedGeneration(userID, turnID, canvasID string, targets []operations.GenerationTarget) (any, error) {
 	var source model.AssistantTurn
 	if err := s.tx.First(&source, "turn_id = ? AND user_id = ? AND canvas_id = ?", turnID, userID, canvasID).Error; err != nil {
@@ -113,7 +142,9 @@ func (s *operationSession) SubmitAuthorizedGeneration(userID, turnID, canvasID s
 	}
 	var plan operations.GenerationAuthorization
 	if json.Unmarshal([]byte(source.GenerationAuthorizationJSON), &plan) != nil || plan.SourceTurnID == "" {
-		return nil, operations.PreconditionFailed("production_authorization_required", "请先确认本次整片制作方案", nil)
+		// Only the trusted confirmation endpoint can create a spend grant.
+		// A later model call cannot promote a recorded, unconfirmed proposal.
+		return nil, operations.PreconditionFailed("production_authorization_required", "请先在确认卡片中确认本次制作方案", nil)
 	}
 	var owner model.AssistantTurn
 	if err := s.tx.First(&owner, "turn_id = ? AND user_id = ? AND canvas_id = ?", plan.SourceTurnID, userID, canvasID).Error; err != nil {
