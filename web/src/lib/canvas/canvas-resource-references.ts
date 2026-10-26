@@ -115,14 +115,23 @@ export function autoMentionCanvasResourceReferences(prompt: string, references: 
     if (!names.length) return prompt;
 
     const matcher = new RegExp(`(^|[^A-Za-z0-9_@])(${names.map(escapeRegExp).join("|")})(?![A-Za-z0-9_])`, "gu");
+    // 分段替换，跳过已经是 @ 引用的片段；另记每段在原文里的起点，用来判断名字后面是否已有同一引用。
+    let partOffset = 0;
     return prompt
         .split(/(@\[[^\]]+\]|@[^\s@,.;:!?，。；：！？、)\]}】）]+)/gu)
         .map((part) => {
+            const startOfPart = partOffset;
+            partOffset += part.length;
             if (part.startsWith("@")) return part;
             return part.replace(matcher, (match, prefix: string, name: string, offset: number, source: string) => {
+                const reference = referenceByName.get(name)!;
+                const token = canvasResourceMentionToken(reference);
                 const nextCharacter = source[offset + match.length];
                 const separator = needsAutoMentionSeparator(nextCharacter) ? " " : "";
-                return `${prefix}${canvasResourceMentionToken(referenceByName.get(name)!)}${separator}`;
+                if (!keepsTypedResourceName(reference, name)) return `${prefix}${token}${separator}`;
+                // 用户自己写的名字（角色名、素材标题）是提示词的语义，保留原文并把引用追加在后面。
+                if (prompt.slice(startOfPart + offset + match.length).trimStart().startsWith(token)) return match;
+                return `${prefix}${name} ${token}${separator}`;
             });
         })
         .join("");
@@ -162,6 +171,8 @@ export function findCanvasResourceAutoLinkMatch(prompt: string, cursor: number, 
         if (candidate.isBareOrder && previous && !/[\s,.!?;:，。！？；：、)\]}】）]/u.test(previous)) continue;
         if (candidate.isBareOrder && next && !/[\s,.!?;:，。！？；：、)\]}】）]/u.test(next)) continue;
         if (/^[A-Za-z0-9_]+$/u.test(candidate.name) && previous && /[A-Za-z0-9_]/u.test(previous)) continue;
+        // 名字后面已经跟着同一个引用（保留名字时插入的），不再重复提示。
+        if (prompt.slice(cursor).trimStart().startsWith(canvasResourceMentionToken(candidate.reference))) continue;
         return { reference: candidate.reference, start, end: cursor, query: candidate.name };
     }
     return null;
@@ -187,6 +198,26 @@ function escapeRegExp(value: string) {
 
 function needsAutoMentionSeparator(nextCharacter: string | undefined) {
     return Boolean(nextCharacter && !/[\s,.!?;:，。！？；：、)\]}】）]/u.test(nextCharacter));
+}
+
+const AUTO_RESOURCE_LABEL = /^(角色|图片|图|视频|音频|绘图|文本|技能)\s*\d+$/u;
+
+/**
+ * 用户自己起的名字（角色名、素材标题）要保留原文，把引用追加在后面；
+ * 自动编号「图片1 / 角色1」保留下来只会变成「图片1 @图片1」，仍然直接替换。
+ */
+function keepsTypedResourceName(reference: CanvasResourceReference, name: string) {
+    return name === reference.title.trim() && !AUTO_RESOURCE_LABEL.test(name);
+}
+
+/**
+ * @ 菜单选中和 Tab 补全时替换输入文字的内容：用户打出的是完整的角色名/素材标题，就保留名字再追加引用；
+ * 只是搜索片段或自动编号时，仍只插入引用。
+ */
+export function canvasResourceReferenceInsertText(reference: CanvasResourceReference, typedName: string) {
+    const token = canvasResourceMentionToken(reference);
+    const name = typedName.trim();
+    return keepsTypedResourceName(reference, name) ? `${name} ${token} ` : `${token} `;
 }
 
 const CANVAS_RESOURCE_MENTION_BOUNDARY = /(?:$|\s|[,.!?;:，。！？；：、)\]}】）])/;
