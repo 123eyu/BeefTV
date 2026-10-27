@@ -5,7 +5,7 @@ import { isHiddenBatchChild } from "@/lib/canvas/canvas-project-domain";
 import { applyCanvasLiveViewport } from "@/lib/canvas/canvas-live-viewport";
 import { canOpenCanvasNodePromptPanel, isCanvasMediaResultNode } from "@/lib/canvas/canvas-node-semantics";
 import { getCanvasNodesBounds, viewportAtScale, viewportForBounds, type CanvasViewportSize } from "@/lib/canvas/canvas-viewport";
-import { shouldRefreshCanvasVirtualization } from "@/lib/canvas/canvas-viewport-render-sync";
+import { CANVAS_VIRTUALIZATION_REFRESH_INTERVAL_MS, shouldRefreshCanvasVirtualization } from "@/lib/canvas/canvas-viewport-render-sync";
 import { shouldRebaseCanvasRaster } from "@/lib/canvas/canvas-leafer-viewport";
 import { CanvasNodeType, type CanvasNodeData, type ContextMenuState, type Position, type ViewportTransform } from "@/types/canvas";
 import { useCanvasViewportTransition } from "./use-canvas-viewport-transition";
@@ -47,6 +47,7 @@ export function useCanvasViewportController({
     const commitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const renderedViewportRef = useRef(viewportRef.current);
     const lastVirtualizationRefreshAtRef = useRef(0);
+    const refreshedDuringGestureRef = useRef(false);
 
     const previewViewport = useCallback((next: ViewportTransform) => {
         viewportRef.current = next;
@@ -63,6 +64,7 @@ export function useCanvasViewportController({
         viewportRef.current = next;
         renderedViewportRef.current = next;
         lastVirtualizationRefreshAtRef.current = performance.now();
+        refreshedDuringGestureRef.current = false;
         delete containerRef.current?.dataset.canvasViewportInteracting;
         setViewport((current) => current.x === next.x && current.y === next.y && current.k === next.k ? current : next);
     }, [containerRef, setViewport, viewportRef]);
@@ -171,15 +173,19 @@ export function useCanvasViewportController({
         // only leaves LOD after the gesture commits.
         if (virtualizationPausedRef?.current) return;
         const now = performance.now();
-        if (!shouldRefreshCanvasVirtualization(renderedViewportRef.current, next, lastVirtualizationRefreshAtRef.current, now)) return;
+        // Re-render the page only when the camera nears the edge of the cards
+        // the last refresh pre-rendered; the world transform covers the rest.
+        const rebase = shouldRebaseCanvasRaster(next, viewport);
+        if (!(rebase && now - lastVirtualizationRefreshAtRef.current >= CANVAS_VIRTUALIZATION_REFRESH_INTERVAL_MS) && !shouldRefreshCanvasVirtualization(renderedViewportRef.current, next, lastVirtualizationRefreshAtRef.current, now, size, refreshedDuringGestureRef.current)) return;
         renderedViewportRef.current = next;
         lastVirtualizationRefreshAtRef.current = now;
+        refreshedDuringGestureRef.current = true;
         // Keep culling current without relaying every camera tick as a new
         // scale prop to all mounted nodes. Rebase with the graphics layer's
         // existing scale limits, and commit the final camera on gesture end.
-        if (shouldRebaseCanvasRaster(next, viewport)) setViewport(next);
+        if (rebase) setViewport(next);
         else setVirtualizationViewport(next);
-    }, [cancelViewportTransition, setViewport, setVirtualizationViewport, viewport, viewportRef, virtualizationPausedRef]);
+    }, [cancelViewportTransition, setViewport, setVirtualizationViewport, size, viewport, viewportRef, virtualizationPausedRef]);
 
     return {
         fitCanvasContent,

@@ -58,6 +58,22 @@ describe("large canvas media rendering", () => {
         expect(shouldRefreshCanvasVirtualization(previous, previous, 1_000, 1_200)).toBe(false);
     });
 
+    test("pans inside the pre-rendered margin without a page refresh", () => {
+        const size = { width: 1000, height: 800 };
+        const committed = { x: 0, y: 0, k: 1 };
+        // The committed window only pre-renders its base margin, so the first
+        // gesture refresh widens it right away.
+        expect(shouldRefreshCanvasVirtualization(committed, { x: -20, y: 0, k: 1 }, 0, 1_000, size)).toBe(true);
+        // A gesture refresh pre-renders wider; the next one waits until the
+        // camera nears its edge.
+        expect(shouldRefreshCanvasVirtualization(committed, { x: -150, y: 0, k: 1 }, 0, 1_000, size, true)).toBe(false);
+        expect(shouldRefreshCanvasVirtualization(committed, { x: -240, y: 0, k: 1 }, 0, 1_000, size, true)).toBe(true);
+        // Zooming in shrinks the visible world and never leaves the covered window.
+        expect(shouldRefreshCanvasVirtualization(committed, { x: -50, y: -40, k: 1.1 }, 0, 1_000, size, true)).toBe(false);
+        // Zooming out widens it.
+        expect(shouldRefreshCanvasVirtualization(committed, { x: 100, y: 80, k: 0.6 }, 0, 1_000, size, true)).toBe(true);
+    });
+
     test("keeps rendered nodes mounted longer than newly entering nodes", () => {
         expect(canvasNodeRenderPadding(true, false)).toBe(128);
         expect(canvasNodeRenderPadding(true, true)).toBe(640);
