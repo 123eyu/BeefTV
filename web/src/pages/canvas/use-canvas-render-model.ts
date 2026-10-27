@@ -249,7 +249,9 @@ export function useCanvasRenderModel({
             nextLod = nodes.filter((node) => !isFrameNode(node) && !renderHiddenNodeIds.has(node.id));
             const dragging = Boolean(dragPreview?.nodeIds.size);
             // Transient drag transforms are bound to the elements mounted when
-            // the drag began, so DOM membership is frozen until it ends.
+            // the drag began, so DOM membership is frozen until it ends. Cards
+            // are not kept over the overview canvas mid-zoom: drawing both
+            // layers costs more than mounting them again (measured in #50).
             domRegular = regular.filter((node) => dragging ? previousDomIds.has(node.id) : lodPinnedNodeIds.has(node.id));
         }
         retainedNodeIdsRef.current = new Set([...frames, ...regular].map((node) => node.id));
