@@ -153,6 +153,9 @@ func (s *ProviderConfig) SaveLocalModelConfigRevision(body []byte, expectedRevis
 
 // SaveCatalogWithAssistantDefault records initialization with the config atomically.
 // Connection-state retries and frontend snapshots cannot reset a later user choice.
+// A fresh authorization also keeps a saved choice that still exists in the catalog
+// being written: reconnecting or switching accounts must not silently move a user
+// off the assistant model they picked.
 func (s *ProviderConfig) SaveCatalogWithAssistantDefault(body []byte, authorizationID, model string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -165,8 +168,11 @@ func (s *ProviderConfig) SaveCatalogWithAssistantDefault(body []byte, authorizat
 		return err
 	}
 	if authorizationID != "" && document.AssistantDefaultAuthorization != authorizationID {
-		if model != "" {
+		saved := savedAssistantSelection(document.Config)
+		if model != "" && !assistantSelectionInCatalog(incoming, saved) {
 			incoming["assistantModel"] = model
+		} else if saved != "" {
+			incoming["assistantModel"] = saved
 		}
 		document.AssistantDefaultAuthorization = authorizationID
 	} else if document.Config != nil {
@@ -183,6 +189,75 @@ func (s *ProviderConfig) SaveCatalogWithAssistantDefault(body []byte, authorizat
 	}
 	_, err = s.saveLocalModelConfig(body, document)
 	return err
+}
+
+func savedAssistantSelection(config map[string]any) string {
+	if config == nil {
+		return ""
+	}
+	value, _ := config["assistantModel"].(string)
+	return strings.TrimSpace(value)
+}
+
+// assistantSelectionInCatalog 只按本次写入的目录判定可用性，避免旧快照把已经
+// 下线的模型留在选择里。格式为 channel::model；没有渠道前缀时在任一渠道命中即可。
+func assistantSelectionInCatalog(config map[string]any, selection string) bool {
+	channelID, modelID := "", strings.TrimSpace(selection)
+	if left, right, found := strings.Cut(modelID, "::"); found {
+		channelID, modelID = strings.TrimSpace(left), strings.TrimSpace(right)
+	}
+	if modelID == "" {
+		return false
+	}
+	channels, _ := config["channels"].([]any)
+	for _, raw := range channels {
+		channel, ok := raw.(map[string]any)
+		if !ok || (channelID != "" && channel["id"] != channelID) {
+			continue
+		}
+		if assistantChannelListsModel(channel, modelID) {
+			return true
+		}
+	}
+	return false
+}
+
+// assistantChannelListsModel 接受目录里的模型名、它的别名，以及别名指向的模型名，
+// 与助手解析同一条链；渠道没有 models 列表时回退 modelProfiles。
+func assistantChannelListsModel(channel map[string]any, modelID string) bool {
+	aliases, _ := channel["modelAliases"].(map[string]any)
+	aliasOf := func(key string) string {
+		if value, ok := aliases[key].(string); ok {
+			return strings.TrimSpace(value)
+		}
+		return ""
+	}
+	listed := false
+	models, _ := channel["models"].([]any)
+	for _, item := range models {
+		id, _ := item.(string)
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		listed = true
+		// 默认值按别名写入，目录里列的是原始模型名，两个方向都算命中。
+		if id == modelID || aliasOf(id) == modelID || aliasOf(modelID) == id {
+			return true
+		}
+	}
+	if listed {
+		return false
+	}
+	profiles, _ := channel["modelProfiles"].([]any)
+	for _, item := range profiles {
+		profile, _ := item.(map[string]any)
+		id, _ := profile["model"].(string)
+		if strings.TrimSpace(id) == modelID {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *ProviderConfig) saveLocalModelConfig(body []byte, existingDocument ProviderStateDocument) (int64, error) {
