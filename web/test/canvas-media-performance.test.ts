@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { describe, expect, test } from "bun:test";
 
 import { canvasNodeRenderPadding, resolveActiveCanvasMediaNodeId } from "../src/lib/canvas/canvas-performance-mode";
-import { shouldCommitCanvasScaleDuringGesture, shouldRefreshCanvasVirtualization } from "../src/lib/canvas/canvas-viewport-render-sync";
+import { canvasGestureRenderPadding, shouldCommitCanvasScaleDuringGesture, shouldRefreshCanvasVirtualization } from "../src/lib/canvas/canvas-viewport-render-sync";
 import { videoMetadata } from "../src/lib/canvas/canvas-generation-task-sync";
 import { canvasNodeVideoPreviewUrl, canvasVideoAssetPreviewUrl } from "../src/lib/canvas/canvas-media-preview";
 import { collectImageStorageKeys } from "../src/services/image-storage";
@@ -64,14 +64,22 @@ describe("large canvas media rendering", () => {
         // The committed window only pre-renders its base margin, so the first
         // gesture refresh widens it right away.
         expect(shouldRefreshCanvasVirtualization(committed, { x: -20, y: 0, k: 1 }, 0, 1_000, size)).toBe(true);
-        // A gesture refresh pre-renders wider; the next one waits until the
-        // camera nears its edge.
-        expect(shouldRefreshCanvasVirtualization(committed, { x: -150, y: 0, k: 1 }, 0, 1_000, size, true)).toBe(false);
-        expect(shouldRefreshCanvasVirtualization(committed, { x: -240, y: 0, k: 1 }, 0, 1_000, size, true)).toBe(true);
+        // A window mounted with the full gesture margin waits until the camera
+        // nears its edge.
+        expect(shouldRefreshCanvasVirtualization(committed, { x: -150, y: 0, k: 1 }, 0, 1_000, size, 320)).toBe(false);
+        expect(shouldRefreshCanvasVirtualization(committed, { x: -240, y: 0, k: 1 }, 0, 1_000, size, 320)).toBe(true);
         // Zooming in shrinks the visible world and never leaves the covered window.
-        expect(shouldRefreshCanvasVirtualization(committed, { x: -50, y: -40, k: 1.1 }, 0, 1_000, size, true)).toBe(false);
+        expect(shouldRefreshCanvasVirtualization(committed, { x: -50, y: -40, k: 1.1 }, 0, 1_000, size, 320)).toBe(false);
         // Zooming out widens it.
-        expect(shouldRefreshCanvasVirtualization(committed, { x: 100, y: 80, k: 0.6 }, 0, 1_000, size, true)).toBe(true);
+        expect(shouldRefreshCanvasVirtualization(committed, { x: 100, y: 80, k: 0.6 }, 0, 1_000, size, 320)).toBe(true);
+    });
+
+    test("widens the gesture margin a step per refresh instead of all at once", () => {
+        expect(canvasGestureRenderPadding(0)).toBe(128);
+        expect(canvasGestureRenderPadding(1)).toBe(192);
+        expect(canvasGestureRenderPadding(2)).toBe(256);
+        expect(canvasGestureRenderPadding(3)).toBe(320);
+        expect(canvasGestureRenderPadding(10)).toBe(320);
     });
 
     test("re-commits node scale mid-gesture only for large zoom stretches", () => {

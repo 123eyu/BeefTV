@@ -62,6 +62,28 @@ test("视口裁剪持续更新，倍率重排分段提交且手势结束保持�
         expect(result.after.x).toBeCloseTo(result.before.x, 2);
         expect(result.after.y).toBeCloseTo(result.before.y, 2);
         expect(result.after.width).toBeCloseTo(result.before.width, 2);
+        // 恢复保存的视口后持续平移：新页面里裁剪基准还是初始化时的 100%，加载画布把视口直接恢复成 200%。
+        // 向左平移时，视野在旧的 100% 窗口里，但已挂载的只有 200% 那一小块；必须照常刷新，不能等手势结束。
+        await page.reload();
+        await page.locator("#node").waitFor({ timeout: 5000 });
+        const restored = await page.evaluate(async () => {
+            const w = window as unknown as { viewportProbe(): any; restoreViewport(next: { x: number; y: number; k: number }): void };
+            const container = document.querySelector("[data-canvas-viewport]")!;
+            const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+            await wait(80);
+            w.restoreViewport({ x: 0, y: 0, k: 2 });
+            await wait(80);
+            const refreshes: number[] = [];
+            for (let i = 0; i < 6; i++) {
+                container.dispatchEvent(new WheelEvent("wheel", { deltaX: 100, deltaY: 0, clientX: 350, clientY: 220, bubbles: true, cancelable: true }));
+                await wait(70);
+                refreshes.push(w.viewportProbe().virtualizationViewport?.x ?? Number.NaN);
+            }
+            return { refreshes, live: w.viewportProbe().live };
+        });
+        expect(restored.live).toEqual({ x: -600, y: 0, k: 2 });
+        expect(restored.refreshes.some(Number.isFinite)).toBe(true);
+        expect(restored.refreshes.at(-1)).toBeLessThanOrEqual(-400);
         const scoped = await page.evaluate(() => (window as any).scopedScaleProbe());
         expect(scoped.first.titleWidth).toBeCloseTo(100, 2);
         expect(scoped.first.inverse.trim()).toBe("20");

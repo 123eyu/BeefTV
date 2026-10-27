@@ -5,7 +5,7 @@ import { isFrameNode } from "@/lib/canvas/canvas-frame";
 import { canvasLodTypicalNodeExtent, resolveCanvasLodActive } from "@/lib/canvas/canvas-lod";
 import { sameNodeSemanticData } from "@/lib/canvas/canvas-project-domain";
 import { canvasNodeRenderPadding, CANVAS_MAX_RENDERED_CONNECTIONS, shouldReduceCanvasMediaEffects } from "@/lib/canvas/canvas-performance-mode";
-import { CANVAS_GESTURE_RENDER_PADDING_PX, CANVAS_GESTURE_RETAIN_LIMIT } from "@/lib/canvas/canvas-viewport-render-sync";
+import { CANVAS_GESTURE_RETAIN_LIMIT, type CanvasVirtualizationViewport } from "@/lib/canvas/canvas-viewport-render-sync";
 import { buildCanvasNodeMentionReferenceMap, buildCanvasResourceReferences, reuseCanvasResourceReferences, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { buildSkillMentionReferences } from "@/lib/canvas/canvas-skill-mentions";
 import { buildCanvasSpatialIndex, canvasNodeBounds, type CanvasSpatialIndexEntry } from "@/lib/canvas/canvas-spatial-index";
@@ -149,8 +149,9 @@ export function useCanvasRenderModel({
     const { batchChildCountById, batchMotionById, canvasImageNodes, collapsedBatchChildIds, frameChildrenById, renderHiddenNodeIds } = nodeDerivedData;
     const renderBounds = useMemo(() => {
         // A gesture refreshes this window only when the camera nears its edge
-        // (see shouldRefreshCanvasVirtualization), so it pre-renders wider.
-        const gesturePadding = viewportInteracting ? CANVAS_GESTURE_RENDER_PADDING_PX : 0;
+        // (see shouldRefreshCanvasVirtualization). The controller widens the
+        // margin a step per refresh and passes it with the camera.
+        const gesturePadding = viewportInteracting ? (viewport as CanvasVirtualizationViewport).renderPaddingPx ?? 0 : 0;
         const enterPadding = Math.max(canvasNodeRenderPadding(reduceMediaEffects, false), gesturePadding) / viewport.k;
         const retainPadding = Math.max(canvasNodeRenderPadding(reduceMediaEffects, true), gesturePadding) / viewport.k;
         const viewLeft = -viewport.x / viewport.k;
@@ -161,7 +162,7 @@ export function useCanvasRenderModel({
             enter: { left: viewLeft - enterPadding, top: viewTop - enterPadding, right: viewLeft + viewWidth + enterPadding, bottom: viewTop + viewHeight + enterPadding },
             retain: { left: viewLeft - retainPadding, top: viewTop - retainPadding, right: viewLeft + viewWidth + retainPadding, bottom: viewTop + viewHeight + retainPadding },
         };
-    }, [reduceMediaEffects, viewport.k, viewport.x, viewport.y, viewportInteracting, viewportSize.height, viewportSize.width]);
+    }, [reduceMediaEffects, viewport, viewportInteracting, viewportSize.height, viewportSize.width]);
     const geometryNodesRef = useRef(nodes);
     const geometryNodes = useMemo(() => {
         const previous = geometryNodesRef.current;
