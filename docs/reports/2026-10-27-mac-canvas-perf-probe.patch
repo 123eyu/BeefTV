@@ -33,10 +33,10 @@ index f41659b..edb757a 100644
      const params = useParams<{ id: string }>();
 diff --git a/web/src/perf-probe.ts b/web/src/perf-probe.ts
 new file mode 100644
-index 0000000..f99c234
+index 0000000..e27d8fb
 --- /dev/null
 +++ b/web/src/perf-probe.ts
-@@ -0,0 +1,212 @@
+@@ -0,0 +1,242 @@
 +// 仅用于本地诊断构建：逐帧记录 rAF 间隔，并用合成滚轮/拖动事件复现固定手势。
 +// 结果写进页面右下角的文本，便于外部用无障碍树读取。
 +(window as any).__perfCounters = { page: 0, node: 0 };
@@ -176,6 +176,18 @@ index 0000000..f99c234
 +    b.onclick = (e) => { e.stopPropagation(); void run(name, fn); };
 +    box.append(b);
 +}
++{
++    const b = document.createElement("button");
++    b.textContent = "force-play";
++    b.setAttribute("aria-label", "force-play");
++    b.onclick = (e) => {
++        e.stopPropagation();
++        const v = [...document.querySelectorAll("video")];
++        v.forEach((x) => { x.muted = true; x.loop = true; void x.play().catch(() => undefined); });
++        setTimeout(() => out.setAttribute("aria-label", `perfres forceplay video=${v.length} playing=${v.filter((x) => !x.paused).length} t=${v.map((x) => x.currentTime.toFixed(1)).join("/")}`), 2000);
++    };
++    box.append(b);
++}
 +for (const id of ["1WeOxRBwocBU2m0QtJ0fi", "Dxzhizn0yd6SNrcp0SakP", "v8DkdNpqOkSztrBDMafip", "perf300"]) {
 +    const b = document.createElement("button");
 +    b.textContent = `open-${id}`;
@@ -208,7 +220,25 @@ index 0000000..f99c234
 +    b.onclick = (e) => {
 +        e.stopPropagation();
 +        const play = [...document.querySelectorAll<HTMLButtonElement>("[data-canvas-world-layer] button[aria-label^='播放 ']")].find((el) => { const r = el.getBoundingClientRect(); return r.top > 60 && r.bottom < innerHeight - 160 && r.left > 0 && r.right < innerWidth; });
-+        play?.click();
++        if (!play) {
++            // 先把画面对准第一个视频节点并放大到 LOD 阈值以上，再找播放按钮。
++            const c = document.querySelector<HTMLElement>("[data-canvas-viewport]")!;
++            const target = [...document.querySelectorAll<HTMLElement>("[data-node-id]")].find((el) => el.dataset.canvasNodeType === "video");
++            void (async () => {
++                for (let i = 0; i < 80; i++) {
++                    const r = (target || c).getBoundingClientRect();
++                    const cr = c.getBoundingClientRect();
++                    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
++                    c.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, clientX: cr.left + cr.width / 2, clientY: cr.top + cr.height / 2, deltaX: (cx - cr.left - cr.width / 2) * 0.3, deltaY: (cy - cr.top - cr.height / 2) * 0.3, deltaMode: 0 }));
++                    await frame();
++                    if (r.width < 380) c.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, clientX: cx, clientY: cy, deltaY: -6, ctrlKey: true, deltaMode: 0 }));
++                    await frame();
++                }
++                out.setAttribute("aria-label", `perfres focused video target=${Boolean(target)}`);
++            })();
++            return;
++        }
++        play.click();
 +        setTimeout(() => { const v = [...document.querySelectorAll("video")]; out.setAttribute("aria-label", `perfres play clicked=${Boolean(play)} video=${v.length} playing=${v.filter((x) => !x.paused).length} t=${v.map((x) => x.currentTime.toFixed(1)).join("/")}`); }, 3000);
 +    };
 +    box.append(b);
