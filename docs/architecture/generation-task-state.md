@@ -14,7 +14,7 @@
 1. **值得重构，不是收尾 #16 就够。** 「提交成没成、结果在不在、点了扣不扣钱」现在由前端约 30 个文件、后端约 18 个文件分别推断（清单见第二节）。同一个后端接口 `POST /tasks/:id/retry` 内部有三种走法（继续下载 / 按回执免费重建 / 重新提交并扣费），前端事先不知道会走哪条，只能靠自己的推断去猜。今天四轮检查查出的问题全部出在「前端猜错了后台会怎么做」。
 2. **做法一句话：后台给每个任务算一个「下一步」结论，前端只照着显示和调用。** 和 Stripe PaymentIntent 的 `status + next_action` 同一思路（〔状态〕4.1）。这个结论不是新的状态机，是在后台已有的 `taskdelivery.Project`（它已经算出 `resultState`）旁边多算几个字段，输入全部是后台已经持久化的事实。
 3. **免费取回放到后台自动做。** 后台已有每 5 秒运行的取回循环（`startGenerationDeliveryRecovery` → 下载结果 → `recoverPendingCanvasBindings` 把结果写进画布节点）。只要在循环里加上「失败、可能已被上游接纳的图片任务按回执重建，重建不了就写明原因」这一步，客户 A 这类节点会被后台自动修好、写回画布，前端不需要任何自动取回代码。#16 里前端的自动取回扫描就不再需要。
-4. **能不能重新生成，按渠道分两种来源，不新增状态：** BeefAPI 渠道照读 BeefAPI 返回的扣费结论——已退款就直接重新生成，还在结算就等，已扣费成功就先取回；第三方渠道失败且取不回时显示「重新生成」，点了先确认「这个渠道没法确认上次扣没扣钱，可能会再扣一次」（第 3.1 节）。
+4. **能不能重新生成，按渠道分两种来源，不新增状态：** BeefAPI 渠道照读 BeefAPI 返回的扣费结论——已退款就直接重新生成，还在结算就等，已扣费成功就先取回；第三方渠道失败且取不回时显示「重新生成」，点了先确认「这个渠道无法确认上次是否已扣费，重新生成可能会再扣一次」（第 3.1 节）。
 5. **免费和扣费拆成两个接口：** `POST /tasks/:id/recover` 结构上不可能提交上游；`POST /tasks/:id/retry` 和带 `retryOf`、对着一个已有节点的 `POST /tasks` 是唯一会扣费的入口。可能重复扣费时，后台先返回费用预览、这次不提交；调用方在**它自己的界面**问用户（BeefTV 弹确认框，Codex / Claude Code 等外部 MCP/CLI 在它们的界面问，内置助手要用户确认过的制作方案），同意后带同一份报价和同一个 `operationId` 再提交。后台用一条数据库唯一约束保证一次同意最多提交一次，并写明：后台无法证明调用方真的问过人，能保证的是不明确声明同意就绝不扣钱。
 6. **节点上 7 个字段收成 1 个**（`taskOutcome`，从任务抄过来，前端不写），另加只在「任务号还没拿到」时才存在的 `taskClientOperationId` / `generationSubmissionState` 两个字段。
 7. **已带 `Idempotency-Key` 且核实上游会去重的渠道（BeefAPI 图片、超分；BeefAPI 视频待确认生产开关），「提交未确认」用同一个键、经原渠道原样重发，不算再扣钱、不问用户**（第 3.7 节）。
@@ -120,7 +120,7 @@ type Outcome struct {
 | BeefAPI 返回 | 出处 | BeefTV 的 `regenerate` |
 | --- | --- | --- |
 | 视频 `usage_state = failed`（结算为失败或已退款） | `model/task.go` `TaskUsageDisplayOf`：已结算且任务失败或 `billing_state = refunded` 时为 `failed` | `allowed`：直接重新生成，不弹「可能重复扣费」 |
-| 视频 `usage_state = pending`（还没结算） | 同上，未结算一律 `pending`；同时返回 `reconcile_deadline` | `blocked`：不让重新生成，显示「BeefAPI 正在核对上次提交，预计 {reconcile_deadline} 前有结论」，后台照常轮询 |
+| 视频 `usage_state = pending`（还没结算） | 同上，未结算一律 `pending`；同时返回 `reconcile_deadline` | `blocked`：不让重新生成，显示「BeefTV 正在核对上次提交，预计 {时间} 前有结论」（时间取 `reconcile_deadline`），后台照常轮询 |
 | 视频 `usage_state = completed`（成功并扣费） | 同上 | 先取回（`retrievable`）；结果已到手后用户想再来一版，是 `ready` 后的正常新生成 |
 | 图片 `billing_state = refunded` | `controller/image_jobs.go` `GetImageJob`；取值见 `model/task_billing.go` | `allowed` |
 | 图片 `billing_state = settled` | 同上 | 先取回；到手后再来一版是正常新生成 |
@@ -138,7 +138,7 @@ type Outcome struct {
 
 **(2) 第三方渠道（用户自带 Key、插件、直连火山 / 可灵 / Runway 等）：失败且取不回就由用户确认。**
 - 有上游任务号的，后台先按任务号查（第 3.2 节）；查到还在跑或有结果，`blocked`，不给重新生成。
-- 查完确定取不回（上游返回失败、过了保留期、没有任务号也查不了）：`confirm`。错误卡上显示「重新生成」，点了先确认：「这个渠道没法确认上次扣没扣钱，可能会再扣一次」。不再按渠道、按错误码区分收不收费、退不退款。
+- 查完确定取不回（上游返回失败、过了保留期、没有任务号也查不了）：`confirm`。错误卡上显示「重新生成」，点了先确认：「这个渠道无法确认上次是否已扣费，重新生成可能会再扣一次」。不再按渠道、按错误码区分收不收费、退不退款。
 - 唯一例外是请求根本没离开 BeefTV（派发状态 `not_sent`、`request_not_sent`）：`allowed`。这是 BeefTV 自己记的事实，不是对上游计费的推断【本轮判断，请架构师确认是否保留】。
 
 | 任务状态 | `regenerate` |
@@ -148,7 +148,7 @@ type Outcome struct {
 | `failed`，BeefAPI 渠道 | 照上面第一张表 |
 | `failed`，第三方渠道，请求没发出 | `allowed` |
 | `failed`，第三方渠道，其余 | `confirm` |
-| `failed`，BeefAPI 报已扣费（`completed` / `settled`）但结果确实取不回 | `confirm`，文案写「BeefAPI 已扣费，结果拿不回」 |
+| `failed`，BeefAPI 报已扣费（`completed` / `settled`）但结果确实取不回 | `confirm`，文案写「上次已扣费，但结果拿不回」 |
 
 上一版这里的「确认未计费的三种情况」「渠道协议声明里写退费规则」「审核失败按是否计费另判、比较内容指纹」都删掉。审核未通过的任务：BeefAPI 渠道照读它的结论（上游 4xx 拒绝它会退款，`failed` → `allowed`）；第三方渠道和其他失败一样是 `confirm`，用户改不改输入都要确认一次。这样不再需要内容指纹。
 
@@ -183,7 +183,7 @@ type Outcome struct {
 
 - 取回成功：任务变 `succeeded`；
 - **确定上游没有结果**（上游明确返回失败、明确拒绝、确认没接纳）：写 `recovery_outcome = no_result`，`phase = failed`。「没有结果」不等于「没扣钱」，`regenerate` 按第 3.1 节判：BeefAPI 渠道照读它的 `usage_state` / `billing_state`，第三方渠道除「请求没发出」外一律 `confirm`；
-- **系统无法取回**（回执缺失、回执不完整、多条冲突回执、过了渠道保留期；上游可能已经生成并计费，只是这边拿不到）：写 `recovery_outcome = unrecoverable`。`phase = failed`；`regenerate` 同上：BeefAPI 渠道报已退款（`failed` / `refunded`）的是 `allowed`，报未结算（`pending` / 明确返回空 `billing_state`）的是 `blocked`、不论等多久，报已扣费的是 `confirm`；第三方渠道和 BeefAPI 不提供扣费字段的任务按第 3.1 节 (2) 是 `confirm`。`confirm` 时文案写明「上游可能已生成并扣费，本地拿不到结果」，并保留「查看原任务」；
+- **系统无法取回**（回执缺失、回执不完整、多条冲突回执、过了渠道保留期；上游可能已经生成并计费，只是这边拿不到）：写 `recovery_outcome = unrecoverable`。`phase = failed`；`regenerate` 同上：BeefAPI 渠道报已退款（`failed` / `refunded`）的是 `allowed`，报未结算（`pending` / 明确返回空 `billing_state`）的是 `blocked`、不论等多久，报已扣费的是 `confirm`；第三方渠道和 BeefAPI 不提供扣费字段的任务按第 3.1 节 (2) 是 `confirm`。`confirm` 时文案写明「上次可能已生成并扣费，但结果拿不回」，并保留「查看原任务」；
 - 暂时失败（读库出错、锁冲突、存储配额、网络）：什么都不写，下次再试，直到过了保留期。
 
 只有前两类拿不回的持久化事实能让 `phase` 变成 `failed`。#16 后端打 `result_unrecoverable` 的几处，按上面拆成这两类写入。`recovery_outcome` 只回答「结果还在不在」；「扣没扣钱」BeefAPI 渠道读 BeefAPI，第三方渠道不判断、交给用户确认（第 3.1 节），两者分开存、分开判。超时只能决定「不再等」，不能决定「结果不存在」（〔状态〕3.4 midjourney-proxy 的反面例子）。
@@ -224,16 +224,16 @@ BeefAPI 渠道在同一个循环里顺带刷新扣费结论：任务 `failed` �
 
 **流程（三类调用方共用同一个后台合同）：**
 
-1. 调用方发起会扣费的提交。节点当前任务是 `confirm` 而请求里没有有效同意时，后台返回 `paid_confirmation_required`，附一份**费用预览**，并明确写「本次没有提交上游」。
+1. 调用方发起会扣费的提交。节点当前任务是 `confirm` 而请求里没有有效同意时，后台返回 `paid_confirmation_required`，附一份**费用预览**，并明确告诉用户「这次还没有开始生成」。
 2. 调用方在**它自己的界面**问用户：
-   - BeefTV 自己的界面：错误卡上的「重新生成」按钮就是这个确认入口（用户 2026-10-27：「我们应该有一个用户确认要重新跑的按钮」），点了弹现有的确认框，文案按第 3.1 节：第三方渠道写「这个渠道没法确认上次扣没扣钱，可能会再扣一次」，BeefAPI 已扣费但拿不回的写「BeefAPI 已扣费，结果拿不回，重新生成会再扣一次」。不新增其他按钮；
+   - BeefTV 自己的界面：错误卡上的「重新生成」按钮就是这个确认入口（用户 2026-10-27：「我们应该有一个用户确认要重新跑的按钮」），点了弹现有的确认框，文案按第 3.1 节：第三方渠道写「这个渠道无法确认上次是否已扣费，重新生成可能会再扣一次」，BeefAPI 渠道已扣费但拿不回的写「上次已扣费，但结果拿不回，重新生成会再扣一次」。不新增其他按钮；
    - 外部 MCP / CLI（Codex、Claude Code 等）：在它们的界面上问，方式见第 3.5 节；
    - 内置助手：照旧要用户确认过的制作方案（`SubmitAuthorizedGeneration` 只认用户确认过的方案，#261），**助手不能自己签**。方案卡里包含 `confirm` 节点时，方案卡要显示这些节点的费用预览，用户确认方案即视为对这几个节点的同意。
 3. 用户同意后，调用方带着**同一份报价**（`quoteId`）和**同一个 `operationId`**（即 `clientOperationId`）再次提交。后台在接纳事务里核对报价没被换、没涨价、输入没变，写入同意记录、接纳新任务。
 
 **费用预览**的内容依据〔外部〕6.1 节，扩展已有的 `canvas.generation.propose`（它已返回模型、节点、`proposalId` 和两个版本号，但没有金额，〔外部〕第 2 节【已核于该调研】）：
 
-- 原任务、画布、全部目标节点、生成数量、模型、渠道；后台保存完整输入指纹；
+- 原任务、画布、全部目标节点、生成数量、模型、渠道（给用户看时显示渠道的显示名，不显示渠道 ID；BeefAPI 预置渠道的显示名本来就是「BeefTV」，`providerpreset` 测试里断言 `DisplayName == "BeefTV"`【已核】）；后台保存完整输入指纹；
 - `willSubmitUpstream`、`mayChargeAgain` 由后台计算，不能由调用方或模型自填；
 - 费用：单位（积分 / 人民币 / 上游币种分开，不假设兑换比例）、预计值、能否硬限上限、价格来源和版本。**不确定就写「未知」并写明计费依据，不能写 0**；只有估算不能叫「最高扣费」；
 - 写明「原任务可能已经扣过一次」，但不写成「已确定扣过」（BeefAPI 返回 `completed` / `settled` 的除外，那是已确定扣过）；
@@ -272,7 +272,7 @@ MCP 标准注解（`readOnlyHint`、`destructiveHint`、`idempotentHint`、`open
   approval_mode = "prompt"
   ```
 - **支持 form elicitation 的客户端**：执行付费工具时，后台用冻结的报价组一条 form，金额和风险是展示文字，回答只用一个布尔值，不预选同意。只有 `action=accept` **且** `confirmed=true` 才算同意；拒绝、取消、超时、断线都不算。`2025-11-25` 用 `elicitation/create`，`2026-07-28` 用 `inputRequests` / `inputResponses`，两种由协议适配层承载，业务合同只有一份（〔外部〕3.3 节）。当前 `go-sdk v1.8.0` 对新版的兼容性未验证【未核实，〔外部〕】。
-- **没有 elicitation 的客户端**：返回结构化的 `paid_confirmation_required`（同时给 `structuredContent` 和等价文本），写明「这次没有提交上游」；调用方用自己的对话或审批界面问用户，再带同一报价、同一 `operationId` 和同意声明提交。拿不到同意就停，不自动改成已确认。`paid_confirmation_required` 是 BeefTV 业务原因，不冒充 JSON-RPC 标准错误码（〔外部〕6.3 节）。
+- **没有 elicitation 的客户端**：返回结构化的 `paid_confirmation_required`（同时给 `structuredContent` 和等价文本），给用户读的文字写「这次还没有开始生成」；调用方用自己的对话或审批界面问用户，再带同一报价、同一 `operationId` 和同意声明提交。拿不到同意就停，不自动改成已确认。`paid_confirmation_required` 是 BeefTV 业务原因，不冒充 JSON-RPC 标准错误码（〔外部〕6.3 节）。
 - **Cursor、Claude Desktop**：URL 模式、`2026-07-28` 支持情况未找到官方承诺，列为待实测，先按「没有 elicitation」的路径兜底【未核实，〔外部〕第 4 节】。
 - 同时开 form elicitation 和 `requiresUserInteraction` 可能问两遍；按客户端选一种，并写明由调用方承担取得同意的责任（〔外部〕6.3 节）。
 
@@ -376,6 +376,12 @@ CREATE TABLE regeneration_consents (
 - `lib/generation-error.ts` 不再分类**任务**的错误，只用于前端本地错误（还没发出请求时的网络、参数、保存失败），任务失败的文案由 `outcome.reason` 选。这部分可以在守门上线之后慢慢缩，不阻塞上线。
 - 前端不再有任何自动调用 `/retry` 或 `/recover` 的代码。加载画布时的恢复扫描（`use-canvas-generation.ts`）只负责订阅任务、把 `ready` 的结果写回节点，这是现在已有的流程。
 - BeefTV 界面的确认框：收到 `paid_confirmation_required` 时显示后台给的费用预览（费用未知时显示「未知」和计费依据），用户点确认后带着同一 `quoteId`、同一 `clientOperationId` 再提交一次。
+
+**给用户看的文字不提 BeefAPI，也不露内部字段。** 用户 2026-10-27 15:19：「我说的是这个应该改成beeftv正在核对 不应该展示beefapi给用户看」。规则：
+- 适用范围：所有会显示给用户的文字——错误卡、提示、按钮、确认框、费用预览里的「计费依据」，以及 MCP/CLI 返回给用户读的文字（`structuredContent` 里的说明、等价文本、elicitation 信息、CLI 终端提示、工具说明）。
+- 不出现 BeefAPI、渠道 ID、内部字段名和取值（`usage_state`、`billing_state`、`reconcile_deadline`、`pending`、`settled`、`refunded`、`routeRun`、`operationId` 等）。要说是谁在核对、谁扣的费，就说「BeefTV」，或者不提来源（如「上次已扣费」）；时间直接显示成具体时间。「渠道」可以说，BeefTV 设置里本来就这么叫。
+- 只给后台和代码看的内容不受限：本方案的设计说明、日志、`reason` 这类机器原因、`paid_confirmation_required` 这类错误码，照常写 BeefAPI 和字段名。`lib/task-outcome.ts` 按 `outcome.reason` 选文案时，文案表里的句子要符合这条规则。
+- 本方案里用「」括起来、标明是界面文案的句子都已按这条写好；实施时加一个文案测试，断言用户可见文案里不出现 `BeefAPI` 和上面这些字段名。
 
 ### 3.9 唯一留在前端的状态：任务号还没拿到
 
@@ -512,7 +518,7 @@ CREATE TABLE regeneration_consents (
 
 前两轮 Codex 评审的结论已落进正文：同意确认后重新生成；按目标节点检查，批次检查每个目标；退避按渠道定；批量查询；改输入不能免确认。第 4 轮按用户 2026-10-27 的简化和〔#30〕改动后，原第 1 条（审核失败按计费另判）、第 5 条（外部付费权限，已定为默认关的开关）、第 6 条（`outcome_version`，已定为不加）已在正文定下。还需要拍板的：
 
-1. **BeefAPI 视频 `usage_state = pending` 且已过 `reconcile_deadline` 时显示什么。** 按 BeefAPI 代码，过了截止时间、还没有上游任务号的，它的核对循环会自动退款并把任务标成失败（`model/video_deadline.go` `RefundUnreconciledVideoTask`，默认 1800 秒；`service/video_reconcile_deadline.go` 调用）【已核】。但这个自动退款只处理没有上游任务号的提交；有上游任务号的、或 BeefAPI 没开核对循环的，过了截止时间仍可能是 `pending`。运维手册第 92 行的「超过 24 小时」是允许**人工**核对的条件，还要操作员提供供应商证据，不代表旧任务不会再完成或扣费。所以定为：**`pending` 不管等多久都是 `blocked`，BeefTV 不按等待时间放开重跑**（任务约束「pending → 不让重新生成」）。过了截止时间只改文案为「BeefAPI 仍在核对，已超过预计时间，可联系客服」，后台按退避继续读，等 BeefAPI 给出 `failed` / `completed` 再按第 3.1 节处理。`reconcile_deadline` 只在 BeefAPI 开了核对循环时才返回，没返回时只显示「正在核对」。待架构师确认的只剩文案和退避间隔。
+1. **BeefAPI 视频 `usage_state = pending` 且已过 `reconcile_deadline` 时显示什么。** 按 BeefAPI 代码，过了截止时间、还没有上游任务号的，它的核对循环会自动退款并把任务标成失败（`model/video_deadline.go` `RefundUnreconciledVideoTask`，默认 1800 秒；`service/video_reconcile_deadline.go` 调用）【已核】。但这个自动退款只处理没有上游任务号的提交；有上游任务号的、或 BeefAPI 没开核对循环的，过了截止时间仍可能是 `pending`。运维手册第 92 行的「超过 24 小时」是允许**人工**核对的条件，还要操作员提供供应商证据，不代表旧任务不会再完成或扣费。所以定为：**`pending` 不管等多久都是 `blocked`，BeefTV 不按等待时间放开重跑**（任务约束「pending → 不让重新生成」）。过了截止时间只改文案为「BeefTV 正在核对，已超过预计时间，可联系客服」，后台按退避继续读，等 BeefAPI 给出 `failed` / `completed` 再按第 3.1 节处理。`reconcile_deadline` 只在 BeefAPI 开了核对循环时才返回，没返回时只显示「正在核对」。待架构师确认的只剩文案和退避间隔。
 2. **BeefAPI 的超分、音频等其他任务有没有扣费结论。** 本轮核对【已核】：超分 `GET /v1/media-upscale/tasks/{id}`（`service/fal_upscale.go` `FalUpscaleReceipt`）只在成功时返回 `billing_status`（`settled` / `pending`），失败时没有退款结论；音频 BeefTV 走 `/audio/speech`（同步）和 `/audio/tasks`（`generation/audio.go`），BeefAPI 仓库里查不到 `/audio/tasks` 路由，也没有扣费字段。建议：这两类先按第三方处理（失败取不回就确认重跑）；超分如果要直接放开，需要 BeefAPI 在失败的超分回执里补 `billing_state`，属于 BeefAPI 的改动，另开任务。
 3. **第三方渠道「请求没发出」直接放行**（第 3.1 节）：这是 BeefTV 自己记的事实，不是对上游计费的推断，建议保留；若架构师认为也该统一确认，删掉这一行即可。
 4. 刷新后自动重发（第 3.9 节）：要不要在提交前把请求体存到本地（InvokeAI 的提交日志），换取刷新后也不用用户再点。代价是多一份本地存储和清理逻辑。
