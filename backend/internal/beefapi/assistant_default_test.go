@@ -87,12 +87,12 @@ func TestAssistantDefaultSurvivesStateWriteFailureAndColdRecovery(t *testing.T) 
 	if selection := loadAssistantSelection(t, reopened); selection != "beefapi::claude-opus-5-5" {
 		t.Fatalf("new authorization overwrote saved choice: %q", selection)
 	}
-	// 新目录不再提供该模型时才回到默认值，避免助手停在不可用的模型上。
+	// 新目录不再提供该模型时也保留原选择，由界面提示重新选择；不自动换模型。
 	if err := applyCatalog(reopened, []CatalogModel{{ID: "deepseek-v4.1-flash", ModelType: "text"}}, "42", "42", "9003"); err != nil {
 		t.Fatal(err)
 	}
-	if selection := loadAssistantSelection(t, reopened); selection != assistantDefaultKey {
-		t.Fatalf("removed selection did not fall back to default: %q", selection)
+	if selection := loadAssistantSelection(t, reopened); selection != "beefapi::claude-opus-5-5" {
+		t.Fatalf("authorization replaced an unavailable saved choice: %q", selection)
 	}
 }
 
@@ -186,12 +186,12 @@ func TestFreshAuthorizationOnlyFillsMissingAssistantSelection(t *testing.T) {
 			}
 		})
 	}
-	// 新账号目录不再提供用户选的模型：用新目录里的默认值补上。
+	// 新账号目录不再提供用户选的模型：同样保留原选择，由用户自己重新选。
 	if err := applyCatalog(store, []CatalogModel{{ID: "deepseek-v4.1-flash", ModelType: "text"}}, "99", "77", "9004"); err != nil {
 		t.Fatal(err)
 	}
-	if selection := loadAssistantSelection(t, store); selection != assistantDefaultKey {
-		t.Fatalf("unavailable choice was not replaced: %q", selection)
+	if selection := loadAssistantSelection(t, store); selection != "beefapi::claude-opus-5-5" {
+		t.Fatalf("unavailable saved choice was replaced: %q", selection)
 	}
 }
 

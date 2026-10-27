@@ -4,7 +4,7 @@ All notable public changes to BeefTV are documented in this file.
 
 ## Unreleased
 
-- 内置助手在 BeefAPI 连接授权成功后默认使用 DeepSeek V4.1 Flash。已经保存过助手模型选择的用户保持不变：目录刷新不会改写，重新授权和换账号也只在原模型已不在目录里时才补上默认值；GPT-6 Astra 仍可在托管目录中继续选用。
+- 内置助手在 BeefAPI 连接授权成功后默认使用 DeepSeek V4.1 Flash。默认值只在还没选过助手模型时写入，已经保存过选择的用户保持不变：目录刷新、重新授权和换账号都不会改写；GPT-6 Astra 仍可在托管目录中继续选用。
 - 即梦官方视频：接口返回 `code=10000` 视为成功，完成的任务不再被误判失败；时长改用官方 `frames` 表达（5 秒=121、10 秒=241），画幅改用 `aspect_ratio`，`req_json` 归到查询请求，不再混在创建正文里。
 - Built-in BeefAPI can be connected from the desktop app without pasting a key.
 - Prepared the first audited public source snapshot.

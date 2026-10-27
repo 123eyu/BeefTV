@@ -697,8 +697,9 @@ func requireEffectiveChannel(t *testing.T, effective EffectiveModelConfig, id st
 }
 
 // 新授权只补空缺：已保存的助手选择只要还在本次写入的目录里就保留，
-// 重连和换账号都不能把用户选过的模型改成默认值。
-func TestSaveCatalogWithAssistantDefaultKeepsSavedChoiceStillInCatalog(t *testing.T) {
+// 重连和换账号都不能把用户选过的模型改成默认值，即使该模型已不在新目录里：
+// 这时保留原值、由界面提示重新选择，而不是自动换一个模型。
+func TestSaveCatalogWithAssistantDefaultOnlyFillsMissingSelection(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		saved    string
@@ -727,7 +728,13 @@ func TestSaveCatalogWithAssistantDefaultKeepsSavedChoiceStillInCatalog(t *testin
 			name:     "saved model gone from catalog",
 			saved:    "beefapi::claude-opus-5-5",
 			channels: `[{"id":"beefapi","models":["deepseek-v4.1-flash"]}]`,
-			want:     "beefapi::deepseek-v4.1-flash",
+			want:     "beefapi::claude-opus-5-5",
+		},
+		{
+			name:     "saved model gone and no default available",
+			saved:    "beefapi::claude-opus-5-5",
+			channels: `[{"id":"beefapi","models":[]}]`,
+			want:     "beefapi::claude-opus-5-5",
 		},
 		{
 			name:     "no saved choice",
