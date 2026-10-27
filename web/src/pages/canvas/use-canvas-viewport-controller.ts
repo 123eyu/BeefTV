@@ -5,8 +5,7 @@ import { isHiddenBatchChild } from "@/lib/canvas/canvas-project-domain";
 import { applyCanvasLiveViewport } from "@/lib/canvas/canvas-live-viewport";
 import { canOpenCanvasNodePromptPanel, isCanvasMediaResultNode } from "@/lib/canvas/canvas-node-semantics";
 import { getCanvasNodesBounds, viewportAtScale, viewportForBounds, type CanvasViewportSize } from "@/lib/canvas/canvas-viewport";
-import { shouldRefreshCanvasVirtualization } from "@/lib/canvas/canvas-viewport-render-sync";
-import { shouldRebaseCanvasRaster } from "@/lib/canvas/canvas-leafer-viewport";
+import { CANVAS_VIRTUALIZATION_REFRESH_INTERVAL_MS, shouldCommitCanvasScaleDuringGesture, shouldRefreshCanvasVirtualization } from "@/lib/canvas/canvas-viewport-render-sync";
 import { CanvasNodeType, type CanvasNodeData, type ContextMenuState, type Position, type ViewportTransform } from "@/types/canvas";
 import { useCanvasViewportTransition } from "./use-canvas-viewport-transition";
 
@@ -47,6 +46,11 @@ export function useCanvasViewportController({
     const commitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const renderedViewportRef = useRef(viewportRef.current);
     const lastVirtualizationRefreshAtRef = useRef(0);
+    const refreshedDuringGestureRef = useRef(false);
+    // Scale last handed to React. The `viewport` prop lags behind while a
+    // commit renders, and comparing against it would commit again per event.
+    const committedScaleRef = useRef(viewport.k);
+    committedScaleRef.current = viewport.k;
 
     const previewViewport = useCallback((next: ViewportTransform) => {
         viewportRef.current = next;
@@ -63,6 +67,7 @@ export function useCanvasViewportController({
         viewportRef.current = next;
         renderedViewportRef.current = next;
         lastVirtualizationRefreshAtRef.current = performance.now();
+        refreshedDuringGestureRef.current = false;
         delete containerRef.current?.dataset.canvasViewportInteracting;
         setViewport((current) => current.x === next.x && current.y === next.y && current.k === next.k ? current : next);
     }, [containerRef, setViewport, viewportRef]);
@@ -171,15 +176,27 @@ export function useCanvasViewportController({
         // only leaves LOD after the gesture commits.
         if (virtualizationPausedRef?.current) return;
         const now = performance.now();
-        if (!shouldRefreshCanvasVirtualization(renderedViewportRef.current, next, lastVirtualizationRefreshAtRef.current, now)) return;
+        // Re-render the page only when the camera nears the edge of the cards
+        // the last refresh pre-rendered; the world transform covers the rest.
+        if (now - lastVirtualizationRefreshAtRef.current < CANVAS_VIRTUALIZATION_REFRESH_INTERVAL_MS) return;
+        const commitScale = shouldCommitCanvasScaleDuringGesture(next, { ...next, k: committedScaleRef.current });
+        if (!commitScale && !shouldRefreshCanvasVirtualization(renderedViewportRef.current, next, lastVirtualizationRefreshAtRef.current, now, size, refreshedDuringGestureRef.current)) return;
         renderedViewportRef.current = next;
         lastVirtualizationRefreshAtRef.current = now;
+        refreshedDuringGestureRef.current = true;
         // Keep culling current without relaying every camera tick as a new
-        // scale prop to all mounted nodes. Rebase with the graphics layer's
-        // existing scale limits, and commit the final camera on gesture end.
-        if (shouldRebaseCanvasRaster(next, viewport)) setViewport(next);
-        else setVirtualizationViewport(next);
-    }, [cancelViewportTransition, setViewport, setVirtualizationViewport, viewport, viewportRef, virtualizationPausedRef]);
+        // scale prop to all mounted nodes. The Leafer layer rebases its own
+        // raster; DOM cards re-commit scale only for large zoom stretches,
+        // and the final camera commits on gesture end.
+        // setViewport also ends the virtualization preview; restore it so the
+        // render model still knows a gesture is in flight (LOD mode and
+        // mounted cards then stay put until the gesture-end commit).
+        if (commitScale) {
+            committedScaleRef.current = next.k;
+            setViewport(next);
+        }
+        setVirtualizationViewport(next);
+    }, [cancelViewportTransition, setViewport, setVirtualizationViewport, size, viewportRef, virtualizationPausedRef]);
 
     return {
         fitCanvasContent,

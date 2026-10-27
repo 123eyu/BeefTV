@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { describe, expect, test } from "bun:test";
 
 import { canvasNodeRenderPadding, resolveActiveCanvasMediaNodeId } from "../src/lib/canvas/canvas-performance-mode";
-import { shouldRefreshCanvasVirtualization } from "../src/lib/canvas/canvas-viewport-render-sync";
+import { shouldCommitCanvasScaleDuringGesture, shouldRefreshCanvasVirtualization } from "../src/lib/canvas/canvas-viewport-render-sync";
 import { videoMetadata } from "../src/lib/canvas/canvas-generation-task-sync";
 import { canvasNodeVideoPreviewUrl, canvasVideoAssetPreviewUrl } from "../src/lib/canvas/canvas-media-preview";
 import { collectImageStorageKeys } from "../src/services/image-storage";
@@ -56,6 +56,30 @@ describe("large canvas media rendering", () => {
         expect(shouldRefreshCanvasVirtualization(previous, moved, 1_000, 1_030)).toBe(false);
         expect(shouldRefreshCanvasVirtualization(previous, moved, 1_000, 1_064)).toBe(true);
         expect(shouldRefreshCanvasVirtualization(previous, previous, 1_000, 1_200)).toBe(false);
+    });
+
+    test("pans inside the pre-rendered margin without a page refresh", () => {
+        const size = { width: 1000, height: 800 };
+        const committed = { x: 0, y: 0, k: 1 };
+        // The committed window only pre-renders its base margin, so the first
+        // gesture refresh widens it right away.
+        expect(shouldRefreshCanvasVirtualization(committed, { x: -20, y: 0, k: 1 }, 0, 1_000, size)).toBe(true);
+        // A gesture refresh pre-renders wider; the next one waits until the
+        // camera nears its edge.
+        expect(shouldRefreshCanvasVirtualization(committed, { x: -150, y: 0, k: 1 }, 0, 1_000, size, true)).toBe(false);
+        expect(shouldRefreshCanvasVirtualization(committed, { x: -240, y: 0, k: 1 }, 0, 1_000, size, true)).toBe(true);
+        // Zooming in shrinks the visible world and never leaves the covered window.
+        expect(shouldRefreshCanvasVirtualization(committed, { x: -50, y: -40, k: 1.1 }, 0, 1_000, size, true)).toBe(false);
+        // Zooming out widens it.
+        expect(shouldRefreshCanvasVirtualization(committed, { x: 100, y: 80, k: 0.6 }, 0, 1_000, size, true)).toBe(true);
+    });
+
+    test("re-commits node scale mid-gesture only for large zoom stretches", () => {
+        const committed = { x: 0, y: 0, k: 1 };
+        expect(shouldCommitCanvasScaleDuringGesture({ x: 0, y: 0, k: 1.5 }, committed)).toBe(false);
+        expect(shouldCommitCanvasScaleDuringGesture({ x: 0, y: 0, k: 0.7 }, committed)).toBe(false);
+        expect(shouldCommitCanvasScaleDuringGesture({ x: 0, y: 0, k: 1.7 }, committed)).toBe(true);
+        expect(shouldCommitCanvasScaleDuringGesture({ x: 0, y: 0, k: 0.6 }, committed)).toBe(true);
     });
 
     test("keeps rendered nodes mounted longer than newly entering nodes", () => {
