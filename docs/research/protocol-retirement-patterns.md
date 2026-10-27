@@ -79,34 +79,35 @@ acceptance_memory_id: none
 
 ## 2. 外部项目的做法
 
-### 2.1 VS Code 扩展：Marketplace 下线，已安装扩展不被自动抹掉
+### 2.1 VS Code 扩展：编辑器内标记弃用，不自动迁移已安装扩展
 
 **观察到的做法**：
 
-- 扩展的 `package.json` 是扩展自身定义；Marketplace 是发现和分发层。
-- 官方扩展清单文档把 `deprecated` 作为 Marketplace 元数据字段，表示扩展已被弃用，并可指向替代扩展。
-- Marketplace 对已弃用扩展做明显提示、搜索/展示降权或迁移引导；这不等于把用户已经安装的扩展从本机配置和扩展目录自动删除。
-- 扩展运行时是否可用，仍由本地已安装版本、VS Code 兼容性和扩展宿主决定；发现层的下线不会自动重写用户的工作区设置。
+- VS Code 官方发布文档没有把 `deprecated` 描述为扩展 `package.json` 的 Marketplace 字段；弃用由发布方在官方 Deprecated extensions 讨论帖申请。
+- VS Code 编辑器界面会把弃用扩展显示为灰色删除线并给出警告；如果有替代扩展或设置，会提供 Migrate 按钮。
+- 官方文档明确：VS Code **不会自动迁移或卸载**已经安装的弃用扩展。
+- 同一页面还注明：截至当前文档版本，扩展不会在 Marketplace 页面中显示为 deprecated。因此这里能直接借鉴的是“运行时安装记录与迁移 UI 分离”，不是一个已经被 Marketplace API 证明的目录字段。
 
 **对 BeefTV 的启示**：
 
-- Marketplace/插件目录的 `selectable` 和本地安装记录的 `runnable` 应分开。
-- 老配置可以显示“已撤下/建议迁移”，但打开配置时不能因为目录不再推荐就强行换模型或协议。
-- 仅在用户显式选择替代项时迁移；不把替代项当成隐式默认值。
+- 目录/设置页可以标记“已撤下、建议迁移”，但不应因为新目录不再推荐就静默换模型或协议。
+- 替代项只能由用户显式确认后写入配置；不能把替代项当成隐式默认值。
+- “停止推荐/编辑器内标记”和“禁止新安装”是两个不同动作，不能混成一个状态。
 
 来源：
 
-- [VS Code Extension Manifest：Deprecated](https://code.visualstudio.com/api/references/extension-manifest#deprecated)
+- [VS Code 发布扩展：Deprecating extensions](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#deprecating-extensions)
 - [VS Code 源码](https://github.com/microsoft/vscode)，MIT License。这里只参考行为和边界，没有复制代码。
 
-### 2.2 Grafana 插件：目录不可搜索/安装，既有安装不受影响
+### 2.2 Grafana 插件：搜索隐藏与禁止安装是两个阶段，既有安装不受影响
 
-Grafana 的官方插件下线政策是本次调研中最接近 BeefTV 目标的公开例子：
+Grafana 的官方插件下线政策是本次调研中最接近 BeefTV 目标的公开例子，但必须区分目录展示和安装权限：
 
 - 被弃用插件不再出现在 grafana.com 插件目录搜索结果，也不再出现在 Grafana 管理界面的插件视图中。
-- 官方政策明确写出：**已有安装不受影响**；用户仍可直接访问插件页面或继续使用已有安装。
-- Grafana 在更强的移除阶段会限制新安装，但这仍是目录/安装入口的变化，不是对已安装运行实例做隐式配置迁移。
-- 这说明“撤下”应优先作用于发现和新安装入口，而不是删除已有执行定义。
+- 这不是立即禁止所有新安装：官方政策仍允许通过插件直链访问和下载，且可以通过 CLI 安装。
+- **已有安装不受影响**，继续正常加载和运行，同时显示弃用警告。
+- Grafana 后续可以再按产品策略限制云端安装；这属于更强的“禁止新安装”阶段，不应倒推成“搜索隐藏已经等于不能安装”。
+- 对 BeefTV 的直接借鉴是：先改变发现/推荐入口，再单独决定是否阻止新安装；不要删除已有执行定义。
 
 来源：
 
@@ -240,7 +241,14 @@ new-api 只参考思路，按任务约束不搬用 AGPL 代码。两者都不应
 - 允许旧配置继续工作时，给 warning/retired 标记；不能工作时，保留可解释的 error/stub。
 - 只有用户明确迁移，或用户已停止引用、且兼容期结束，才清理旧记录。
 
-BeefTV 的既有配置还多了一条安全限制：协议、渠道、账号和 token 是同一个执行身份的一部分。下线后不能自动切到备用渠道、换凭据或重新提交生成。
+BeefTV 还必须区分两种“配置里没有 `protocol`”的旧数据：
+
+- **隐式旧默认**：旧 profile 缺少 `protocol`，但没有 `protocolPending: true`，表示沿用当时按能力/模型约定的默认协议。例如已有音频 profile 仍应解析为 `openai-audio`；不能把缺字段一律改成待配置。
+- **明确待配置**：`protocolPending: true` 表示最近一次目录决策已经确认没有安全的可选协议，故意留下未配置状态。它才应保持 `undefined`，等待用户选择。
+
+#33 的 `SavedProtocolReferences()` 目前主要统计显式协议 ID，因此 retention 盘点还必须和同一个兼容 resolver 对齐：对缺字段的旧 profile，要么盘点其有效的隐式默认协议，要么确保该内置默认定义始终留在可执行范围。不能让“旧音频缺字段仍能运行”和“启动时盘点认为没有引用”同时成立。当前分支的 `web/test/manual-channel-protocol.test.ts` 已明确覆盖“显式 capability 为 audio 且缺少 protocol 时仍使用 `openai-audio`”；统一 resolver 不能回归这条兼容语义。
+
+BeefTV 的既有配置还多了一条安全限制：协议、渠道、账号和 token 是同一个执行身份的一部分。下线后不能自动切到备用渠道、换凭据或创建另一笔生成请求；但对已确认可重放的原提交，允许按原身份和原幂等键恢复，见第 5 节。
 
 ### 3.3 默认值应该由谁决定
 
@@ -277,8 +285,9 @@ ProtocolDecision {
 **短期（适合 #33）**：
 
 - 发现同名插件升级时，如果有未完成任务依赖旧定义，保留旧安装记录/定义，暂缓替换。
+- 即使没有未完成任务，只要新版 manifest 删除或改名了仍被保存配置实际引用的 provider ID，也不能直接替换整个记录；至少要保留旧定义，或阻止这次升级。
+- 只有在没有待取回任务，且新版仍能解析所有保存配置实际引用的 provider ID 时，才可按通常流程升级。这个条件仍不能证明新版实现语义完全兼容，只是避免已知 ID 断裂。
 - 盘点失败时不要覆盖旧定义，也不要把任务改投新定义。
-- 没有待取回任务时可升级，但仍保留已保存配置能解析到旧协议 ID 的能力。
 
 **长期（独立任务）**：
 
@@ -296,14 +305,15 @@ ProtocolDecision {
 
 1. **撤下状态从引用推导，不写入 registry**
    - 这与 VS Code/Grafana 的目录层和引用层分离相符。
-   - 只要已有模型配置或未完成任务引用协议，就把定义留在可解析范围内。
+   - 只要已有模型配置或未完成任务引用协议，就把定义留在可解析范围内；隐式旧默认也必须被盘点覆盖，不能只数显式字段。
 
 2. **“新选择不可见/不可选，旧显式引用仍可执行”**
    - 这是正确的产品语义，不能简化成一个全局 `enabled=false`。
    - 旧配置页面可以标记已撤下，但不能让 `resolveModelRequestConfig` 用新默认值覆盖它。
 
-3. **同名插件有未完成任务时暂缓升级**
-   - 这是当前没有任务 digest 快照时的合理安全护栏。
+3. **保留升级护栏，但不能只检查未完成任务**
+   - 对未完成任务延迟替换，是当前没有任务 digest 快照时的合理安全护栏。
+   - 但 `deferralFor()` 目前只检查 `PendingTasks`；如果新版删除/改名仍被已保存配置引用的 provider ID，`reconcileBuiltIns()` 仍可能直接替换整个记录，导致旧配置失去定义。#33 必须把“保存配置引用 + 新版 ID 缺失”加入立即保护范围，这不能和完整任务版本绑定一起推迟。
    - 盘点失败时保守保留旧安装记录，避免“未知是否有人依赖”被误判为“没人依赖”。
 
 4. **一次盘点、只取小字段**
@@ -369,6 +379,7 @@ ProtocolDecision {
 | 目录加载失败 | 未知 | 有显式协议 | 不自动生成新默认 | 旧配置不被覆盖 |
 | 目录加载失败 | 未知 | 无 | 待用户选择或明确错误 | 不静默猜协议 |
 | 目录成功但无候选 | 已知空集 | 无 | 待配置 | 不回退到撤下协议 |
+| 同名升级且新版删/改名仍被配置引用的 provider ID | 已加载 | 有显式或隐式旧引用 | 新目录可更新 | 旧定义继续供旧配置解析 |
 | 有未完成任务的同名插件升级 | 已加载 | 有任务引用旧定义 | 新目录可更新 | 旧定义继续用于任务 |
 | 升级盘点失败 | 未知 | 不确定 | 不删除旧定义 | 保守保留 |
 
@@ -387,7 +398,7 @@ ProtocolDecision {
 
 - 继续从安装记录、保存配置和未完成任务盘点出 `retired` 视图。
 - 继续保留撤下定义，避免启动 reconciler 把老配置直接删除。
-- 同名包升级时，有未完成任务就延迟替换；没有任务才替换。
+- 同名包升级时，有未完成任务就延迟替换；即使没有任务，只要新版删除或改名了仍被保存配置实际引用的 provider ID，也必须保留旧定义或阻止替换。只有没有 pending 且新版仍能解析所有保存引用时，才可正常升级；这不覆盖更深的定义语义变化。
 - 盘点失败时保持旧定义，不把失败当作空引用集合。
 - 不新增 registry 永久 `retired` 字段，不引入第二个“已下线插件表”。
 
@@ -407,12 +418,12 @@ ProtocolDecision {
 
 1. 已撤下协议仍被旧模型配置显式引用时，模型请求仍使用旧协议。
 2. 同一协议在新建配置列表中不可选。
-3. 旧 profile 没有协议且目录成功但无候选时，保持 `protocolPending`，不自动套撤下协议。
+3. 旧 profile 缺少 `protocol` 且没有 `protocolPending` 时，保留旧的隐式默认语义（例如音频仍为 `openai-audio`）；只有显式 `protocolPending: true` 才保持未配置，不自动套撤下协议。
 4. 目录 HTTP 错误或盘点错误时，已有 profile 的协议、地址、模型和凭据不被覆盖。
 5. 目录成功为空与目录请求失败产生不同的状态/日志。
-6. 同名插件有未完成任务时升级不替换任务所需定义；无未完成任务时允许升级。
+6. 同名插件有未完成任务时升级不替换任务所需定义；即使没有任务，新版删除/改名仍被保存配置引用的 provider ID 时也不能直接替换。
 7. 任务列表/详情的 SQL 不选择 `request_cipher` 或整行冻结请求，不逐任务 N+1 查询。
-8. 失败恢复不走备用渠道、不换 token、不重新 POST；只按原 attempt 查询和取回。
+8. 失败恢复不创建另一笔生成请求、不切备用渠道或凭据；但在协议明确支持、原 endpoint/headers/body/幂等键仍有效时，允许按原身份重放同一提交以恢复结果。该重放不是新任务，必须保留现有 `sendImageSubmissionWith()` 的测试覆盖。
 9. 所有默认入口都经过同一 resolver，不能用一个路径的单元测试掩盖另一个路径的 fallback。
 
 ### 第六步：另开任务做不可变任务定义
@@ -434,8 +445,8 @@ ProtocolDecision {
 
 - 新配置不可选，旧显式配置不被自动改写。
 - 撤下状态从引用推导，不新增 registry 状态源。
-- 已安装旧定义继续可解析。
-- 同名插件有未完成任务时延迟升级。
+- 有旧配置或未完成任务引用时，已安装旧定义继续可解析。
+- 同名插件有未完成任务时延迟升级；新版删除/改名仍被保存配置引用的 provider ID 时也保留旧定义。
 - 盘点失败保守保留。
 - 一次小字段盘点，恢复时才加载完整快照。
 
@@ -463,7 +474,7 @@ ProtocolDecision {
 
 | 项目 | 本报告用途 | 许可证/性质 | 使用边界 |
 | --- | --- | --- | --- |
-| VS Code | Marketplace 弃用与已安装扩展分离 | 源码 MIT | 可参考思路，不复制代码 |
+| VS Code | 编辑器弃用 UI 与已安装扩展分离 | 源码 MIT | 可参考思路，不复制代码 |
 | Grafana | 目录隐藏、已有安装不受影响 | AGPL-3.0 | 只参考思路，按任务约束不搬代码 |
 | Home Assistant | warning、config entry、stub 和最终移除 | Apache-2.0 | 可参考生命周期，不复制代码 |
 | Terraform Plugin Framework | 兼容期、state/版本保留 | MPL-2.0 | 可参考版本演进原则，不复制代码 |
@@ -476,7 +487,7 @@ ProtocolDecision {
 
 ## 8. 主要来源
 
-- [VS Code Extension Manifest](https://code.visualstudio.com/api/references/extension-manifest#deprecated)
+- [VS Code 发布扩展：Deprecating extensions](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#deprecating-extensions)
 - [Grafana Plugin Deprecation Policy](https://grafana.com/legal/plugin-deprecation/)
 - [Home Assistant Deprecating](https://developers.home-assistant.io/docs/deprecating/)
 - [Home Assistant Integration Manifest](https://developers.home-assistant.io/docs/creating_integration_manifest/)
