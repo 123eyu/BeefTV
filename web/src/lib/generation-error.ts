@@ -1,7 +1,5 @@
 import { isLocalRuntimeMode } from "@/lib/runtime-mode";
 import { moderationErrorCopy, persistedModerationCopy } from "./moderation-error";
-import { vodImageErrorCopy } from "./vod-image-error";
-import { taskConstraintCopy, persistedTaskConstraintCopy } from "./task-constraint-error";
 import { supportDiagnosticIdentity, type SupportDiagnosticContext } from "./support-diagnostics";
 
 export const CONTENT_MODERATION_ERROR_CODE = "sensitive_words_detected";
@@ -495,10 +493,8 @@ function classifyUnknown(error: unknown, context: GenerationFailureContext): Cla
         if (["node_task_mismatch", "node_mismatch", "canvas_mismatch", "node_deleted"].includes(String(record.reason || ""))) {
             return { category: "result_target_unavailable", status: numericStatus(record.status), fromCode: true, retryable: false };
         }
-        if (typeof record.code === "string" && typeof record.message === "string") {
-            const vodCopy = vodImageErrorCopy(record.code, record.message);
-            if (vodCopy) return vodCopy;
-        }
+        const backendFailure = error instanceof Error ? undefined : backendTaskFailure(record);
+        if (backendFailure) return backendFailure;
         if (record.code === "download_failed" || record.code === "result_apply_failed" || record.code === "result_target_unavailable") {
             return { category: record.code, fromCode: true, retryable: false };
         }
@@ -512,10 +508,6 @@ function classifyUnknown(error: unknown, context: GenerationFailureContext): Cla
             const classified = classifyHttp(status, data ?? record);
             if (classified.category !== "unknown" || status) return classified;
         }
-        if (record.code === "provider_unavailable" && typeof record.message === "string") {
-            const preparation = persistedReferencePreparation(record.message);
-            if (preparation) return preparation;
-        }
         const structured = classifyText(stringifyAllowlisted(record));
         if (structured.fromCode || structured.category !== "unknown") return structured;
         if (typeof record.reason === "string" && record.reason) {
@@ -527,6 +519,39 @@ function classifyUnknown(error: unknown, context: GenerationFailureContext): Cla
     if (error instanceof Error) return classifyText(error.message);
     if (typeof error === "string") return classifyText(error);
     return classifyText(providerPayloadMessage(error));
+}
+
+// 后端任务失败：code 是后端给出的失败类别（task.errorCode / 节点 taskErrorCode），
+// message 是后端按「原因。下一步。排查编号：…」拼好的文案。类别直接取 code，
+// 文案只按这个固定格式拆开，不再用文字猜类别。
+const BACKEND_FAILURE_CATEGORIES: ReadonlySet<string> = new Set(
+    GENERATION_ERROR_CATEGORIES.filter((category) => !["unknown", "canvas_conflict", "result_apply_failed", "result_target_unavailable"].includes(category)),
+);
+
+// 后端把这几类标为「结果未确认」；任务接口没有单独的字段，按类别判断。
+const BACKEND_UNCERTAIN_CATEGORIES: ReadonlySet<string> = new Set(["submission_uncertain", "download_failed", "timeout", "partial_success", "results_missing"]);
+
+function backendTaskFailure(record: Record<string, unknown>): Classified | undefined {
+    const category = record.code;
+    if (typeof category !== "string" || !BACKEND_FAILURE_CATEGORIES.has(category) || typeof record.message !== "string") return undefined;
+    const text = record.message.trim();
+    if (!text) return undefined;
+    // 回传给后端的排查编号会被 explainGenerationError 重新拼上，这里先拆下来。
+    const preparation = category === "provider_unavailable" ? persistedReferencePreparation(text) : undefined;
+    if (preparation) return preparation;
+    const debugMatch = text.match(/。排查编号：([^。]+)。?$/);
+    const debug = debugMatch?.[1] || "";
+    const [reason = "", ...action] = (debugMatch ? text.slice(0, debugMatch.index) : text).split("。").map((part) => part.trim()).filter(Boolean);
+    return {
+        category: category as GenerationErrorCategory,
+        reason: sanitizeProviderText(reason) || undefined,
+        action: sanitizeProviderText(action.join("。")) || undefined,
+        requestId: sanitizeDebugId(debug.match(/(?:^| · )请求 ([A-Za-z0-9._:-]{6,127})$/)?.[1]),
+        taskId: sanitizeDebugId(debug.match(/^任务 ([A-Za-z0-9._:-]{6,127})(?: · |$)/)?.[1]),
+        fromCode: true,
+        uncertain: BACKEND_UNCERTAIN_CATEGORIES.has(category),
+        retryable: retryableCategory(category as GenerationErrorCategory) && !BACKEND_UNCERTAIN_CATEGORIES.has(category),
+    };
 }
 
 function classifyHttp(status: number | undefined, body: unknown): Classified {
@@ -581,8 +606,6 @@ function classifyText(raw: string): Classified {
     if (isCanvasSaveConflictText(text)) {
         return { category: "canvas_conflict", fromCode: true, retryable: false };
     }
-    const taskCopy = persistedTaskConstraintCopy(text);
-    if (taskCopy) return { category: "invalid_params", ...taskCopy, requestId: sanitizeDebugId(text.match(/请求 ([A-Za-z0-9._:-]{6,127})/)?.[1]), taskId: sanitizeDebugId(text.match(/任务 ([A-Za-z0-9._:-]{6,127})/)?.[1]), retryable: false };
     const moderationCopy = persistedModerationCopy(text);
     if (moderationCopy) {
         return { ...moderationCopy, requestId: sanitizeDebugId(text.match(/请求 ([A-Za-z0-9._:-]{6,127})/)?.[1]), taskId: sanitizeDebugId(text.match(/任务 ([A-Za-z0-9._:-]{6,127})/)?.[1]), retryable: false };
@@ -617,8 +640,6 @@ function classifyText(raw: string): Classified {
     const storage = resourceStorageFailureMessage(text);
     if (storage) return { category: "input_inaccessible", reason: storage.replace(/。$/, ""), action: "", retryable: false };
     const fields = extractProviderFields(text);
-    const vodCopy = vodImageErrorCopy(fields.code, /^[{[]/.test(text) ? fields.message : text);
-    if (vodCopy) return { ...vodCopy, requestId: sanitizeDebugId(fields.requestId), taskId: sanitizeDebugId(fields.taskId) };
     // Inspect only the error message, never JSON request echoes or debug fields.
     const databaseMessage = fields.code || fields.type || fields.message || fields.status || /^[{[]/.test(text) ? fields.message : text;
     if (/(write local resource|生成内容写入资源存储失败|database or disk is full|本地磁盘空间不足)/i.test(databaseMessage) && /(no space left on device|not enough space on the disk|disk full|database or disk is full|本地磁盘空间不足)/i.test(databaseMessage)) return { category: "local_disk_full", fromCode: true, retryable: false };
@@ -648,16 +669,6 @@ function classifyText(raw: string): Classified {
 function specialize(classified: Classified, fields: ExtractedFields): Classified {
     fields = { ...fields, message: sanitizeProviderText(fields.message) };
     classified.requestId ||= sanitizeDebugId(fields.message.match(/\brequest\s*id:\s*([A-Za-z0-9_-]{6,127})\b/i)?.[1]);
-    const taskConstraint = persistedTaskConstraintCopy(fields.message) || taskConstraintCopy(`${fields.code} ${fields.message}`);
-    if (taskConstraint && ["unknown", "invalid_params"].includes(classified.category))
-        return {
-            ...classified,
-            category: "invalid_params",
-            ...taskConstraint,
-            requestId: classified.requestId || sanitizeDebugId(fields.message.match(/请求 ([A-Za-z0-9._:-]{6,127})/)?.[1]),
-            taskId: classified.taskId || sanitizeDebugId(fields.message.match(/任务 ([A-Za-z0-9._:-]{6,127})/)?.[1]),
-            retryable: false,
-        };
     // Only broad wrappers may be refined by a more specific provider message.
     const genericCode =
         ["", "unknown", "failed", "badrequest", "api_error", "upstream_error", "upstream_rejected", "invalid_request", "invalid_request_error", "invalid_parameter", "invalidparameter", "invalid_argument"].includes(normalizeCode(fields.code)) ||

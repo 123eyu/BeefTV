@@ -170,12 +170,15 @@ describe("canvas generation failure consumers", () => {
         const raw = { ...task, error: '{"error":{"code":"400","message":"Height must be between 300px and 6000px"}}', errorCode: "invalid_params" };
         const reason = taskAttentionReason(raw);
         expect(reason).not.toContain("{");
-        expect(reason).toContain("高度");
-        expect(reason).toContain("300–6000");
+        // 后端只下发整理过的文案；收到原始 JSON 时只显示类别文案，不外露 JSON。
+        expect(reason).toContain("模型不接受当前参数");
+        const backend = taskAttentionReason({ ...task, error: "参考素材高度不符合模型要求。请将高度调整为 300–6000 像素后重新提交。", errorCode: "invalid_params" });
+        expect(backend).toContain("高度");
+        expect(backend).toContain("300–6000");
     });
 
     test("task cards preserve a machine-readable failure code alongside an opaque message", () => {
-        expect(taskAttentionReason({ ...task, errorCode: "moderation_reference" })).toContain("参考素材");
+        expect(taskAttentionReason({ ...task, error: undefined, errorCode: "moderation_reference" })).toContain("参考素材");
         expect(taskRetryBlocked({ ...task, errorCode: "download_failed" })).toBe(true);
         expect(taskRetryBlocked({ ...task, errorCode: "invalid_params" })).toBe(true);
         expect(taskRetryBlocked({ ...task, errorCode: "throttled" })).toBe(false);

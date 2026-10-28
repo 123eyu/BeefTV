@@ -3,11 +3,7 @@ import { explainGenerationError } from "../src/lib/generation-error";
 import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked } from "../src/pages/canvas/canvas-generation-failure";
 
 test("VOD safety rejection reaches canvas copy and blocks unchanged retry", () => {
-    expect(explainGenerationError("VOD image task failed [RequestLimitExceeded]: opaque").category).toBe("concurrency");
     for (const input of [
-        "VOD image task failed: task failed with status: FAIL, message: recv from gpt image edit api failed. http_code:400, message:Your request was rejected by the safety system. If you believe this is an error, contact us at Azure support ticket",
-        "VOD image task failed [ContentModerationFailed]: opaque",
-        "VOD image task failed [InvalidParameter.VoilationContent]: opaque",
         "Your request was rejected as a result of our safety system.",
         { code: "ContentModerationFailed", message: "opaque" },
         { code: "InvalidParameter.VoilationContent", message: "opaque" },
