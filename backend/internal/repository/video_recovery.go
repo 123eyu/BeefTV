@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"strings"
 	"time"
 
 	"infinite-canvas/backend/internal/model"
@@ -8,12 +9,12 @@ import (
 
 // FailedVideosForRecovery returns failed video and upscale tasks that still have
 // an upstream task receipt (or uncertain submission stage) and have not yet
-// converged to no_result or unrecoverable.
+// converged to no_result or unrecoverable, or whose BeefAPI usage_state is still pending.
 func (r *Repository) FailedVideosForRecovery(afterID string, limit int) ([]model.Task, error) {
 	var tasks []model.Task
 	err := r.db.Where("tasks.id > ? AND tasks.status = ?", afterID, model.TaskStatusFailed).
 		Where("(tasks.type = ? OR tasks.type LIKE ? OR tasks.model IN ?)", "canvas_video", "video_%", upscaleModelKeys).
-		Where("(recovery_outcome IS NULL OR recovery_outcome = '') AND (next_poll_at IS NULL OR next_poll_at <= ?)", time.Now()).
+		Where("((recovery_outcome IS NULL OR recovery_outcome = '') OR beef_usage_state = 'pending') AND (next_poll_at IS NULL OR next_poll_at <= ?)", time.Now()).
 		Where(`provider_request_id <> '' OR stage = 'submission_unknown' OR EXISTS (SELECT 1 FROM api_call_logs l WHERE l.task_id = tasks.id AND l.user_id = tasks.user_id AND l.provider_request_id <> '') OR (SELECT a.dispatch_state FROM route_attempts a WHERE a.task_id = tasks.id AND a.route_run = tasks.route_run ORDER BY a.attempt_number DESC, a.id ASC LIMIT 1) = 'submission_unknown'`).
 		Order("tasks.id ASC").Limit(limit).Find(&tasks).Error
 	return tasks, err
@@ -30,6 +31,14 @@ func (r *Repository) FinishFailedVideoRecovery(task model.Task, outcome *string,
 	if task.ProviderRequestID != "" {
 		updates["provider_request_id"] = task.ProviderRequestID
 	}
+	if task.BeefUsageState != nil {
+		updates["beef_usage_state"] = *task.BeefUsageState
+	}
+	if task.BeefReconcileDeadline != nil {
+		updates["beef_reconcile_deadline"] = *task.BeefReconcileDeadline
+	} else if task.BeefUsageState != nil && !strings.EqualFold(strings.TrimSpace(*task.BeefUsageState), "pending") {
+		updates["beef_reconcile_deadline"] = nil
+	}
 	result := taskLeaseWriter(r.db.Model(&model.Task{}), task.LeaseOwner).
 		Where("id = ? AND user_id = ? AND status = ? AND route_run = ?", task.ID, task.UserID, model.TaskStatusFailed, task.RouteRun).
 		Updates(updates)
@@ -40,6 +49,30 @@ func (r *Repository) FinishFailedVideoRecovery(task model.Task, outcome *string,
 		return ErrTaskStateConflict
 	}
 	return nil
+}
+
+func (r *Repository) UpdateTaskBeefVideoSettlement(taskID string, usageState *string, reconcileDeadline *string) error {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" || (usageState == nil && reconcileDeadline == nil) {
+		return nil
+	}
+	updates := map[string]any{"updated_at": time.Now()}
+	if usageState != nil {
+		normalized := strings.ToLower(strings.TrimSpace(*usageState))
+		updates["beef_usage_state"] = normalized
+		if normalized != "pending" && reconcileDeadline == nil {
+			updates["beef_reconcile_deadline"] = nil
+		}
+	}
+	if reconcileDeadline != nil {
+		trimmed := strings.TrimSpace(*reconcileDeadline)
+		if trimmed == "" {
+			updates["beef_reconcile_deadline"] = nil
+		} else {
+			updates["beef_reconcile_deadline"] = trimmed
+		}
+	}
+	return r.db.Model(&model.Task{}).Where("id = ?", taskID).Updates(updates).Error
 }
 
 // ResetTaskRecoveryBackoff clears next_poll_at on a failed task so an explicit

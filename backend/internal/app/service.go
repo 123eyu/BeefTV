@@ -280,6 +280,18 @@ func (s *Service) refreshTaskProviderState(task *model.Task) error {
 	if latest.ProviderRequestID != "" {
 		task.ProviderRequestID = latest.ProviderRequestID
 	}
+	if latest.ImageJobID != "" {
+		task.ImageJobID = latest.ImageJobID
+	}
+	if latest.BeefUsageState != nil {
+		task.BeefUsageState = latest.BeefUsageState
+	}
+	if latest.BeefBillingState != nil {
+		task.BeefBillingState = latest.BeefBillingState
+	}
+	if latest.BeefReconcileDeadline != nil {
+		task.BeefReconcileDeadline = latest.BeefReconcileDeadline
+	}
 	task.Stage, task.Progress = latest.Stage, latest.Progress
 	task.PollStage = latest.PollStage
 	task.NextPollAt = latest.NextPollAt

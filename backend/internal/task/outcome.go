@@ -13,6 +13,9 @@ type Outcome = model.TaskOutcome
 const (
 	RecoveryNoResult      = "no_result"
 	RecoveryUnrecoverable = "unrecoverable"
+
+	ReasonSettlementPending          = "settlement_pending"
+	ReasonChargedResultUnrecoverable = "charged_result_unrecoverable"
 )
 
 // OutcomeFacts 来自持久化证据。读失败必须显式标记，不能当成没有证据。
@@ -47,6 +50,9 @@ func ComputeOutcome(task model.Task, resultState string, facts OutcomeFacts) Out
 	}
 	if facts.Unreadable {
 		return out("retrievable", "blocked", "evidence_unavailable")
+	}
+	if outcome, ok := computeBeefAPIOutcome(task); ok {
+		return outcome
 	}
 	regenerate := "confirm"
 	if task.Type == model.TaskTypeDepthCapture || provablyNotSubmitted(task, facts) {
@@ -90,4 +96,57 @@ func provablyNotSubmitted(task model.Task, facts OutcomeFacts) bool {
 
 func isInputRejectedCode(code string) bool {
 	return code == "content_policy_violation" || code == "content_moderation" || strings.HasPrefix(code, "SAFETY.INPUT.")
+}
+
+func computeBeefAPIOutcome(task model.Task) (Outcome, bool) {
+	deadline := ""
+	if task.BeefReconcileDeadline != nil {
+		deadline = strings.TrimSpace(*task.BeefReconcileDeadline)
+	}
+	terminalRecovery := task.RecoveryOutcome != nil && (*task.RecoveryOutcome == RecoveryNoResult || *task.RecoveryOutcome == RecoveryUnrecoverable)
+
+	if task.BeefUsageState != nil {
+		switch strings.ToLower(strings.TrimSpace(*task.BeefUsageState)) {
+		case "pending":
+			return Outcome{Phase: "failed", Regenerate: "blocked", Reason: ReasonSettlementPending, ReconcileDeadline: deadline}, true
+		case "completed":
+			if terminalRecovery {
+				return Outcome{Phase: "failed", Regenerate: "confirm", Reason: ReasonChargedResultUnrecoverable}, true
+			}
+			return Outcome{Phase: "retrievable", Regenerate: "blocked", Reason: "provider_result_pending"}, true
+		case "failed":
+			return Outcome{Phase: "failed", Regenerate: "allowed", Reason: beefRefundedFailureReason(task)}, true
+		}
+	}
+
+	if task.BeefBillingState != nil {
+		switch strings.ToLower(strings.TrimSpace(*task.BeefBillingState)) {
+		case "":
+			return Outcome{Phase: "failed", Regenerate: "blocked", Reason: ReasonSettlementPending, ReconcileDeadline: deadline}, true
+		case "settled":
+			if terminalRecovery {
+				return Outcome{Phase: "failed", Regenerate: "confirm", Reason: ReasonChargedResultUnrecoverable}, true
+			}
+			return Outcome{Phase: "retrievable", Regenerate: "blocked", Reason: "image_recovery_pending"}, true
+		case "refunded":
+			return Outcome{Phase: "failed", Regenerate: "allowed", Reason: beefRefundedFailureReason(task)}, true
+		}
+	}
+
+	return Outcome{}, false
+}
+
+func beefRefundedFailureReason(task model.Task) string {
+	if d := task.FailureDiagnostics; d != nil && isInputRejectedCode(d.ProviderCode) {
+		return "input_rejected"
+	}
+	if task.RecoveryOutcome != nil {
+		switch *task.RecoveryOutcome {
+		case RecoveryNoResult:
+			return "no_result"
+		case RecoveryUnrecoverable:
+			return "result_unrecoverable"
+		}
+	}
+	return "task_failed"
 }

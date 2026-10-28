@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -72,17 +73,33 @@ var upscaleModelKeys = []string{"topaz-standard-v2", "topaz-wonder-3.5", "topaz-
 func (r *Repository) FailedImagesForRecovery(afterID string, limit int) ([]model.Task, error) {
 	var tasks []model.Task
 	err := r.db.Where("tasks.id > ? AND tasks.type = ? AND tasks.model NOT IN ? AND tasks.status = ?", afterID, "canvas_image", upscaleModelKeys, model.TaskStatusFailed).
-		Where("(recovery_outcome IS NULL OR recovery_outcome = '') AND (next_poll_at IS NULL OR next_poll_at <= ?)", time.Now()).
-		Where(`stage = 'submission_unknown' OR EXISTS (SELECT 1 FROM api_call_logs l WHERE l.task_id = tasks.id AND l.user_id = tasks.user_id AND l.capability = 'image' AND l.request_kind = 'create' AND l.method = 'POST') OR (SELECT a.dispatch_state FROM route_attempts a WHERE a.task_id = tasks.id AND a.route_run = tasks.route_run ORDER BY a.attempt_number DESC, a.id ASC LIMIT 1) IN ('accepted', 'submission_unknown')`).
+		Where("((recovery_outcome IS NULL OR recovery_outcome = '') OR beef_billing_state = '') AND (next_poll_at IS NULL OR next_poll_at <= ?)", time.Now()).
+		Where(`image_job_id <> '' OR stage = 'submission_unknown' OR EXISTS (SELECT 1 FROM api_call_logs l WHERE l.task_id = tasks.id AND l.user_id = tasks.user_id AND l.capability = 'image' AND l.request_kind = 'create' AND l.method = 'POST') OR (SELECT a.dispatch_state FROM route_attempts a WHERE a.task_id = tasks.id AND a.route_run = tasks.route_run ORDER BY a.attempt_number DESC, a.id ASC LIMIT 1) IN ('accepted', 'submission_unknown')`).
 		Order("tasks.id ASC").Limit(limit).Find(&tasks).Error
 	return tasks, err
 }
 
 // 不改变 status/route_run；后台恢复不是重新排队，也不会进入创建任务执行器。
 func (r *Repository) FinishFailedImageRecovery(task model.Task, outcome *string, nextPollAt *time.Time) error {
+	updates := map[string]any{
+		"recovery_outcome": outcome,
+		"next_poll_at":     nextPollAt,
+		"updated_at":       time.Now(),
+	}
+	if strings.TrimSpace(task.ImageJobID) != "" {
+		updates["image_job_id"] = strings.TrimSpace(task.ImageJobID)
+	}
+	if task.BeefBillingState != nil {
+		updates["beef_billing_state"] = *task.BeefBillingState
+	}
+	if task.BeefReconcileDeadline != nil {
+		updates["beef_reconcile_deadline"] = *task.BeefReconcileDeadline
+	} else if task.BeefBillingState != nil && strings.TrimSpace(*task.BeefBillingState) != "" {
+		updates["beef_reconcile_deadline"] = nil
+	}
 	result := taskLeaseWriter(r.db.Model(&model.Task{}), task.LeaseOwner).
 		Where("id = ? AND user_id = ? AND status = ? AND route_run = ?", task.ID, task.UserID, model.TaskStatusFailed, task.RouteRun).
-		Updates(map[string]any{"recovery_outcome": outcome, "next_poll_at": nextPollAt, "updated_at": time.Now()})
+		Updates(updates)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -90,6 +107,42 @@ func (r *Repository) FinishFailedImageRecovery(task model.Task, outcome *string,
 		return ErrTaskStateConflict
 	}
 	return nil
+}
+
+func (r *Repository) UpdateTaskImageJobID(taskID string, jobID string) error {
+	taskID = strings.TrimSpace(taskID)
+	jobID = strings.TrimSpace(jobID)
+	if taskID == "" || jobID == "" {
+		return nil
+	}
+	return r.db.Model(&model.Task{}).Where("id = ?", taskID).Updates(map[string]any{
+		"image_job_id": jobID,
+		"updated_at":   time.Now(),
+	}).Error
+}
+
+func (r *Repository) UpdateTaskBeefImageSettlement(taskID string, billingState *string, reconcileDeadline *string) error {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" || (billingState == nil && reconcileDeadline == nil) {
+		return nil
+	}
+	updates := map[string]any{"updated_at": time.Now()}
+	if billingState != nil {
+		normalized := strings.ToLower(strings.TrimSpace(*billingState))
+		updates["beef_billing_state"] = normalized
+		if normalized != "" && reconcileDeadline == nil {
+			updates["beef_reconcile_deadline"] = nil
+		}
+	}
+	if reconcileDeadline != nil {
+		trimmed := strings.TrimSpace(*reconcileDeadline)
+		if trimmed == "" {
+			updates["beef_reconcile_deadline"] = nil
+		} else {
+			updates["beef_reconcile_deadline"] = trimmed
+		}
+	}
+	return r.db.Model(&model.Task{}).Where("id = ?", taskID).Updates(updates).Error
 }
 
 // 仅持有失败任务恢复租约的同键重放可以跳过旧 worker 的 12 次限制。

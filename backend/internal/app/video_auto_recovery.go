@@ -77,7 +77,7 @@ func (s *Service) recoverFailedVideo(ctx context.Context, candidate model.Task) 
 	if err != nil {
 		return err
 	}
-	if task.Status != model.TaskStatusFailed || (task.RecoveryOutcome != nil && *task.RecoveryOutcome != "") {
+	if task.Status != model.TaskStatusFailed || !videoRecoveryNeedsPolling(*task) {
 		return nil
 	}
 	s.hydrateTaskProviderRequestID(task)
@@ -97,12 +97,12 @@ func (s *Service) recoverFailedVideo(ctx context.Context, candidate model.Task) 
 	if loadErr != nil {
 		return loadErr
 	}
-	if latest.Status != model.TaskStatusFailed || (latest.RecoveryOutcome != nil && *latest.RecoveryOutcome != "") {
+	if latest.Status != model.TaskStatusFailed || !videoRecoveryNeedsPolling(*latest) {
 		return queryErr
 	}
 	next := time.Now().Add(videoRecoveryPollBackoff(*latest))
 	_ = s.withFailedVideoRecoveryLease(latest, latest.UserID, func(leased *model.Task) error {
-		return s.repo.FinishFailedVideoRecovery(*leased, nil, &next)
+		return s.repo.FinishFailedVideoRecovery(*leased, leased.RecoveryOutcome, &next)
 	})
 	return queryErr
 }
@@ -134,7 +134,7 @@ func (s *Service) recoverFailedImageForUser(ctx context.Context, userID, taskID 
 		_ = s.DeliverSucceededTask(*task)
 		return s.repo.TaskForUser(userID, taskID)
 	}
-	if task.RecoveryOutcome != nil && *task.RecoveryOutcome != "" {
+	if !imageRecoveryNeedsPolling(*task) {
 		return task, nil
 	}
 	_ = s.recoverFailedImage(ctx, *task)
@@ -158,7 +158,7 @@ func (s *Service) recoverFailedVideoOrUpscaleForUser(ctx context.Context, userID
 		_ = s.DeliverSucceededTask(*task)
 		return s.repo.TaskForUser(userID, taskID)
 	}
-	if task.RecoveryOutcome != nil && *task.RecoveryOutcome != "" {
+	if !videoRecoveryNeedsPolling(*task) {
 		return task, nil
 	}
 	_ = s.recoverFailedVideo(ctx, *task)
@@ -180,7 +180,7 @@ func (s *Service) withFailedVideoRecoveryLease(task *model.Task, claimUserID str
 	if err != nil {
 		return err
 	}
-	if current.LeaseOwner != owner || current.Status != model.TaskStatusFailed || (current.RecoveryOutcome != nil && *current.RecoveryOutcome != "") {
+	if current.LeaseOwner != owner || current.Status != model.TaskStatusFailed || !videoRecoveryNeedsPolling(*current) {
 		return nil
 	}
 	if task.ProviderRequestID != "" && current.ProviderRequestID == "" {
@@ -234,9 +234,17 @@ func classifyFailedVideoQueryOutcome(task model.Task, providerStatus string, err
 	return ""
 }
 
+func videoSettlementNeedsPolling(task model.Task) bool {
+	return task.BeefUsageState != nil && strings.EqualFold(strings.TrimSpace(*task.BeefUsageState), "pending")
+}
+
+func videoRecoveryNeedsPolling(task model.Task) bool {
+	return task.RecoveryOutcome == nil || *task.RecoveryOutcome == "" || videoSettlementNeedsPolling(task)
+}
+
 func isTerminalVideoProviderStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "failed", "error", "cancelled", "canceled", "expired":
+	case "failed", "failure", "error", "cancelled", "canceled", "expired":
 		return true
 	default:
 		return false

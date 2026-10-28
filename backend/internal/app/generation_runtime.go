@@ -180,6 +180,24 @@ func (p appReceiptPort) Observe(observation generation.TransportObservation) {
 		Outcome:               observation.Outcome,
 	}
 	recordTaskRequestEvidence(observation.Request, evidence, observation.Body, observation.Err)
+	if p.service != nil && p.service.repo != nil {
+		call := canonicalCallMeta(observation.Request.Context())
+		taskID := strings.TrimSpace(call.TaskID)
+		isImage := call.Capability == "image" || strings.HasPrefix(strings.TrimSpace(call.TaskType), "canvas_image")
+		if imgTask, ok := observation.Request.Context().Value(imageTaskContext{}).(model.Task); ok {
+			if taskID == "" {
+				taskID = strings.TrimSpace(imgTask.ID)
+			}
+			if strings.HasPrefix(strings.TrimSpace(imgTask.Type), "canvas_image") {
+				isImage = true
+			}
+		}
+		if taskID != "" && isImage {
+			if jobID := generation.ExtractBeefAPIImageJobID(observation.Headers, observation.Body); jobID != "" {
+				_ = p.service.repo.UpdateTaskImageJobID(taskID, jobID)
+			}
+		}
+	}
 	recordProviderRequest(p.service, observation.Request, observation.StartedAt, observation.StatusCode, observation.Body, observation.Err)
 }
 

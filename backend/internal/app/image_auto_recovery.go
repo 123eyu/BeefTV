@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -70,6 +71,14 @@ func (s *Service) recoverFailedImages(ctx context.Context, limit int) error {
 	return last
 }
 
+func imageSettlementNeedsPolling(task model.Task) bool {
+	return task.BeefBillingState != nil && strings.TrimSpace(*task.BeefBillingState) == ""
+}
+
+func imageRecoveryNeedsPolling(task model.Task) bool {
+	return task.RecoveryOutcome == nil || *task.RecoveryOutcome == "" || imageSettlementNeedsPolling(task)
+}
+
 func (s *Service) recoverFailedImage(ctx context.Context, candidate model.Task) error {
 	if generation.UpscaleMediaType(candidate.Model) != "" {
 		return nil
@@ -84,24 +93,41 @@ func (s *Service) recoverFailedImage(ctx context.Context, candidate model.Task) 
 	if err != nil {
 		return err
 	}
-	if task.LeaseOwner != owner || task.Status != model.TaskStatusFailed || (task.RecoveryOutcome != nil && *task.RecoveryOutcome != "") {
+	if task.LeaseOwner != owner || task.Status != model.TaskStatusFailed || !imageRecoveryNeedsPolling(*task) {
 		return nil
 	}
-	result, outcome, recoveryErr := s.failedImageResult(ctx, *task)
-	if len(result) > 0 && recoveryErr == nil {
-		task.Error, task.FailureDiagnostics = "", nil
-		if err := s.saveTaskCompletionWithinStorageQuota(task, result, nil, false); err == nil {
-			return nil
-		} else {
-			recoveryErr = err
+	var outcome string
+	var recoveryErr error
+	if task.RecoveryOutcome != nil && *task.RecoveryOutcome != "" {
+		outcome = *task.RecoveryOutcome
+	} else {
+		var result []byte
+		result, outcome, recoveryErr = s.failedImageResult(ctx, *task)
+		if task.ImageJobID == "" {
+			if latest, loadErr := s.repo.Task(task.ID); loadErr == nil && latest != nil && latest.ImageJobID != "" {
+				task.ImageJobID = latest.ImageJobID
+			}
 		}
+		if len(result) > 0 && recoveryErr == nil {
+			task.Error, task.FailureDiagnostics = "", nil
+			if err := s.saveTaskCompletionWithinStorageQuota(task, result, nil, false); err == nil {
+				return nil
+			} else {
+				recoveryErr = err
+			}
+		}
+	}
+	settlementErr := s.syncFailedImageBeefSettlement(ctx, task)
+	if recoveryErr == nil && settlementErr != nil {
+		recoveryErr = settlementErr
 	}
 	var conclusion *string
 	var next *time.Time
 	if outcome != "" {
 		conclusion = &outcome
-	} else {
-		// 暂时失败不写结论。发送次数只影响退避，不再把 12 次当成结果丢失。
+	}
+	if outcome == "" || imageSettlementNeedsPolling(*task) || (task.ImageJobID != "" && task.BeefBillingState == nil && settlementErr != nil) {
+		// 暂时失败或对账未完成时继续轮询。发送次数只影响退避，不再把 12 次当成结果丢失。
 		delay := 30 * time.Second
 		if a, loadErr := s.repo.LatestRouteAttempt(task.ID); loadErr == nil {
 			if row, loadErr := s.repo.ImageSubmission(a.ID, task.ID, task.UserID); loadErr == nil {
@@ -115,6 +141,91 @@ func (s *Service) recoverFailedImage(ctx context.Context, candidate model.Task) 
 		return err
 	}
 	return recoveryErr
+}
+
+func (s *Service) resolveImageRecoveryConfig(task model.Task) (generation.Config, bool) {
+	var config generation.Config
+	if decrypted, err := s.decryptTaskInputJSON(task.InputJSON); err == nil && strings.TrimSpace(decrypted) != "" {
+		var input canvasGenerationInput
+		if json.Unmarshal([]byte(decrypted), &input) == nil {
+			config = input.Config
+		}
+	}
+	if attempt, err := s.repo.LatestRouteAttempt(task.ID); err == nil && attempt != nil {
+		if config.ChannelID == "" && attempt.ChannelID != "" {
+			config.ChannelID = attempt.ChannelID
+		}
+		if row, err := s.repo.ImageSubmission(attempt.ID, task.ID, task.UserID); err == nil && row != nil {
+			if wire, err := s.imageSubmissionWire(row); err == nil {
+				if config.ChannelID == "" && wire.ChannelID != "" {
+					config.ChannelID = wire.ChannelID
+				}
+				if config.BaseURL == "" && wire.URL != "" {
+					if idx := strings.Index(wire.URL, "/v1/"); idx > 0 {
+						config.BaseURL = wire.URL[:idx+3]
+					}
+				}
+				if config.APIKey == "" && wire.Header != nil {
+					auth := strings.TrimSpace(wire.Header.Get("Authorization"))
+					if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
+						config.APIKey = strings.TrimSpace(auth[7:])
+					}
+				}
+			}
+		}
+	}
+	if resolved, err := s.resolveProviderConfig(config); err == nil {
+		config = resolved
+	}
+	return config, strings.TrimSpace(config.BaseURL) != ""
+}
+
+func (s *Service) syncFailedImageBeefSettlement(ctx context.Context, task *model.Task) error {
+	if task == nil {
+		return nil
+	}
+	if strings.TrimSpace(task.ImageJobID) == "" {
+		if receipt, err := s.repo.ImageCreateReceipt(task.UserID, task.ID); err == nil && receipt != nil {
+			if jobID := generation.ExtractBeefAPIImageJobID(nil, []byte(receipt.ResponseBody)); jobID != "" {
+				task.ImageJobID = jobID
+				_ = s.repo.UpdateTaskImageJobID(task.ID, jobID)
+			}
+		}
+	}
+	if strings.TrimSpace(task.ImageJobID) == "" || (task.BeefBillingState != nil && strings.TrimSpace(*task.BeefBillingState) != "") {
+		return nil
+	}
+	config, ok := s.resolveImageRecoveryConfig(*task)
+	if !ok {
+		return nil
+	}
+	queryCtx := ctx
+	if s.coordinator != nil {
+		queryCtx = withProviderAnalytics(queryCtx, s, *task)
+	}
+	queryCtx = bindRequestReceipts(queryCtx)
+	settlement, _, err := generation.QueryBeefAPIImageJob(queryCtx, config, task.ImageJobID)
+	if err != nil {
+		return err
+	}
+	if settlement.HasBillingState && settlement.BillingState != nil {
+		normalized := strings.ToLower(strings.TrimSpace(*settlement.BillingState))
+		task.BeefBillingState = &normalized
+	}
+	if settlement.ReconcileDeadline != nil {
+		trimmed := strings.TrimSpace(*settlement.ReconcileDeadline)
+		if trimmed == "" {
+			task.BeefReconcileDeadline = nil
+		} else {
+			task.BeefReconcileDeadline = &trimmed
+		}
+	} else if settlement.HasBillingState && task.BeefBillingState != nil && strings.TrimSpace(*task.BeefBillingState) != "" {
+		task.BeefReconcileDeadline = nil
+	}
+	if settlement.HasBillingState || settlement.ReconcileDeadline != nil {
+		_ = s.repo.UpdateTaskBeefImageSettlement(task.ID, task.BeefBillingState, task.BeefReconcileDeadline)
+	}
+	return nil
 }
 
 func (s *Service) failedImageResult(ctx context.Context, task model.Task) ([]byte, string, error) {

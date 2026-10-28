@@ -385,6 +385,11 @@ func (s *Service) sendImageSubmissionWithMode(ctx context.Context, task model.Ta
 			return nil
 		})
 		if sendErr == nil {
+			if len(data) > 0 && s.repo != nil {
+				if jobID := generation.ExtractBeefAPIImageJobID(nil, data); jobID != "" {
+					_ = s.repo.UpdateTaskImageJobID(task.ID, jobID)
+				}
+			}
 			if err := s.repo.MarkImageSubmissionAccepted(row); err != nil {
 				return nil, "", imageRecoveryError{err}
 			}
@@ -399,6 +404,14 @@ func (s *Service) sendImageSubmissionWithMode(ctx context.Context, task model.Ta
 				return nil, "", imageRecoveryError{err}
 			}
 			return data, mime, nil
+		}
+		if s.repo != nil {
+			var httpErr providerHTTPError
+			if errors.As(sendErr, &httpErr) && httpErr.Body != "" {
+				if jobID := generation.ExtractBeefAPIImageJobID(nil, []byte(httpErr.Body)); jobID != "" {
+					_ = s.repo.UpdateTaskImageJobID(task.ID, jobID)
+				}
+			}
 		}
 		if singleReplay {
 			return nil, "", imageRecoveryError{sendErr}

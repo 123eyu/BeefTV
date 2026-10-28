@@ -69,6 +69,7 @@ type LimitsPort interface {
 
 type TransportObservation struct {
 	Request               *http.Request
+	Headers               http.Header
 	StartedAt             time.Time
 	StatusCode            int
 	Body                  []byte
