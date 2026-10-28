@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/providerpreset"
 )
 
@@ -48,7 +49,7 @@ func (s *Service) resolveVideoCapability(ctx context.Context, input *canvasGener
 	if channelID == "" {
 		profile := input.Config.CapabilityConfig
 		if profile == nil || profile.Video == nil {
-			seedance2 := isSeedance2Family(input.Config.InterfaceType, input.Config.Model)
+			seedance2 := modelcatalog.IsSeedance2Family(input.Config.InterfaceType, input.Config.Model)
 			if input.Config.InterfaceType != string(model.ChannelInterfaceAgnesVideo) && !seedance2 {
 				return nil
 			}
