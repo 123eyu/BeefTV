@@ -20,8 +20,8 @@ import type { Asset } from "@/stores/use-asset-store";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
 import { assertCanvasImageReferenceTable, type CanvasImageTableReference } from "@/lib/canvas/canvas-reference-table";
 import { compileBoundMediaReferences, renderCharacterReferenceBindings, type BoundMediaMention, type CharacterReferenceBinding } from "@/lib/canvas/generation-reference-contract";
-import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
-import { isSeedance2Family } from "@/lib/model-capabilities";
+import { type AiConfig } from "@/stores/use-config-store";
+import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
 
 export type CharacterGenerationReference = {
     nodeId: string;
@@ -652,14 +652,14 @@ export async function hydrateNodeGenerationContext(context: NodeGenerationContex
     };
 }
 
-/** Resolve bound references after model selection; only Seedance reference arrays use mention order. */
+/** Resolve bound references after model selection; only omni video reference arrays use mention order. */
 export function compileNodeGenerationReferences<T extends NodeGenerationContext>(context: T, config: AiConfig, operation?: string): T {
-    const request = resolveModelRequestConfig(config, config.model);
-    const seedanceReferences = operation === "reference_to_video"
+    const videoCapability = modelCapabilityConfigFor(config, config.model).video;
+    const omniVideoReferences = operation === "reference_to_video"
         && (!config.taskWorkflowProvider || config.taskWorkflowProvider === "model")
-        && isSeedance2Family(request.interfaceType, request.model);
-    const compiled = compileBoundMediaReferences(context, seedanceReferences);
-    return seedanceReferences && context.characterReferenceBindings?.length
+        && Boolean(videoCapability?.operations.includes("reference_to_video") && ((videoCapability.references.maxVideos ?? 0) > 0 || (videoCapability.references.maxAudios ?? 0) > 0));
+    const compiled = compileBoundMediaReferences(context, omniVideoReferences);
+    return omniVideoReferences && context.characterReferenceBindings?.length
         ? { ...compiled, prompt: `${renderCharacterReferenceBindings(context.characterReferenceBindings, compiled)}\n\n${compiled.prompt}` }
         : compiled;
 }

@@ -845,12 +845,11 @@ function reconcileChannelModelProfiles(channel: ModelChannel): ModelChannel {
 }
 
 function beefApiVideoCapabilityConfig(model: string, protocol: ModelProtocol, current?: ModelCapabilityConfig, sourced = false): ModelCapabilityConfig | undefined {
-    const profile = beefApiSeedanceCapabilityConfig(model, current, sourced);
-    if (sourced) return profile;
+    if (sourced) return current;
     const contract = beefAPIVideoContract(model);
     const limits = contract?.maxReferences;
-    if (!limits) return profile;
-    const resolved = profile || defaultModelCapabilityConfig(protocol, model);
+    if (!limits) return current;
+    const resolved = current || defaultModelCapabilityConfig(protocol, model);
     if (!resolved.video) return resolved;
     return { ...resolved, video: { ...resolved.video,
         resolutions: contract.resolutions || resolved.video.resolutions,
@@ -863,32 +862,6 @@ function beefApiVideoCapabilityConfig(model: string, protocol: ModelProtocol, cu
         operations: contract.operations || resolved.video.operations,
         defaultOperation: contract.operations?.includes(resolved.video.defaultOperation) ? resolved.video.defaultOperation : contract.operations?.[0] || resolved.video.defaultOperation,
     } };
-}
-
-function beefApiSeedanceCapabilityConfig(model: string, current?: ModelCapabilityConfig, sourced = false): ModelCapabilityConfig | undefined {
-    if (sourced) return current;
-    if (!/^seedance-2\.(?:0|5)(?:-|$)/i.test(model)) return current;
-    const video = current?.video;
-    const refs = video?.references;
-    // Older built-in profiles disabled all video/audio references on every
-    // hydration. Match that complete signature, not a user's individual limit.
-    const legacy = video?.operations?.length === 2 && video.operations.includes("text_to_video") && video.operations.includes("image_to_video") &&
-        refs?.maxImages === 9 && refs.maxVideos === 0 && refs.maxAudios === 0 &&
-        refs.maxVideoBytes === 200 * 1024 * 1024 && refs.maxAudioBytes === 15 * 1024 * 1024 &&
-        refs.maxVideoDurationSeconds === 0 && refs.maxAudioDurationSeconds === 0;
-    const defaults = defaultModelCapabilityConfig("newapi", model);
-    if (!current || !video) return defaults;
-    // The built-in BeefAPI Seedance contract supports the audio switch even
-    // when an older saved profile advertised no control. Keep its default.
-    const generateAudio = { ...video!.generateAudio, supported: true };
-    if (!legacy) return { ...current, video: { ...video!, generateAudio } };
-    const next = defaults.video!;
-    return { ...current, video: { ...video!, generateAudio, operations: next.operations, references: { ...refs!,
-        maxImages: next.references.maxImages,
-        maxVideos: next.references.maxVideos, maxAudios: next.references.maxAudios,
-        maxVideoDurationSeconds: next.references.maxVideoDurationSeconds,
-        maxAudioDurationSeconds: next.references.maxAudioDurationSeconds,
-    } } };
 }
 
 function enrichBeefApiMediaChannel(channel: ModelChannel): ModelChannel {

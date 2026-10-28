@@ -15,6 +15,7 @@ import (
 	"infinite-canvas/backend/internal/eagle"
 	"infinite-canvas/backend/internal/localapp"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/modelcatalog"
 	localproject "infinite-canvas/backend/internal/project"
 	localtask "infinite-canvas/backend/internal/task"
 	"infinite-canvas/backend/internal/textreplay"
@@ -45,6 +46,7 @@ type VersionedProviderConfig interface {
 type RuntimeDependencies struct {
 	RequestCoordinator RequestCoordinator
 	ProviderConfig     ProviderConfig
+	ModelCapability    localapp.ModelCapabilityPort
 	Assets             localapp.AssetPort
 	Projects           localapp.ProjectPort
 	Tasks              localapp.TaskPort
@@ -171,6 +173,13 @@ func requestProviderConfig(c *gin.Context, fallback *app.Service) ProviderConfig
 		return dependencies.ProviderConfig
 	}
 	return newServiceRuntimeAdapter(fallback)
+}
+
+func requestModelCapability(c *gin.Context) localapp.ModelCapabilityPort {
+	if dependencies, ok := runtimeDependencies(c); ok && dependencies.ModelCapability != nil {
+		return dependencies.ModelCapability
+	}
+	return modelcatalog.NewCapabilityNormalizer()
 }
 
 func requestTextReplay(c *gin.Context, fallback *app.Service) textReplayAPI {

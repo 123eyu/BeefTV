@@ -238,3 +238,172 @@ func TestSeedanceReferenceMinimumsAndRouteIdentification(t *testing.T) {
 		}
 	})
 }
+
+func TestSeedanceProFlashResolutionAndReferenceRolesTable(t *testing.T) {
+	cases := []struct {
+		name              string
+		protocol          string
+		model             string
+		baseURL           string
+		channelID         string
+		saved             *ModelCapabilityConfig
+		wantResolutions   []string
+		wantDefaultRes    string
+		wantMinDuration   int
+		wantMinAudioDur   float64
+		wantMinVideoPixel int64
+		wantMaxImages     int
+		wantMaxVideos     int
+		wantMaxAudios     int
+		wantTaskTypeConst bool
+	}{
+		{
+			name:              "2.0 Pro default resolutions include 1080p",
+			protocol:          "volcengine-ark-video",
+			model:             "doubao-seedance-2-0-pro-260128",
+			wantResolutions:   []string{"480p", "720p", "1080p"},
+			wantDefaultRes:    "720p",
+			wantMinDuration:   4,
+			wantMinAudioDur:   2,
+			wantMinVideoPixel: documentedSeedanceVideoMinPixels,
+			wantMaxImages:     9,
+			wantMaxVideos:     3,
+			wantMaxAudios:     3,
+			wantTaskTypeConst: false,
+		},
+		{
+			name:              "2.0 Fast/Flash resolutions cap at 720p on volcengine-ark-video",
+			protocol:          "volcengine-ark-video",
+			model:             "dreamina-seedance-2-0-fast-260128",
+			wantResolutions:   []string{"480p", "720p"},
+			wantDefaultRes:    "720p",
+			wantMinDuration:   4,
+			wantMinAudioDur:   2,
+			wantMinVideoPixel: documentedSeedanceVideoMinPixels,
+			wantMaxImages:     9,
+			wantMaxVideos:     3,
+			wantMaxAudios:     3,
+			wantTaskTypeConst: false,
+		},
+		{
+			name:              "2.5 Flash on custom host keeps official pixel floor and sets taskTypeConstraints",
+			protocol:          "newapi-channel-2",
+			model:             "bytedance/dreamina-seedance-2-5-flash",
+			baseURL:           "https://relay.example.com/v1",
+			wantResolutions:   []string{"480p", "720p", "1080p", "1440p", "2160p"},
+			wantDefaultRes:    "720p",
+			wantMinDuration:   4,
+			wantMinAudioDur:   2,
+			wantMinVideoPixel: OfficialSeedanceVideoMinPixels,
+			wantMaxImages:     30,
+			wantMaxVideos:     10,
+			wantMaxAudios:     10,
+			wantTaskTypeConst: true,
+		},
+		{
+			name:      "saved draft with 1s duration and 1s audio is tightened to documented floors",
+			protocol:  "newapi-channel-2",
+			model:     "seedance-2.0",
+			baseURL:   "https://relay.example.com/v1",
+			saved: &ModelCapabilityConfig{
+				Version: 1,
+				Video: &VideoCapabilityConfig{
+					Operations:        []string{"text_to_video", "reference_to_video"},
+					DefaultOperation:  "text_to_video",
+					Duration:          VideoDurationConfig{Selection: "range", Min: 1, Max: 15, Step: 1, Default: 1},
+					Ratios:            []string{"16:9"},
+					DefaultRatio:      "16:9",
+					Resolutions:       []string{"720p"},
+					DefaultResolution: "720p",
+					References: VideoReferenceConfig{
+						MaxImages:        9,
+						MaxVideos:        3,
+						MaxAudios:        3,
+						MinVideoDuration: 1,
+						MaxVideoDuration: 15,
+						MinAudioDuration: 1,
+						MaxAudioDuration: 15,
+						MinVideoPixels:   500000,
+					},
+				},
+			},
+			wantResolutions:   []string{"720p"},
+			wantDefaultRes:    "720p",
+			wantMinDuration:   4,
+			wantMinAudioDur:   2,
+			wantMinVideoPixel: 500000,
+			wantMaxImages:     9,
+			wantMaxVideos:     3,
+			wantMaxAudios:     3,
+			wantTaskTypeConst: false,
+		},
+		{
+			name:      "legacy zero-reference BeefAPI profile repairs omni reference slots",
+			protocol:  "newapi-channel-2",
+			model:     "doubao-seedance-2-0-260128",
+			channelID: "beefapi",
+			saved: &ModelCapabilityConfig{
+				Version: 1,
+				Video: &VideoCapabilityConfig{
+					Operations:        []string{"text_to_video", "image_to_video"},
+					DefaultOperation:  "text_to_video",
+					Duration:          VideoDurationConfig{Selection: "range", Min: 4, Max: 15, Step: 1, Default: 5},
+					Ratios:            []string{"16:9"},
+					DefaultRatio:      "16:9",
+					Resolutions:       []string{"720p"},
+					DefaultResolution: "720p",
+					References:        VideoReferenceConfig{MaxImages: 0, MaxVideos: 0, MaxAudios: 0},
+				},
+			},
+			wantResolutions:   []string{"720p"},
+			wantDefaultRes:    "720p",
+			wantMinDuration:   4,
+			wantMinAudioDur:   2,
+			wantMinVideoPixel: documentedSeedanceVideoMinPixels,
+			wantMaxImages:     9,
+			wantMaxVideos:     3,
+			wantMaxAudios:     3,
+			wantTaskTypeConst: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := NormalizeModelCapabilityDraft(ModelCapabilityDraft{
+				Capability:       "video",
+				Protocol:         tc.protocol,
+				Model:            tc.model,
+				BaseURL:          tc.baseURL,
+				ChannelID:        tc.channelID,
+				CapabilityConfig: tc.saved,
+			})
+			if err != nil {
+				t.Fatalf("NormalizeModelCapabilityDraft() error = %v", err)
+			}
+			if got == nil || got.Video == nil {
+				t.Fatalf("expected normalized video capability, got %#v", got)
+			}
+			video := got.Video
+			if !slices.Equal(video.Resolutions, tc.wantResolutions) || video.DefaultResolution != tc.wantDefaultRes {
+				t.Fatalf("resolutions = %v (default %q), want %v (default %q)", video.Resolutions, video.DefaultResolution, tc.wantResolutions, tc.wantDefaultRes)
+			}
+			if video.Duration.Min != tc.wantMinDuration || video.Duration.Default < tc.wantMinDuration {
+				t.Fatalf("duration = %+v, want min %d", video.Duration, tc.wantMinDuration)
+			}
+			if video.References.MinAudioDuration != tc.wantMinAudioDur {
+				t.Fatalf("minAudioDuration = %v, want %v", video.References.MinAudioDuration, tc.wantMinAudioDur)
+			}
+			if video.References.MinVideoPixels != tc.wantMinVideoPixel {
+				t.Fatalf("minVideoPixels = %d, want %d", video.References.MinVideoPixels, tc.wantMinVideoPixel)
+			}
+			if video.References.MaxImages != tc.wantMaxImages || video.References.MaxVideos != tc.wantMaxVideos || video.References.MaxAudios != tc.wantMaxAudios {
+				t.Fatalf("reference counts = %d/%d/%d, want %d/%d/%d",
+					video.References.MaxImages, video.References.MaxVideos, video.References.MaxAudios,
+					tc.wantMaxImages, tc.wantMaxVideos, tc.wantMaxAudios)
+			}
+			if video.TaskTypeConstraints != tc.wantTaskTypeConst {
+				t.Fatalf("taskTypeConstraints = %v, want %v", video.TaskTypeConstraints, tc.wantTaskTypeConst)
+			}
+		})
+	}
+}

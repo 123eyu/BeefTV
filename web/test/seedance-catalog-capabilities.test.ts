@@ -159,9 +159,22 @@ test("explicit zero limits stay zero for a server-sourced BeefAPI capability", (
     expect(modelCapabilityConfigFor(config, `beefapi::${model}`).video!.references.maxAudios).toBe(0);
 });
 
-test("legacy BeefAPI Seedance still repairs unsigned zero catalogs", () => {
+test("legacy BeefAPI Seedance keeps backend-repaired unsigned profile limits", () => {
     const model = "seedance-2.0";
-    const config = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [legacyZeroVideo(model)] } }).config;
+    const repaired = legacyZeroVideo(model);
+    repaired.modelProfiles![0]!.capabilityConfig = {
+        version: 1,
+        video: {
+            ...sampleVideo(3, 3),
+            references: {
+                ...sampleVideo(3, 3).references,
+                maxImages: 9,
+                maxVideos: 3,
+                maxAudios: 3,
+            },
+        },
+    };
+    const config = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [repaired] } }).config;
     expect(config.channels[0]?.modelProfiles?.[0]?.videoCapabilitiesVersion).toBeUndefined();
     expect(modelCapabilityConfigFor(config, `beefapi::${model}`).video!.references.maxVideos).toBe(3);
     expect(modelCapabilityConfigFor(config, `beefapi::${model}`).video!.references.maxAudios).toBe(3);
@@ -237,9 +250,21 @@ test("sanitizeServerVideoCapability rejects non-finite values and keeps omitted 
     expect(partial?.references.maxAudios).toBeUndefined();
 });
 
-test("native Ark Seedance 2.x uses the documented 407696 pixel floor", () => {
+test("native Ark Seedance 2.x uses the documented 407696 pixel floor from backend capabilityConfig", () => {
+    const capabilityConfig = {
+        version: 1,
+        video: {
+            ...sampleVideo(3, 3),
+            references: {
+                ...sampleVideo(3, 3).references,
+                minVideoPixels: 407696,
+                maxVideoPixels: 927408,
+                minVideoDurationSeconds: 2,
+            },
+        },
+    };
     const profile = modelCapabilityConfigFor(
-        { channels: [{ id: "ark", baseUrl: "https://ark.cn-beijing.volces.com/api/v3", models: ["seedance-2.0"], modelProfiles: [{ model: "seedance-2.0", protocol: "volcengine-ark-video" }] }] },
+        { channels: [{ id: "ark", baseUrl: "https://ark.cn-beijing.volces.com/api/v3", models: ["seedance-2.0"], modelProfiles: [{ model: "seedance-2.0", protocol: "volcengine-ark-video", capabilityConfig }] }] },
         "ark::seedance-2.0",
     ).video!;
     expect(profile.references.minVideoPixels).toBe(407696);

@@ -1,4 +1,4 @@
-import { isVolcengineArkVideoProtocol, type ModelProtocol, type ModelProtocolWorkflow } from "@/lib/model-protocols";
+import type { ModelProtocol, ModelProtocolWorkflow } from "@/lib/model-protocols";
 import { beefAPIImageContract } from "@/lib/beefapi-image-contracts";
 import { seedreamFamily, seedreamImageCapability } from "@/lib/seedream-image";
 import type { ImageResolutionOption, ImageResolutionTier } from "@/lib/image-resolution-tiers";
@@ -111,6 +111,7 @@ export type VideoCapabilityConfig = {
         default: number;
     };
     durationSupported?: boolean;
+    taskTypeConstraints?: boolean;
     ratios: string[];
     defaultRatio: string;
     resolutions: string[];
@@ -339,7 +340,17 @@ export function sanitizeServerVideoCapability(value: unknown): VideoCapabilityCo
         if (typeof object.durationSupported !== "boolean") return null;
         video.durationSupported = object.durationSupported;
     }
+    if ("taskTypeConstraints" in object) {
+        if (typeof object.taskTypeConstraints !== "boolean") return null;
+        video.taskTypeConstraints = object.taskTypeConstraints;
+    }
     return video;
+}
+
+export function videoSupportsTaskTypeConstraints(video?: VideoCapabilityConfig | null): boolean {
+    if (!video) return false;
+    if (typeof video.taskTypeConstraints === "boolean") return video.taskTypeConstraints;
+    return Boolean(video.operations?.includes("inpaint") || video.operations?.includes("extend"));
 }
 
 // Keep explicit pixel presets for each resolution tier so the settings panel can
@@ -606,7 +617,6 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
     if (protocol === "volcengine-ark-video" || protocol === "volcengine-ark-agent-plan-video") {
         video.watermark = { supported: true, default: false };
         video.operations.push("reference_to_video");
-        if (/^dreamina-seedance-2-0-(?:fast|mini)(?:-|$)/.test(model.toLowerCase().split("/").pop() || "")) video.resolutions = ["480p", "720p"];
     }
     if (protocol === "newapi-channel-2") {
         // APIMart 的 Seedance 2.0 Video Generations 协议支持参考视频/音频，
@@ -665,19 +675,6 @@ export function defaultModelCapabilityConfig(protocol?: ModelProtocol, model = "
         video.defaultResolution = "720P";
         video.operations.push("reference_to_video", "audio_to_video");
     }
-    if (isSeedance2Family(protocol, model)) {
-        if (protocol === "newapi") video.generateAudio = { supported: true, default: true };
-        video.references = overlayOfficialSeedance2References(video.references, isSeedance25Model(model));
-        video.operations = Array.from(new Set([...video.operations, "reference_to_video", ...(isSeedance25Model(model) ? ["audio_to_video" as const] : [])]));
-        if (isSeedance25Model(model) && video.duration.selection === "range" && (video.duration.max || 0) < 30) {
-            video.duration = { ...video.duration, max: 30 };
-        }
-    }
-    if (isVolcengineArkVideoProtocol(protocol) && /^dreamina-seedance-2[.-](?:0|5)(?:-|$)/.test(model.trim().toLowerCase().split("/").pop() || "")) {
-        video.duration = { ...video.duration, selection: "enum", min: 4, values: [-1, ...Array.from({ length: (video.duration.max || 15) - 3 }, (_, index) => index + 4)] };
-        video.ratios = [...video.ratios, "adaptive"];
-        if (isSeedance25Model(model)) video.operations = [...video.operations, "inpaint", "extend"];
-    }
     Object.assign(video.references, videoPromptLimits(protocol, model));
     return { version: 1, text, image: defaultImageCapabilityConfig(protocol, model), video };
 }
@@ -718,27 +715,13 @@ export function modelCapabilityConfigFor(
     try {
         if (protocol === "openai-image" && beefAPIImageContract(modelName)?.fixedOutputs && ["beeftv.app", "beefapi.com", "enterprise.beefapi.com", "whatstoken.ai", "www.whatstoken.ai"].includes(new URL(channel?.baseUrl || "").hostname.toLowerCase())) return fallback;
     } catch { /* Config without a public endpoint uses its stored capabilities. */ }
-    // 官方文档写的下限只收紧、不放宽，所以旧安装里存下来的 1 秒输出、1.8 秒音频也会被改到文档值；
-    // 管理员已经配得更严的数值保持不变。
-    const alignDocumentedRouteLimits = (video: VideoCapabilityConfig | undefined) => {
-        if (!video || !isSeedance2Family(protocol, modelName)) return;
-        let host = "";
-        try { host = new URL(channel?.baseUrl || "").hostname.toLowerCase(); } catch { /* no public URL */ }
-        const materialHost = ["beeftv.app", "enterprise.beefapi.com", "beefapi.com", "whatstoken.ai", "www.whatstoken.ai"].includes(host) || channel?.id === "beefapi";
-        if ((isVolcengineArkVideoProtocol(protocol) || materialHost) && video.references.minVideoPixels === 409600 && video.references.maxVideoPixels === 8295044) video.references.minVideoPixels = 407696;
-        // 输出时长下限官方 4 秒：区间、连续（fractionalMin）和枚举三种配置都要收紧，枚举里的 -1（自动）保留。
-        video.duration = tightenDocumentedOutputDuration(video.duration);
-        if ((video.references.minAudioDurationSeconds || 0) < 2) video.references.minAudioDurationSeconds = 2;
-    };
 
     if (!profile?.capabilityConfig) {
-        alignDocumentedRouteLimits(fallback.video);
         return fallback;
     }
     const capabilityConfig = normalizeModelCapabilityConfig(profile.capabilityConfig);
     const text = capabilityConfig.text ? { ...fallback.text!, ...capabilityConfig.text, references: { ...fallback.text!.references, ...capabilityConfig.text.references } } : fallback.text;
     const video = (capabilityConfig.video ? { ...fallback.video!, ...capabilityConfig.video, references: { ...fallback.video!.references, ...capabilityConfig.video.references, promptMaxUtf16Units: capabilityConfig.video.references.promptMaxUtf16Units ?? 0 } } : fallback.video)!;
-    alignDocumentedRouteLimits(video);
     const configuredImage = capabilityConfig.image;
     const image = configuredImage
         ? (() => {
@@ -763,65 +746,6 @@ export function modelCapabilityConfigFor(
           })()
         : fallback.image;
     return { ...fallback, ...capabilityConfig, text, image, video };
-}
-
-export function isSeedance2Family(protocol: ModelProtocol | undefined, modelName: string) {
-    return Boolean(protocol && ["openai", "openai-videos", "newapi", "newapi-channel-2", "volcengine-ark-video", "volcengine-ark-agent-plan-video"].includes(protocol) && String(modelName).toLowerCase().includes("seedance-2"));
-}
-
-export function isSeedance25Model(modelName: string) {
-    const base = String(modelName).trim().toLowerCase().split("/").pop() || "";
-    return /^seedance-2\.5(?:-|$)/.test(base) || /^(?:doubao|dreamina)-seedance-2[.-]5(?:-|$)/.test(base);
-}
-
-// 输出时长下限官方 4 秒：区间、连续（fractionalMin）和枚举三种已保存配置都要收紧，
-// 枚举里的 -1（自动）保留，管理员配得更严的数值（比如枚举只剩 [5,10]）不受影响。
-export function tightenDocumentedOutputDuration(duration: VideoCapabilityConfig["duration"]): VideoCapabilityConfig["duration"] {
-    const minimum = 4;
-    if (duration.selection === "enum") {
-        const values = (duration.values || []).filter((value) => value === -1 || value >= minimum);
-        // 过滤后没有合法时长时保留空列表：这份配置没有可提交的时长，提交校验会拒绝，
-        // 而不是退回原来的低于 4 秒的值。
-        const kept = values.length ? (values.includes(duration.default) ? duration.default : values.find((value) => value !== -1) ?? values[0]) : duration.default;
-        return { ...duration, values, default: kept };
-    }
-    const min = Math.max(minimum, duration.min || 0);
-    const fractionalMin = duration.continuous && duration.fractionalMin && duration.fractionalMin < minimum ? minimum : duration.fractionalMin;
-    const fallback = Math.max(minimum, duration.default);
-    if (min === duration.min && fractionalMin === duration.fractionalMin && fallback === duration.default) return duration;
-    return { ...duration, min, ...(duration.continuous ? { fractionalMin } : {}), default: fallback };
-}
-
-function overlayOfficialSeedance2References(base: VideoCapabilityConfig["references"], is25: boolean): VideoCapabilityConfig["references"] {
-    return {
-        ...base,
-        maxImages: is25 ? 30 : 9,
-        maxVideos: is25 ? 10 : 3,
-        maxVideoBytes: 200 * 1024 * 1024,
-        maxVideoDurationSeconds: is25 ? 30 : 15,
-        minVideoDurationSeconds: 2,
-        maxVideoTotalDurationSeconds: is25 ? 30 : 15,
-        maxAudios: is25 ? 10 : 3,
-        maxAudioBytes: 15 * 1024 * 1024,
-        maxAudioDurationSeconds: is25 ? 30 : 15,
-        minAudioDurationSeconds: 2,
-        maxAudioTotalDurationSeconds: is25 ? 30 : 15,
-        maxImageBytes: base.maxImageBytes || 30 * 1024 * 1024,
-        minImageWidth: 300,
-        maxImageWidth: 6000,
-        minImageHeight: 300,
-        maxImageHeight: 6000,
-        minImageAspect: 0.4,
-        maxImageAspect: 2.5,
-        minVideoWidth: 300,
-        maxVideoWidth: 6000,
-        minVideoHeight: 300,
-        maxVideoHeight: 6000,
-        minVideoAspect: 0.4,
-        maxVideoAspect: 2.5,
-        minVideoPixels: 409600,
-        maxVideoPixels: 8295044,
-    };
 }
 
 // 工作流字段是供应商参数的唯一事实来源；不能用普通视频模型的固定清晰度列表覆盖它。

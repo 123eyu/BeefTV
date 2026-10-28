@@ -5,6 +5,7 @@ import (
 	"mime/multipart"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/modelcatalog"
 	localproject "infinite-canvas/backend/internal/project"
 	localtask "infinite-canvas/backend/internal/task"
 )
@@ -39,6 +40,10 @@ type GenerationPort interface {
 type ProviderConfigPort interface {
 	ReadLocalModelConfig() ([]byte, error)
 	SaveLocalModelConfig([]byte) error
+}
+
+type ModelCapabilityPort interface {
+	NormalizeModelCapabilityDraft(modelcatalog.ModelCapabilityDraft) (*modelcatalog.ModelCapabilityConfig, error)
 }
 
 type Lifecycle interface {

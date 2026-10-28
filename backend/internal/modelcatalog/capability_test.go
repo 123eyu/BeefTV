@@ -231,3 +231,126 @@ func TestValidateImageCapabilityConfigRestrictsResponseFormat(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeModelCapabilityDraftAndSeedreamValidationTable(t *testing.T) {
+	t.Run("draft normalization covers text thinking and agnes-image", func(t *testing.T) {
+		wantTrue, wantFalse := true, false
+		cases := []struct {
+			name         string
+			draft        ModelCapabilityDraft
+			wantThinking *bool
+			wantMaxOut   int
+		}{
+			{
+				name:         "openai-response defaults thinking to true",
+				draft:        ModelCapabilityDraft{Capability: "text", Protocol: "openai-response", Model: "gpt-5.4"},
+				wantThinking: &wantTrue,
+			},
+			{
+				name:         "chat-completion defaults thinking to false",
+				draft:        ModelCapabilityDraft{Capability: "text", Protocol: "chat-completion", Model: "gpt-4o"},
+				wantThinking: &wantFalse,
+			},
+			{
+				name:       "agnes-image sets aspect_ratio and 4 max outputs",
+				draft:      ModelCapabilityDraft{Capability: "image", Protocol: "agnes-image", Model: "agnes-image-1"},
+				wantMaxOut: 4,
+			},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				got, err := NormalizeModelCapabilityDraft(tc.draft)
+				if err != nil {
+					t.Fatalf("NormalizeModelCapabilityDraft() error = %v", err)
+				}
+				if tc.wantThinking != nil {
+					if got.Text == nil || got.Text.Thinking == nil || *got.Text.Thinking != *tc.wantThinking {
+						t.Fatalf("thinking = %#v, want %v", got.Text, *tc.wantThinking)
+					}
+				}
+				if tc.wantMaxOut > 0 {
+					if got.Image == nil || got.Image.MaxOutputs != tc.wantMaxOut || got.Image.Size.Parameter != "aspect_ratio" {
+						t.Fatalf("image = %#v, want maxOutputs=%d parameter=aspect_ratio", got.Image, tc.wantMaxOut)
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("issue 273 Seedream model family and size validation table", func(t *testing.T) {
+		cases := []struct {
+			name      string
+			model     string
+			baseURL   string
+			size      string
+			quality   string
+			refCount  int
+			wantError string
+		}{
+			{
+				name:     "seedream 5.0 lite accepts 2K tier and 14 reference images",
+				model:    "doubao-seedream-5-0-260128",
+				size:     "2K",
+				refCount: 14,
+			},
+			{
+				name:      "seedream 5.0 lite rejects 15 reference images",
+				model:     "doubao-seedream-5-0-260128",
+				size:      "2K",
+				refCount:  15,
+				wantError: "最多支持 14 张参考图",
+			},
+			{
+				name:     "seedream 5.0 pro accepts 1.5K tier and caps at 10 reference images",
+				model:    "doubao-seedream-5-0-pro-260128",
+				size:     "1.5K",
+				refCount: 10,
+			},
+			{
+				name:      "seedream 5.0 pro rejects 4K tier",
+				model:     "doubao-seedream-5-0-pro-260128",
+				size:      "4K",
+				wantError: "没有 4K 档位",
+			},
+			{
+				name:      "seedream 5.0 lite rejects 1K tier",
+				model:     "doubao-seedream-5-0-260128",
+				size:      "1K",
+				wantError: "没有 1K 档位",
+			},
+			{
+				name:      "seedream 5.0 pro rejects undersized custom pixel dimensions",
+				model:     "doubao-seedream-5-0-pro-260128",
+				size:      "800x600",
+				wantError: "至少要 1280x720",
+			},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				profile := DefaultImageCapabilityConfig("openai-image", tc.model)
+				refs := make([]MediaRef, tc.refCount)
+				for i := range refs {
+					refs[i] = MediaRef{URL: "https://example.com/ref.png"}
+				}
+				err := validateImageTask(profile, TaskInput{
+					Prompt:          "mountain sunrise",
+					ReferenceImages: refs,
+					Config: TaskConfig{
+						InterfaceType: "openai-image",
+						Model:         tc.model,
+						BaseURL:       tc.baseURL,
+						Size:          tc.size,
+						Quality:       tc.quality,
+						Count:         "1",
+					},
+				})
+				if tc.wantError == "" && err != nil {
+					t.Fatalf("validateImageTask() unexpected error = %v", err)
+				}
+				if tc.wantError != "" && (err == nil || !strings.Contains(err.Error(), tc.wantError)) {
+					t.Fatalf("validateImageTask() error = %v, want substring %q", err, tc.wantError)
+				}
+			})
+		}
+	})
+}

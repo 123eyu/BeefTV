@@ -21,7 +21,22 @@ test("same-name models on custom endpoints keep their own protocol controls", ()
 });
 
 test("switching to Seedance preserves its existing settings constraints", () => {
-    const config = { ...h3AspectConfig(), model: "seedance-2.5" };
+    const base = h3AspectConfig();
+    const h3Video = base.channels[0]!.modelProfiles![0]!.capabilityConfig!.video!;
+    const channel = {
+        ...base.channels[0]!,
+        models: [...base.channels[0]!.models, "seedance-2.5"],
+        modelProfiles: [
+            ...(base.channels[0]!.modelProfiles || []),
+            {
+                model: "seedance-2.5",
+                capability: "video" as const,
+                protocol: "newapi" as const,
+                capabilityConfig: { version: 1, video: { ...h3Video, taskTypeConstraints: true } },
+            },
+        ],
+    };
+    const config = { ...base, channels: [channel], model: "beefapi::seedance-2.5" };
     expect(videoSettingsConstraints(config, { imageCount: 1 }).ratioLabel).toBe("随首帧");
     expect(videoSettingsConstraints(config, { videoCount: 1 }, { videoEditOperation: "inpaint" })).toEqual({ ratioLabel: "随原视频", durationLocked: true });
     expect(videoSettingsConstraints(config, { characterCount: 1 }).ratioLabel).toBeUndefined();

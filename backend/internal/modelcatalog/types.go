@@ -14,6 +14,7 @@ type TextCapabilityConfig struct {
 	// Streaming controls whether this model accepts upstream SSE text responses.
 	// A nil value is treated as true for backwards compatibility with older configs.
 	Streaming  *bool               `json:"streaming,omitempty"`
+	Thinking   *bool               `json:"thinking,omitempty"`
 	References TextReferenceConfig `json:"references"`
 }
 
@@ -86,17 +87,31 @@ const (
 )
 
 type VideoCapabilityConfig struct {
-	References        VideoReferenceConfig `json:"references"`
-	Duration          VideoDurationConfig  `json:"duration"`
-	DurationSupported *bool                `json:"durationSupported,omitempty"`
-	Ratios            []string             `json:"ratios"`
-	DefaultRatio      string               `json:"defaultRatio"`
-	Resolutions       []string             `json:"resolutions"`
-	DefaultResolution string               `json:"defaultResolution"`
-	GenerateAudio     VideoBooleanConfig   `json:"generateAudio"`
-	Watermark         VideoBooleanConfig   `json:"watermark"`
-	Operations        []string             `json:"operations"`
-	DefaultOperation  string               `json:"defaultOperation"`
+	References          VideoReferenceConfig `json:"references"`
+	Duration            VideoDurationConfig  `json:"duration"`
+	DurationSupported   *bool                `json:"durationSupported,omitempty"`
+	Ratios              []string             `json:"ratios"`
+	DefaultRatio        string               `json:"defaultRatio"`
+	Resolutions         []string             `json:"resolutions"`
+	DefaultResolution   string               `json:"defaultResolution"`
+	GenerateAudio       VideoBooleanConfig   `json:"generateAudio"`
+	Watermark           VideoBooleanConfig   `json:"watermark"`
+	Operations          []string             `json:"operations"`
+	DefaultOperation    string               `json:"defaultOperation"`
+	TaskTypeConstraints bool                 `json:"taskTypeConstraints,omitempty"`
+}
+
+type ModelCapabilityDraft struct {
+	Capability               string                 `json:"capability,omitempty"`
+	Category                 string                 `json:"category,omitempty"`
+	Type                     string                 `json:"type,omitempty"`
+	Protocol                 string                 `json:"protocol,omitempty"`
+	InterfaceType            string                 `json:"interfaceType,omitempty"`
+	Model                    string                 `json:"model"`
+	BaseURL                  string                 `json:"baseUrl,omitempty"`
+	ChannelID                string                 `json:"channelId,omitempty"`
+	VideoCapabilitiesVersion *string                `json:"videoCapabilitiesVersion,omitempty"`
+	CapabilityConfig         *ModelCapabilityConfig `json:"capabilityConfig,omitempty"`
 }
 
 type VideoReferenceConfig struct {
