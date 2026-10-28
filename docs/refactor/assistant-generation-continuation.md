@@ -80,3 +80,7 @@ Go SQLite fixture：单图/视频、原生多输出/拆单、缺任务、删除�
 Go HTTP fixture 验证真实 claim 身份转发、普通相同消息不获得自动身份、大小写重复 JSON 字段不能伪造该身份、无回执 ID 不转发。官方 Durable fixture 验证 active、结算和重启后 history 保留身份和完整消息；普通相同前缀消息仍无自动身份。真实 React 组件静态渲染验证自动短文案与普通用户消息、补充消息的区别；不是浏览器截图或真实模型验收。
 
 验证：`go test ./internal/handler -run 'TestAssistantContinuation(HTTP|DisplayIdentity)' -count=1` 通过；`bun test test/canvas-assistant-interruption.test.tsx test/assistant-history-recovery.test.ts ../agent-host/durable-continuation.test.mjs` 为 19 pass/61 assertions（含 7 个官方 Durable Node cases）；`bun run typecheck` exit 0。Go 防伪和 React 展示新增用例均先失败再通过；类型检查首次发现开发面板 fixture 缺字段，补齐后通过。结果来自本次工具回执，未另存 stdout 日志。
+
+## 后台独占自动接续（重构第 4 步）
+
+自动接续只由 Go 后台 worker（`assistant_continuation_background.go`）认领并向官方 Durable 宿主提交；前端 `use-canvas-assistant-continuation.ts` 只列出待处理回执、在回执被后台认领或结束后重读历史以显示该轮，并提供停止，不再 claim 或调用 `send`。已删除 `POST /assistant/continuations/:id/claim`，`/assistant/chat` 不再读取请求里的 `continuationId`（仍会剥除伪造字段）。身份规则不变：`canvasId + sessionId + requestId`、`submissionId`、`turnId`。

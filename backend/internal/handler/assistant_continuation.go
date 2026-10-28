@@ -48,17 +48,6 @@ func registerAssistantContinuationRoutes(r gin.IRouter, svc *app.Service, guard 
 		}
 		ok(c, gin.H{"accepted": true})
 	})
-	r.POST("/assistant/continuations/:id/claim", func(c *gin.Context) {
-		if !guard(c, true) {
-			return
-		}
-		result, err := svc.ClaimAssistantContinuation(c.GetString("agentUserId"), c.Param("id"))
-		if err != nil {
-			skillContextFailure(c, err)
-			return
-		}
-		ok(c, result)
-	})
 	r.POST("/assistant/continuations/cancel", func(c *gin.Context) {
 		if !guard(c, true) {
 			return

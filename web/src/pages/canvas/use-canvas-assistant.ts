@@ -381,7 +381,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         void loadHistory(canvasId);
     }, [canvasId, loadHistory, open, runFor, status?.available]);
 
-    const send = useCallback(async (text: string, selectedNodeIds: string[], references: AgentChatReference[] = [], input: { attachments?: AssistantAttachment[]; skills?: AssistantSkillSelection[]; permissionMode?: AssistantPermissionMode; continuation?: { id: string; sessionId: string; requestId: string } } = {}) => {
+    const send = useCallback(async (text: string, selectedNodeIds: string[], references: AgentChatReference[] = [], input: { attachments?: AssistantAttachment[]; skills?: AssistantSkillSelection[]; permissionMode?: AssistantPermissionMode} = {}) => {
         if (!userScopeMatches(expectedScope)) return;
         const message = text.trim();
         if (!message && !input.attachments?.length) return;
@@ -392,7 +392,6 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         const attachments = (input.attachments || []).map(item => ({ ...item }));
         const skills = (input.skills || []).map(item => ({ ...item }));
         const run = runFor(targetCanvas);
-        if (input.continuation && (run.sessionId !== input.continuation.sessionId || run.streaming || !run.historyLoaded)) return;
         if (run.streaming) {
             if (!run.dispatched || !run.sessionId || run.supplementBusy) return;
             const supplement = { text: message, attachments, skills, status: "sending" as "sending" | "accepted" | "unconfirmed" };
@@ -415,7 +414,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         const permissionMode = assistantPermissionMode(input.permissionMode ?? preferredPermissionMode);
         const controller = new AbortController();
         run.pendingUserText = message;
-        run.pendingContinuationId = input.continuation?.id ?? null;
+        run.pendingContinuationId = null;
         run.pendingSelectedNodeIds = selectedSnapshot;
         run.pendingAttachments = attachments;
         run.pendingSkills = skills;
@@ -431,9 +430,9 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
         run.dispatched = false;
         run.backgroundActive = false;
         run.recovery = null;
-        run.lastSent = input.continuation ? null : { text: message, selectedNodeIds: selectedSnapshot, references: referenceSnapshot, attachments, skills, permissionMode };
+        run.lastSent = { text: message, selectedNodeIds: selectedSnapshot, references: referenceSnapshot, attachments, skills, permissionMode };
         // A new identity per send: Stop names exactly this one, and a retry is a new request.
-        const requestId = input.continuation?.requestId || createClientId();
+        const requestId = createClientId();
         run.requestId = requestId;
         rerenderIfActive(targetCanvas);
         try {
@@ -454,7 +453,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
             controller.signal.throwIfAborted();
             run.recovery = { sessionId: run.sessionId, knownTurnIds: run.turns.map((turn) => turn.turnId), text: message, selectedNodeIds: selectedSnapshot };
             run.dispatched = true;
-            if (!input.continuation && run.turns.at(-1)?.errorReason === "turn_interrupted") recordDiagnosticEvent({ category: "task", level: "info", code: "assistant_continue_requested", reason: "manual_followup", message: "用户在助手中断后发送了新的处理请求", requestId, canvasId: targetCanvas, assistantSessionId: run.sessionId || undefined, assistantTurnId: run.turns.at(-1)?.turnId });
+            if (run.turns.at(-1)?.errorReason === "turn_interrupted") recordDiagnosticEvent({ category: "task", level: "info", code: "assistant_continue_requested", reason: "manual_followup", message: "用户在助手中断后发送了新的处理请求", requestId, canvasId: targetCanvas, assistantSessionId: run.sessionId || undefined, assistantTurnId: run.turns.at(-1)?.turnId });
             await streamAgentChat(targetCanvas, message, {
                 onSession: (sessionId) => {
                     if (!userScopeMatches(expectedScope)) return;
@@ -544,7 +543,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                     } else onCanvasChangedRef.current?.(targetCanvas, assistantChangedNodeIds(turn.change));
                     rerenderIfActive(targetCanvas);
                 },
-            }, { signal: controller.signal, selectedNodeIds: selectedSnapshot, references: referenceSnapshot, sessionId: run.sessionId ?? undefined, requestId, attachments, skills, permissionMode, continuationId: input.continuation?.id });
+            }, { signal: controller.signal, selectedNodeIds: selectedSnapshot, references: referenceSnapshot, sessionId: run.sessionId ?? undefined, requestId, attachments, skills, permissionMode });
         } catch (streamError) {
             if (!userScopeMatches(expectedScope)) return;
             if (controller.signal.aborted && !runFor(targetCanvas).dispatched) {

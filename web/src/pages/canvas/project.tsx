@@ -1014,7 +1014,7 @@ function InfiniteCanvasPage() {
         getCanvasCenter,
     });
 
-    const assistantContinuation = useCanvasAssistantContinuation(assistant, nodes, !readOnly);
+    const assistantContinuation = useCanvasAssistantContinuation(assistant, !readOnly);
     const { runAssistantProposal, assistantProposalFeedback, runningProposalIds } = useCanvasAssistantProposal({
         projectId,
         addedSkills,
