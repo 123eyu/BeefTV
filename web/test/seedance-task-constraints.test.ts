@@ -13,26 +13,13 @@ test("Seedance 2.5 locks explicit task options and preserves semantic reference"
     expect(seedanceTaskOptions("seedance-2.0", "9:16", 6, ["first_frame"], 0)).toEqual({ ratio: "9:16", duration: 6 });
 });
 
-test("nested upstream TaskTypeConstraint explains how to correct the mode", () => {
-    const raw = {
-        error: {
-            code: "upstream_error",
-            message: JSON.stringify({
-                code: "fail_to_fetch_task",
-                message: "InvalidParameter.TaskTypeConstraint: The parameter ratio specified in the request is not valid. For first-frame or first-last-frame generation, the output ratio follows the first-frame image",
-            }),
-        },
-    };
-    const error = explainGenerationError(raw);
+test("backend TaskTypeConstraint failure explains how to correct the mode", () => {
+    const message = "首尾帧模式的画面比例需跟随首帧。请选择自适应比例后重新生成；如需指定比例，请改用参考生成模式。";
+    const error = explainGenerationError({ code: "invalid_params", message });
     expect(error.category).toBe("invalid_params");
     expect(error.reason).toBe("首尾帧模式的画面比例需跟随首帧");
     expect(error.action).toContain("自适应");
     expect(error.blockAutomaticRetry).toBe(true);
-    const readback = explainGenerationError(error.message);
-    expect(readback.category).toBe(error.category);
-    expect(readback.reason).toBe(error.reason);
-    expect(readback.action).toBe(error.action);
-    expect(explainGenerationError({ code: "invalid_params", message: error.message }).reason).toBe(error.reason);
     const persisted = `${error.message}排查编号：请求 req_task_constraint_123。`;
     expect(explainGenerationError({ code: "invalid_params", message: persisted }).requestId).toBe("req_task_constraint_123");
     expect(explainGenerationError({ code: "invalid_params", message: persisted, request_id: "req_outer_456" }).requestId).toBe("req_outer_456");

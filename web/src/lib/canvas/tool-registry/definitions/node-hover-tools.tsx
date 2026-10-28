@@ -26,7 +26,10 @@ function isImageBatchRoot(ctx: ToolContext) { return isImage(ctx) && Boolean(ctx
 function opensSavedHistory(ctx: ToolContext) { return Boolean(ctx.node && canvasNodeFailureExplanation(ctx.node).category === "result_target_unavailable"); }
 function canRetry(ctx: ToolContext) {
     if (ctx.nodeMetadata?.fileUpload) return false;
-    const explanation = ctx.node ? canvasNodeFailureExplanation(ctx.node) : explainGenerationError(ctx.nodeMetadata?.errorDetails || ctx.nodeMetadata?.generationErrorCode, { stage: ctx.nodeMetadata?.taskStage });
+    const code = ctx.nodeMetadata?.generationErrorCode || ctx.nodeMetadata?.taskErrorCode;
+    const explanation = ctx.node
+        ? canvasNodeFailureExplanation(ctx.node)
+        : explainGenerationError(code ? { code, message: ctx.nodeMetadata?.errorDetails } : ctx.nodeMetadata?.errorDetails, { stage: ctx.nodeMetadata?.taskStage });
     const blocked = explanation.uncertain || (explanation.category === "download_failed" && !(ctx.node && canRecoverOrRetryDepthCapture(ctx.node)));
     const batchHasFailures = isImageBatchRoot(ctx) && (ctx.nodeMetadata?.batchFailedCount || (ctx.nodeMetadata?.status === "error" ? 1 : 0)) > 0;
     return (ctx.nodeMetadata?.status === "error" || (batchHasFailures && ctx.nodeMetadata?.status !== "loading")) && !blocked;

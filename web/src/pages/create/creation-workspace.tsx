@@ -219,9 +219,10 @@ export function CreationMessageView({ item, shotNumber, onRetryFailure, onCreate
             <>{shotNumber > 0 ? <span className="creation-shot-badge">镜 {shotNumber}</span> : null}<span className="creation-message-mark"><Sparkles /></span><strong>{brandName}</strong>{item.createdAt ? <time dateTime={item.createdAt}>{formatMessageTime(item.createdAt)}</time> : null}{stateLabel ? <span className={`creation-message-state is-${item.status}`}>{stateLabel}</span> : null}</>
         );
     const toolStatus: GenerationToolStatus = item.status === "pending" ? "running" : item.status === "error" ? "error" : item.status === "cancelled" ? "cancelled" : "completed";
+    const textErrorInput = item.generationErrorCode ? { code: item.generationErrorCode, message: item.error } : item.error;
     return <article className={`creation-assistant-message is-${mode}`}>
         {mode === "text" ? <><div className="creation-message-heading">{heading}</div>{item.reasoning ? <div className="creation-message-reasoning-wrap"><MessageReasoning reasoning={item.reasoning} isStreaming={item.status === "streaming"} /></div> : null}<div className="creation-message-content">{item.content ? <AIMessageMarkdown isStreaming={item.status === "streaming"}>{item.content}</AIMessageMarkdown> : <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><WorkingDots dotSize={5} gap={2} /><span>正在生成…</span></span>}</div></> : <GenerationToolCard status={toolStatus} heading={heading}><MediaResult item={item} onRetryFailure={onRetryFailure} onCreateVariant={onCreateVariant} onContinueCanvas={onContinueCanvas} openingCanvas={openingCanvas} /></GenerationToolCard>}
-        {item.error && mode === "text" ? <div className="creation-message-error"><GenerationFailureNotice explanation={explainGenerationError(item.error, { stage: item.generationStage })} onRetry={shouldBlockManualRetry(item.error, item.generationStage) ? undefined : onRetryFailure} /></div> : null}
+        {item.error && mode === "text" ? <div className="creation-message-error"><GenerationFailureNotice explanation={explainGenerationError(textErrorInput, { stage: item.generationStage })} onRetry={shouldBlockManualRetry(textErrorInput, item.generationStage) ? undefined : onRetryFailure} /></div> : null}
     </article>;
 }
 
@@ -281,7 +282,8 @@ function MediaResult({ item, onRetryFailure, onCreateVariant, onContinueCanvas, 
     if (item.status === "pending") return <CreationMediaPending mode={item.mode || "image"} ratio={item.settings?.ratio} />;
     if ((item.status === "error" || item.status === "cancelled") && !resultUrls.length) {
         if (item.status === "cancelled") return <div className="creation-media-error"><span>{item.content || "已停止"}</span></div>;
-        const explanation = explainGenerationError(item.error || "生成失败", { stage: item.generationStage });
+        const mediaErrorMessage = item.error || "生成失败";
+        const explanation = explainGenerationError(item.generationErrorCode ? { code: item.generationErrorCode, message: mediaErrorMessage } : mediaErrorMessage, { stage: item.generationStage });
         return <div className="creation-media-error"><GenerationFailureNotice explanation={explanation} onRetry={explanation.blockManualRetry ? undefined : onRetryFailure} /></div>;
     }
     if (!resultUrls.length) return <div className="creation-media-empty">没有返回可预览结果 <button type="button" onClick={onRetryFailure}>重试</button></div>;

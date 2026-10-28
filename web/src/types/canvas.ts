@@ -156,6 +156,7 @@ export type CanvasGenerationBatchItem = {
     status: CanvasGenerationBatchItemStatus;
     retryCount: number;
     errorDetails?: string;
+    errorCode?: string;
     submissionUncertain?: boolean;
 };
 

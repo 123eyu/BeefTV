@@ -172,7 +172,10 @@ export function useCanvasNodeEditor({
             if (node.id !== nodeId) return node;
             const previousPrompt = node.metadata?.composerContent ?? node.metadata?.prompt ?? "";
             const promptChanged = prompt !== previousPrompt;
-            const moderationFailure = node.metadata?.generationErrorCode === CONTENT_MODERATION_ERROR_CODE || isContentModerationError(node.metadata?.errorDetails);
+            const errorCode = node.metadata?.generationErrorCode || node.metadata?.taskErrorCode;
+            const moderationFailure =
+                node.metadata?.generationErrorCode === CONTENT_MODERATION_ERROR_CODE ||
+                isContentModerationError(errorCode ? { code: errorCode, message: node.metadata?.errorDetails } : node.metadata?.errorDetails);
             const metadata = moderationFailure && promptChanged
                 ? resetGenerationTaskMetadata(node.metadata, node.metadata?.content ? "success" : "idle")
                 : node.metadata;

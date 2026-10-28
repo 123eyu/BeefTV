@@ -469,7 +469,10 @@ export async function waitForGenerationTask(id: string, options?: WaitForGenerat
                 return task;
             }
             if (task.status === "failed" || task.status === "cancelled") {
-                throw new Error(task.error ? generationErrorMessage(task.error) : `任务${task.status === "cancelled" ? "已取消" : "失败"}`);
+                const message = task.error ? generationErrorMessage(task.errorCode ? { code: task.errorCode, message: task.error } : task.error) : `任务${task.status === "cancelled" ? "已取消" : "失败"}`;
+                const error = new Error(message) as Error & { code?: string };
+                if (task.errorCode) error.code = task.errorCode;
+                throw error;
             }
             const retrieving = Boolean(task.delivery) || task.stage === GENERATION_RESULT_FETCH_STAGE;
             await delay(retrieving ? Math.min(intervalMs, 500) : intervalMs, options?.signal);
@@ -577,7 +580,8 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
                 options.onTaskUpdate?.(completed);
                 if (completed.status === "succeeded") return completed;
                 if (completed.status === "failed" || completed.status === "cancelled") {
-                    throw new TaskTextStreamFatalError(completed.error ? generationErrorMessage(completed.error) : `任务${completed.status === "cancelled" ? "已取消" : "失败"}`);
+                    const message = completed.error ? generationErrorMessage(completed.errorCode ? { code: completed.errorCode, message: completed.error } : completed.error) : `任务${completed.status === "cancelled" ? "已取消" : "失败"}`;
+                    throw new TaskTextStreamFatalError(message, completed.errorCode);
                 }
             }
             lastStreamError = new Error("任务文本流连接提前结束");
@@ -605,9 +609,11 @@ function isTaskStatus(value: unknown): value is TaskStatus {
 }
 
 class TaskTextStreamFatalError extends Error {
-    constructor(message: string) {
+    code?: string;
+    constructor(message: string, code?: string) {
         super(message);
         this.name = "TaskTextStreamFatalError";
+        if (code) this.code = code;
     }
 }
 

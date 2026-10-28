@@ -19,27 +19,28 @@ function task(error: string, stage = "准备参考素材"): GenerationTask {
     return { id: "task-reference", type: "canvas_image", status: "failed", errorCode: "provider_unavailable", error, stage, attempts: 1, createdAt: "2026-10-17T10:00:00Z", updatedAt: "2026-10-17T10:00:01Z" };
 }
 
-function creation(error: string, generationStage?: string) {
+function creation(error: string, generationStage?: string, generationErrorCode?: string) {
     return renderToStaticMarkup(<CreationMessageView
-        item={{ id: "message-reference", role: "assistant", mode: "image", content: "", status: "error", error, generationStage, createdAt: "2026-10-17T10:00:00Z" }}
+        item={{ id: "message-reference", role: "assistant", mode: "image", content: "", status: "error", error, generationStage, generationErrorCode, createdAt: "2026-10-17T10:00:00Z" }}
         shotNumber={1} onRetryFailure={() => {}} onCreateVariant={() => {}} onEditUserMessage={() => {}} onContinueCanvas={() => {}} openingCanvas={false}
     />);
 }
 
 test("local runtime preserves confirmed preparation copy and offers only manual retry", () => {
     for (const [code, message] of preparationMessages) {
-        const explanation = explainGenerationError(message);
+        const structured = { code: "provider_unavailable", message };
+        const explanation = explainGenerationError(structured);
         expect(explanation.providerCode).toBe(code);
         expect(explanation.category).toBe("provider_unavailable");
         expect(explanation.message).toBe(message);
         expect(explanation.retryable).toBe(false);
         expect(explanation.uncertain).toBe(false);
-        expect(shouldBlockAutomaticRetry(message)).toBe(true);
-        expect(shouldBlockManualRetry(message)).toBe(false);
+        expect(shouldBlockAutomaticRetry(structured)).toBe(true);
+        expect(shouldBlockManualRetry(structured)).toBe(false);
         expect(taskRetryBlocked(task(message))).toBe(false);
         const notice = renderToStaticMarkup(<GenerationFailureNotice explanation={explanation} onRetry={() => {}} />);
         expect(notice).toContain("重新生成");
-        const html = creation(message);
+        const html = creation(message, undefined, "provider_unavailable");
         expect(html).toContain("本次尚未开始生成");
         expect(html).toContain("重新生成");
         expect(html).not.toContain("本地资源目录");
@@ -49,9 +50,9 @@ test("local runtime preserves confirmed preparation copy and offers only manual 
 
 test("unknown stage overrides later preparation text in creation and task center", () => {
     for (const [, message] of preparationMessages) {
-        expect(shouldBlockManualRetry(message, "submission_unknown")).toBe(true);
+        expect(shouldBlockManualRetry({ code: "provider_unavailable", message }, "submission_unknown")).toBe(true);
         expect(taskRetryBlocked(task(message, "submission_unknown"))).toBe(true);
-        const html = creation(message, "submission_unknown");
+        const html = creation(message, "submission_unknown", "provider_unavailable");
         expect(html).toContain("提交结果尚未确认");
         expect(html).not.toContain("本次尚未开始生成");
         expect(html).not.toContain("重新生成");

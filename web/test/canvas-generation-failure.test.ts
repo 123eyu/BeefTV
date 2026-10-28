@@ -184,4 +184,52 @@ describe("canvas generation failure consumers", () => {
         expect(taskRetryBlocked({ ...task, errorCode: "throttled" })).toBe(false);
         expect(taskRetryBlocked({ ...task, errorCode: "throttled", stage: "submission_unknown" })).toBe(true);
     });
+
+    test("canvas batch items and creation recovery preserve errorCode and classify via structured { code, message }", async () => {
+        const { isContentModerationError, shouldBlockManualRetry, generationErrorMessage } = await import("../src/lib/generation-error");
+        const { recoverCreationTextTask } = await import("../src/services/creation-text-task-recovery");
+        const { reconcileCreationTaskMessages } = await import("../src/pages/create/creation-conversations");
+        const { isGenerationSubmissionUncertainError } = await import("../src/lib/canvas/canvas-generation-batch");
+
+        const batchItem = {
+            id: "batch-item-1",
+            rowId: "row-1",
+            nodeId: "node-1",
+            status: "failed" as const,
+            retryCount: 0,
+            errorDetails: "第 1 张参考图片疑似包含真人形象，该模型拒绝生成。请检查并更换参考图片后重新生成。",
+            errorCode: "moderation_reference",
+        };
+        const batchErrorInput = { code: batchItem.errorCode, message: batchItem.errorDetails };
+        expect(isContentModerationError(batchErrorInput)).toBe(true);
+        expect(shouldBlockManualRetry(batchErrorInput)).toBe(true);
+        expect(generationErrorMessage(batchErrorInput)).toBe(batchItem.errorDetails);
+        expect(isGenerationSubmissionUncertainError({ code: "submission_uncertain", message: "普通错误描述" })).toBe(true);
+
+        const textRecovery = recoverCreationTextTask(
+            { mode: "text", status: "pending", content: "", taskIds: ["text-task-1"] },
+            [{ ...task, id: "text-task-1", type: "canvas_text", status: "failed", errorCode: "quota_user", error: "当前账号可用额度不足。请检查账号余额。" }],
+        );
+        expect(textRecovery).toMatchObject({
+            status: "error",
+            error: "当前账号可用额度不足。请检查账号余额。",
+            generationErrorCode: "quota_user",
+        });
+
+        const reconciled = reconcileCreationTaskMessages(
+            { recoverCreationTextTask } as unknown as Parameters<typeof reconcileCreationTaskMessages>[0],
+            [{
+                id: "conv-1",
+                title: "测试",
+                updatedAt: "2026-10-01T00:00:00Z",
+                messages: [{ id: "msg-1", role: "assistant", mode: "video", status: "pending", content: "", createdAt: "2026-10-01T00:00:00Z", taskIds: ["video-task-1"] }],
+            }],
+            [{ ...task, id: "video-task-1", type: "canvas_video", status: "failed", errorCode: "moderation_output", error: "生成视频未通过内容安全审核。请调整提示词或参考素材后重新生成。" }],
+        );
+        const failedMsg = reconciled[0]?.messages[0];
+        expect(failedMsg?.status).toBe("error");
+        expect(failedMsg?.generationErrorCode).toBe("moderation_output");
+        expect(explainGenerationError({ code: failedMsg?.generationErrorCode, message: failedMsg?.error }).category).toBe("moderation_output");
+        expect(shouldBlockManualRetry({ code: failedMsg?.generationErrorCode, message: failedMsg?.error })).toBe(true);
+    });
 });
