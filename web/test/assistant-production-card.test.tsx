@@ -171,3 +171,107 @@ test("legacy proposal without turn reply shows proposal note inside the card wit
     expect(html).toContain("canvas-assistant-proposal-note");
     expect(html).toContain("已将首帧调整为竖屏 9:16。");
 });
+test("assistantProposalProgress treats retrievable failed and fetching tasks as running until ready and bound",()=>{
+    const withOutcome = (meta: Record<string, unknown>) => meta as NonNullable<Parameters<typeof assistantProposalProgress>[1][number]["metadata"]>;
+    const inFlight = assistantProposalProgress(proposal, [
+        {
+            id: "frame",
+            type: "image",
+            title: "首帧",
+            position: { x: 0, y: 0 },
+            width: 320,
+            height: 180,
+            metadata: withOutcome({
+                status: "error",
+                taskStatus: "failed",
+                taskClientOperationId: "proposal:gp-film:frame",
+                taskOutcome: { phase: "retrievable", regenerate: "blocked", reason: "image_recovery_pending" },
+            }),
+        },
+        {
+            id: "speech",
+            type: "audio",
+            title: "中文旁白",
+            position: { x: 0, y: 200 },
+            width: 320,
+            height: 120,
+            metadata: withOutcome({
+                status: "loading",
+                taskStatus: "succeeded",
+                taskClientOperationId: "proposal:gp-film:speech",
+                taskOutcome: { phase: "fetching", regenerate: "blocked", reason: "result_fetching" },
+            }),
+        },
+    ]);
+    expect(inFlight.ready).toBe(false);
+    expect(inFlight.text).toBe("生成中，0/2 个结果已就绪。");
+
+    const allReady = assistantProposalProgress(proposal, [
+        {
+            id: "frame",
+            type: "image",
+            title: "首帧",
+            position: { x: 0, y: 0 },
+            width: 320,
+            height: 180,
+            metadata: withOutcome({
+                status: "success",
+                taskStatus: "succeeded",
+                storageKey: "resource:frame-1",
+                taskClientOperationId: "proposal:gp-film:frame",
+                taskOutcome: { phase: "ready", regenerate: "allowed", reason: "result_ready" },
+            }),
+        },
+        {
+            id: "speech",
+            type: "audio",
+            title: "中文旁白",
+            position: { x: 0, y: 200 },
+            width: 320,
+            height: 120,
+            metadata: withOutcome({
+                status: "success",
+                taskStatus: "succeeded",
+                storageKey: "resource:speech-1",
+                taskClientOperationId: "proposal:gp-film:speech",
+                taskOutcome: { phase: "ready", regenerate: "allowed", reason: "result_ready" },
+            }),
+        },
+    ]);
+    expect(allReady.ready).toBe(true);
+    expect(allReady.text).toContain("2 个素材已保存");
+
+    const settledWithFailure = assistantProposalProgress(proposal, [
+        {
+            id: "frame",
+            type: "image",
+            title: "首帧",
+            position: { x: 0, y: 0 },
+            width: 320,
+            height: 180,
+            metadata: withOutcome({
+                status: "error",
+                taskStatus: "failed",
+                taskClientOperationId: "proposal:gp-film:frame",
+                taskOutcome: { phase: "failed", regenerate: "confirm", reason: "no_result" },
+            }),
+        },
+        {
+            id: "speech",
+            type: "audio",
+            title: "中文旁白",
+            position: { x: 0, y: 200 },
+            width: 320,
+            height: 120,
+            metadata: withOutcome({
+                status: "success",
+                taskStatus: "succeeded",
+                storageKey: "resource:speech-1",
+                taskClientOperationId: "proposal:gp-film:speech",
+                taskOutcome: { phase: "ready", regenerate: "allowed", reason: "result_ready" },
+            }),
+        },
+    ]);
+    expect(settledWithFailure.ready).toBe(true);
+    expect(settledWithFailure.text).toBe("1 个结果已就绪，1 个结果因任务失败或取消而未生成。");
+});

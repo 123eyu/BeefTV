@@ -251,12 +251,25 @@ export function assistantProposalProgress(proposal: AssistantGenerationProposal,
     let complete = 0, failed = 0, pending = planned, retrieving = 0;
     for (const node of outputs.values()) {
         const meta = node.metadata || {};
-        if (meta.taskStatus === "failed" || meta.taskStatus === "cancelled") failed++;
-        else if (meta.taskStatus === "succeeded") {
-            if (meta.status === "success" && (meta.content || meta.storageKey) && !meta.resourceReloadAvailable) complete++;
+        const phase = (meta as typeof meta & { taskOutcome?: { phase?: string } }).taskOutcome?.phase;
+        const bound = meta.status === "success" && Boolean(meta.content || meta.storageKey) && !meta.resourceReloadAvailable;
+        if (phase === "running" || phase === "fetching" || phase === "retrievable") {
+            pending++;
+        } else if (phase === "ready") {
+            if (bound) complete++;
+            else pending++;
+        } else if (phase === "failed") {
+            failed++;
+        } else if (meta.taskStatus === "failed" || meta.taskStatus === "cancelled" || meta.status === "error") {
+            failed++;
+        } else if (meta.taskStatus === "succeeded") {
+            if (bound) complete++;
             else retrieving++;
-        } else if (meta.taskStatus === "queued" || meta.taskStatus === "running" || meta.generationSubmissionState === "submitting") pending++;
-        else unknown = true;
+        } else if (meta.taskStatus === "queued" || meta.taskStatus === "running" || meta.generationSubmissionState === "submitting") {
+            pending++;
+        } else {
+            unknown = true;
+        }
     }
     const ready = !unknown && outputs.size > 0 && pending === 0 && retrieving === 0;
     const visibleResults = failed ? `${complete} 个结果已就绪，${failed} 个结果因任务失败或取消而未生成。` : `${complete}/${outputs.size} 个可见结果已就绪。`;

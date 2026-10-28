@@ -224,13 +224,17 @@ func (s *operationSession) admitProductionTargets(userID, canvasID string, plan 
 			if (id != "" && id != existing.ID) || (id == "" && ((opID != "" && opID != key) || meta["generationSubmissionState"] == "submitting" || strings.TrimSpace(storage) != "" || strings.TrimSpace(content) != "")) {
 				return nil, operations.Conflict("production_node_changed", "素材节点已使用其他任务，请先检查当前结果", nil)
 			}
+			proj, _, _, err := assistantturns.ProjectTaskInTx(s.tx, userID, *existing)
+			if err != nil {
+				return nil, err
+			}
 			for field, value := range map[string]any{"taskId": existing.ID, "taskStatus": string(existing.Status), "taskClientOperationId": key, "generationSubmissionState": "accepted"} {
 				if meta[field] != value {
 					meta[field] = value
 					changed = true
 				}
 			}
-			if existing.Status == model.TaskStatusFailed || existing.Status == model.TaskStatusCancelled {
+			if existing.Status == model.TaskStatusCancelled || (existing.Status == model.TaskStatusFailed && proj.Outcome.Phase == "failed") {
 				if meta["status"] != "error" {
 					meta["status"] = "error"
 					changed = true

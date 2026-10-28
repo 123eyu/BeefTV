@@ -12,7 +12,6 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"infinite-canvas/backend/internal/model"
-	localtask "infinite-canvas/backend/internal/task"
 )
 
 type ContinuationSubmission struct {
@@ -273,69 +272,24 @@ func (s *Service) continuationResults(tx *gorm.DB, row *model.AssistantContinuat
 				return nil, nil, continuationError("task_mismatch")
 			}
 			ids = append(ids, task.ID)
-			replaced := false
-			for _, nodeID := range targets {
+			inspection, err := InspectTaskTargetsInTx(tx, row.UserID, task, row.Kind, input.Metadata.NodeID, targets, func(nodeID string) (map[string]any, bool) {
 				meta, exists := nodes[nodeID]
-				if !exists || meta["taskId"] != task.ID {
-					targetChanged = true
-					replaced = true
-					break
+				return meta, exists
+			})
+			if err != nil {
+				var expected *Error
+				if errors.As(err, &expected) {
+					return ids, nil, err
 				}
+				return nil, nil, err
 			}
-			if replaced {
-				continue
-			}
-			if task.Status != "succeeded" && task.Status != "failed" && task.Status != "cancelled" {
+			switch inspection.State {
+			case TargetBindingTargetChanged:
+				targetChanged = true
+			case TargetBindingWaiting:
 				waiting = true
-				continue
-			}
-			outputs := map[int]localtask.CanonicalOutput{}
-			if task.Status == "succeeded" {
-				var results []model.Result
-				if err = tx.Where("task_id = ? AND user_id = ? AND kind = ?", task.ID, row.UserID, localtask.ResultKindGenerationOutput).Find(&results).Error; err != nil {
-					return nil, nil, err
-				}
-				decoded, decodeErr := localtask.DecodeOutputResults(results)
-				if decodeErr != nil {
-					return nil, nil, decodeErr
-				}
-				for _, output := range decoded {
-					if _, duplicate := outputs[output.OutputIndex]; duplicate {
-						return ids, nil, continuationError("task_mismatch")
-					}
-					outputs[output.OutputIndex] = output
-				}
-				if len(outputs) != len(targets) {
-					waiting = true
-					continue
-				}
-			}
-			for index, nodeID := range targets {
-				meta := nodes[nodeID]
-				if task.Status == "succeeded" {
-					key, _ := meta["storageKey"].(string)
-					output, present := outputs[index]
-					if !present || output.ResourceID == "" || output.MaterializationErrorCode != "" || !strings.HasPrefix(key, "resource:") || meta["status"] != "success" || meta["resourceReloadAvailable"] == true {
-						waiting = true
-						continue
-					}
-					// Delivery keeps the task's primary node on every canonical output.
-					// Native multi-image destinations are the immutable indexed outputNodeIds
-					// checked above, exactly as taskbinding.Bind resolves them.
-					if key != "resource:"+output.ResourceID || output.TargetBinding == nil || output.TargetBinding.NodeID != input.Metadata.NodeID || output.MediaType != row.Kind {
-						targetChanged = true
-						continue
-					}
-					var resource model.Resource
-					if err = tx.First(&resource, "id = ? AND user_id = ? AND status = ?", strings.TrimPrefix(key, "resource:"), row.UserID, "ready").Error; err != nil {
-						if errors.Is(err, gorm.ErrRecordNotFound) {
-							waiting = true
-							continue
-						}
-						return nil, nil, err
-					}
-				}
-				selected = append(selected, nodeID)
+			case TargetBindingReady, TargetBindingFailed:
+				selected = append(selected, targets...)
 			}
 		}
 	}

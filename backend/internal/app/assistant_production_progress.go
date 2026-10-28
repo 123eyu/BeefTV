@@ -9,7 +9,6 @@ import (
 	"infinite-canvas/backend/internal/assistantturns"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/operations"
-	localtask "infinite-canvas/backend/internal/task"
 )
 
 // The existing continuation receipt advances the exact confirmed inputs. Model
@@ -87,30 +86,39 @@ func (s *Service) prepareAssistantProduction(tx *gorm.DB, receipt *model.Assista
 		if err := validateProductionTask(task, receipt.CanvasID, target); err != nil {
 			return false, err
 		}
-		if node == nil || nodeTaskID != task.ID {
-			targetChanged = true
-			failed = true
-			allSaved = false
-			continue
-		}
-		if task.Status == model.TaskStatusFailed || task.Status == model.TaskStatusCancelled {
-			failed = true
-			allSaved = false
-			if syncProductionNodeFailure(node, meta, task, key) {
-				changed = true
+		inspection, err := assistantturns.InspectTaskTargetsInTx(tx, receipt.UserID, *task, target.Kind, target.NodeID, []string{target.NodeID}, func(id string) (map[string]any, bool) {
+			n, ok := nodes[id]
+			if !ok || n == nil {
+				return nil, false
 			}
-			continue
-		}
-		var settled bool
-		saved[target.NodeID], settled, err = productionTargetState(tx, receipt.UserID, target, task, meta)
+			m, _ := n["metadata"].(map[string]any)
+			return m, true
+		})
 		if err != nil {
 			return false, err
 		}
-		// A successful supplier task is still in flight until its canonical file
-		// and target binding are saved, even when a sibling has already failed.
-		running = running || !settled
-		failed = failed || (settled && !saved[target.NodeID])
-		allSaved = allSaved && saved[target.NodeID]
+		switch inspection.State {
+		case assistantturns.TargetBindingTargetChanged:
+			targetChanged = true
+			failed = true
+			allSaved = false
+		case assistantturns.TargetBindingWaiting:
+			// A successful supplier task or retrievable task pending auto-recovery
+			// stays in flight until its canonical file and target binding are saved,
+			// even when a sibling has already failed.
+			running = true
+			allSaved = false
+		case assistantturns.TargetBindingFailed:
+			failed = true
+			allSaved = false
+			if task.Status == model.TaskStatusFailed || task.Status == model.TaskStatusCancelled {
+				if syncProductionNodeFailure(node, meta, task, key) {
+					changed = true
+				}
+			}
+		case assistantturns.TargetBindingReady:
+			saved[target.NodeID] = true
+		}
 	}
 	if changed {
 		encoded, err := json.Marshal(doc)
@@ -152,36 +160,6 @@ func (s *Service) prepareAssistantProduction(tx *gorm.DB, receipt *model.Assista
 	}
 	_, err = domain.admitProductionTargets(receipt.UserID, receipt.CanvasID, plan, ready)
 	return false, err
-}
-
-func productionTargetState(tx *gorm.DB, userID string, target operations.GenerationTarget, task *model.Task, meta map[string]any) (saved bool, settled bool, err error) {
-	key, _ := meta["storageKey"].(string)
-	if task.Status != model.TaskStatusSucceeded {
-		return false, false, nil
-	}
-	var records []model.Result
-	if err := tx.Where("task_id = ? AND user_id = ? AND kind = ?", task.ID, userID, localtask.ResultKindGenerationOutput).Find(&records).Error; err != nil {
-		return false, false, err
-	}
-	outputs, err := localtask.DecodeOutputResults(records)
-	if err != nil {
-		return false, false, err
-	}
-	for _, output := range outputs {
-		if output.OutputIndex != 0 || output.MediaType != target.Kind || output.TargetBinding == nil || output.TargetBinding.NodeID != target.NodeID {
-			continue
-		}
-		if output.MaterializationErrorCode != "" {
-			return false, true, nil
-		}
-		if output.ResourceID == "" || meta["taskId"] != task.ID || meta["status"] != "success" || meta["resourceReloadAvailable"] == true || !strings.HasPrefix(key, "resource:") || key != "resource:"+output.ResourceID {
-			continue
-		}
-		var count int64
-		err := tx.Model(&model.Resource{}).Where("id = ? AND user_id = ? AND status = ?", output.ResourceID, userID, model.ResourceStatusReady).Count(&count).Error
-		return count == 1, count == 1, err
-	}
-	return false, false, nil
 }
 
 func syncProductionNodeFailure(node, meta map[string]any, task *model.Task, key string) bool {

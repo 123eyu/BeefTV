@@ -491,3 +491,92 @@ func TestProductionProgressLateOldSuccessNeverOverwritesNewerTaskOrTrapsSibling(
 		t.Fatalf("dependent video should never be admitted after image target was replaced: tasks=%d", count)
 	}
 }
+
+func TestProductionProgressRetrievableFailedTasksKeepWaitingUntilRecovered(t *testing.T) {
+	svc, canvasID, id := productionProgressFixture(t)
+	expectProgressWaiting(t, svc, id, 2)
+
+	// Root image fails with submission_unknown (Outcome.Phase == "retrievable").
+	image := progressTask(t, svc, "image")
+	if err := svc.Database().Model(&image).Updates(map[string]any{
+		"status": model.TaskStatusFailed,
+		"stage":  "submission_unknown",
+		"error":  "Post: net/http: TLS handshake timeout",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	expectProgressWaiting(t, svc, id, 2)
+	imageMeta := readProgressNodeMeta(t, svc, canvasID, "image")
+	if imageMeta["status"] == "error" {
+		t.Fatalf("retrievable image failure should not mark node terminal error early: %+v", imageMeta)
+	}
+
+	// Background recovery completes image and speech.
+	completeProgressMaterial(t, svc, canvasID, "image")
+	completeProgressMaterial(t, svc, canvasID, "speech")
+	expectProgressWaiting(t, svc, id, 3)
+
+	// Dependent video fails while upstream still has ProviderRequestID (Outcome.Phase == "retrievable").
+	video := progressTask(t, svc, "video")
+	if err := svc.Database().Model(&video).Updates(map[string]any{
+		"status":              model.TaskStatusFailed,
+		"provider_request_id": "provider-video-req-1",
+		"error":               "poll timeout",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	expectProgressWaiting(t, svc, id, 3)
+	videoMeta := readProgressNodeMeta(t, svc, canvasID, "video")
+	if videoMeta["status"] == "error" {
+		t.Fatalf("retrievable video failure should keep waiting for auto-recovery: %+v", videoMeta)
+	}
+
+	// Once video auto-recovery succeeds and binds the node, continuation proceeds.
+	completeProgressMaterial(t, svc, canvasID, "video")
+	claim, err := svc.ClaimAssistantContinuation("local", id)
+	if err != nil || claim.State != "claimed" {
+		t.Fatalf("recovered video did not wake continuation: %v %v", claim, err)
+	}
+}
+
+func TestProductionProgressSucceededTaskWithFetchingResourceWaitsUntilResourceReady(t *testing.T) {
+	svc, canvasID, id := productionProgressFixture(t)
+	expectProgressWaiting(t, svc, id, 2)
+
+	completeProgressMaterial(t, svc, canvasID, "image")
+	completeProgressMaterial(t, svc, canvasID, "speech")
+	if err := svc.Database().Model(&model.Resource{}).Where("id = ?", "material-image").Update("status", "pending").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	// Resource is still "pending" (Outcome.Phase == "fetching"), so dependent video must not be admitted yet.
+	expectProgressWaiting(t, svc, id, 2)
+
+	// Once the resource becomes ready, dependent video is admitted.
+	if err := svc.Database().Model(&model.Resource{}).Where("id = ?", "material-image").Update("status", model.ResourceStatusReady).Error; err != nil {
+		t.Fatal(err)
+	}
+	expectProgressWaiting(t, svc, id, 3)
+}
+
+func TestProductionProgressObservationErrorPreservesWaitingReceiptAndIdentities(t *testing.T) {
+	svc, _, id := productionProgressFixture(t)
+	image := progressTask(t, svc, "image")
+	if err := svc.Database().Model(&image).Update("status", model.TaskStatusSucceeded).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Database().Create(&model.Result{ID: "corrupt-image-result", UserID: "local", TaskID: image.ID, Kind: localtask.ResultKindGenerationOutput, Payload: "{"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	_, err := svc.ClaimAssistantContinuation("local", id)
+	if err == nil {
+		t.Fatal("expected observation error from corrupt result payload")
+	}
+	var turnErr *assistantturns.Error
+	if errors.As(err, &turnErr) {
+		t.Fatalf("observation error must not be mapped to continuation semantic error: %v", err)
+	}
+	if state := backgroundReceiptState(t, svc, id); state != "waiting" {
+		t.Fatalf("observation error mutated continuation receipt state to %s", state)
+	}
+}
