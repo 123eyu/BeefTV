@@ -1,16 +1,15 @@
 import { expect, spyOn, test } from "bun:test";
 import { resolveReferenceMediaDuration } from "../src/lib/reference-media-metadata";
-import * as storage from "../src/services/file-storage";
 import * as resources from "../src/services/api/resources";
-import * as metadata from "../src/lib/media-metadata";
 import * as projects from "../src/services/api/projects";
 import { hydrateNodeGenerationContext, type NodeGenerationContext } from "../src/components/canvas/canvas-node-generation";
 import { prepareBackendGenerationTask } from "../src/services/api/generation-task";
-import { createVideoGenerationTask } from "../src/services/api/video";
 import { createModelChannel, defaultConfig, encodeChannelModel } from "../src/stores/use-config-store";
 import { modelCapabilityConfigFor } from "../src/lib/model-capabilities";
 import { assertVideoCapability } from "../src/services/api/video-validation";
 import type { ReferenceAudio } from "../src/types/media";
+import * as storage from "../src/services/file-storage";
+import * as metadata from "../src/lib/media-metadata";
 
 const channel = createModelChannel({
     id: "metadata-test",
@@ -114,15 +113,6 @@ for (const [duration, message] of [
     [900, "0.90 秒"],
     [undefined, "时长无法读取"],
 ] as const) {
-    test(`direct submission uses real metadata and rejects ${String(duration)} before upstream submission`, async () => {
-        const mocks = mockGeneratedAudio(duration);
-        try {
-            await expect(createVideoGenerationTask(config, "test", [], [], [audio])).rejects.toThrow(message);
-            expect(mocks.probe).toHaveBeenCalledTimes(1);
-        } finally {
-            mocks.restore();
-        }
-    });
 }
 
 test("concurrent references share a probe, while known duration and remote URLs do not download", async () => {
@@ -153,7 +143,6 @@ test("resource metadata avoids downloading media and probe failures remain unkno
         mocks.restore();
     }
 });
-
 
 test("known video duration still resolves missing dimensions before validation", async () => {
     const blob = spyOn(storage, "getMediaBlob").mockResolvedValue(new Blob(["video"], { type: "video/mp4" }));

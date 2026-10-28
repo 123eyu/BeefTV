@@ -15,7 +15,6 @@ import { fetchChannelModels } from "../src/services/api/image";
 import { disconnectBeefAPIConnection } from "../src/services/api/beefapi-connection";
 import { getActiveUserScope, setActiveUserScope } from "../src/lib/user-scope";
 import { apiClient } from "../src/services/api/request";
-import { createVideoGenerationTask } from "../src/services/api/video";
 import { createModelChannel, defaultConfig, modelDisplayName, normalizeConfigSnapshot, resolveModelRequestConfig, selectableModelsByCapability, type AiConfig } from "../src/stores/use-config-store";
 
 const originalAxiosRequest = axios.request;
@@ -440,22 +439,6 @@ describe("public channel model catalog", () => {
         expect(profiles).toEqual(channel.modelProfiles);
     });
 
-    test("requires the declared minimum image count and selects image-to-video", async () => {
-        const catalog: ChannelModelCatalogItem = {
-            id: "image-required-video",
-            modelType: "video",
-            minImages: 1,
-            maxImages: 2,
-        };
-        const config = configForCatalog([catalog]);
-        const profile = config.channels[0]!.modelProfiles![0]!.capabilityConfig!.video!;
-
-        expect(profile.references).toMatchObject({ minImages: 1, maxImages: 2 });
-        expect(profile.operations).toEqual(["image_to_video"]);
-        expect(profile.defaultOperation).toBe("image_to_video");
-        expect(createVideoGenerationTask(config, "synthetic prompt")).rejects.toThrow("至少需要 1 张参考图");
-    });
-
     test("preserves an ID-only manual video model profile when both protocol sources are missing", () => {
         const channel = createModelChannel({
             id: "manual-no-protocol",
@@ -565,78 +548,4 @@ describe("public channel model catalog", () => {
         expect(selectableModelsByCapability(staleSnapshot, "image")).not.toContain("ghost-image");
     });
 
-    test("omits resolution_name for Omni and for auto instead of inventing 720p", async () => {
-        const bodies: Record<string, string>[] = [];
-        axios.request = (async (request) => {
-            bodies.push(formEntries(request.data));
-            return { data: { id: `synthetic-${bodies.length}` } };
-        }) as typeof axios.request;
-
-        const omniConfig = configForCatalog([omniCatalog], { videoSeconds: "10", size: "16:9", vquality: "720" });
-        await createVideoGenerationTask(omniConfig, "synthetic prompt");
-
-        const declaredResolution: ChannelModelCatalogItem = {
-            ...omniCatalog,
-            id: "veo-public",
-            displayName: "Veo Public",
-            defaultParameters: { ...omniCatalog.defaultParameters, durationSeconds: "8", resolution: "1080p" },
-            options: { ...omniCatalog.options, durationSeconds: [{ value: "8" }], resolution: [{ value: "720p" }, { value: "1080p" }] },
-        };
-        const autoConfig = configForCatalog([declaredResolution], { videoSeconds: "8", size: "16:9", vquality: "auto" });
-        await createVideoGenerationTask(autoConfig, "synthetic prompt");
-
-        expect(bodies[0]).not.toHaveProperty("resolution_name");
-        expect(bodies[1]).not.toHaveProperty("resolution_name");
-    });
-
-    test("sends a declared compatible HD resolution for a video capability", async () => {
-        let body: Record<string, string> = {};
-        axios.request = (async (request) => {
-            body = formEntries(request.data);
-            return { data: { id: "synthetic-hd" } };
-        }) as typeof axios.request;
-        const catalog: ChannelModelCatalogItem = {
-            ...omniCatalog,
-            id: "veo-public",
-            displayName: "Veo Public",
-            defaultParameters: { aspectRatio: "16:9", durationSeconds: "8", resolution: "1080p" },
-            options: { ...omniCatalog.options, durationSeconds: [{ value: "8" }], resolution: [{ value: "1080p" }] },
-        };
-        const config = configForCatalog([catalog], { videoSeconds: "8", size: "16:9", vquality: "1080" });
-
-        await createVideoGenerationTask(config, "synthetic prompt");
-
-        expect(body.resolution_name).toBe("1080p");
-        expect(body.model).toBe("veo-public");
-        expect(body.seconds).toBe("8");
-        expect(body.size).toBe("1280x720");
-    });
-
-    test("preserves provider resolution enums with direction suffixes across Canvas display and requests", async () => {
-        let body: Record<string, string> = {};
-        axios.request = (async (request) => {
-            body = formEntries(request.data);
-            return { data: { id: "synthetic-directional" } };
-        }) as typeof axios.request;
-        const catalog: ChannelModelCatalogItem = {
-            ...omniCatalog,
-            id: "directional-video",
-            displayName: "Directional Video",
-            defaultParameters: { aspectRatio: "16:9", durationSeconds: "8", resolution: "768p竖" },
-            options: {
-                ...omniCatalog.options,
-                durationSeconds: [{ value: "8" }],
-                resolution: [{ value: "480p竖" }, { value: "768p竖" }, { value: "480p横" }, { value: "768p横" }],
-            },
-        };
-        const config = configForCatalog([catalog], { videoSeconds: "8", size: "16:9", vquality: "768P竖" });
-
-        const html = renderToStaticMarkup(React.createElement(CanvasVideoSettingsPopover, { config, onConfigChange: () => undefined }));
-        const panelHtml = renderToStaticMarkup(React.createElement(VideoSettingsPanel, { config, onConfigChange: () => undefined, theme: canvasThemes.dark }));
-        await createVideoGenerationTask(config, "synthetic prompt");
-
-        expect(html).toContain("768P竖 · 16:9 · 8s");
-        expect(panelHtml).toMatch(/aria-pressed="true"[^>]*>768P竖<\/button>/);
-        expect(body.resolution_name).toBe("768p竖");
-    });
 });

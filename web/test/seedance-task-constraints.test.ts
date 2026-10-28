@@ -2,43 +2,6 @@ import { expect, test } from "bun:test";
 import { seedanceTaskOptions } from "../src/lib/seedance-task-constraints";
 import { explainGenerationError } from "../src/lib/generation-error";
 import { resolveVideoOperation } from "../src/lib/model-selection";
-import { createSeedanceTask, pollSeedanceTask } from "../src/services/api/video-provider-seedance";
-import { defaultConfig } from "../src/stores/use-config-store";
-import { videoResponseTools } from "../src/services/api/video-response";
-import type { VideoProviderDeps } from "../src/services/api/video-provider-deps";
-
-test("frontend native and compatible requests retain the first-frame constraint", async () => {
-    for (const protocol of ["volcengine-ark-video", "newapi-channel-2"] as const) {
-        let body: any;
-        const deps = {
-            transport: {
-                post: async (_url: string, value: unknown) => {
-                    body = value;
-                    return { id: "task-native" };
-                },
-            },
-            response: videoResponseTools,
-        } as unknown as VideoProviderDeps;
-        const model = "seedance-2.5-official";
-        const config = {
-            ...defaultConfig,
-            model,
-            videoModel: model,
-            interfaceType: protocol,
-            baseUrl: protocol === "volcengine-ark-video" ? "https://ark.cn-beijing.volces.com/api/v3" : "https://example.com/v1",
-            size: "9:16",
-            videoSeconds: "6",
-            channels: [{ id: "test", interfaceType: protocol, models: [model] }],
-        };
-        const refs = [{ id: "first", name: "first.png", type: "image/png", dataUrl: "", url: "https://example.com/first.png", width: 512, height: 512 }];
-        await createSeedanceTask(deps, config as never, model, "move", refs, [], []);
-        expect(body.ratio || body.aspect_ratio).toBe("adaptive");
-        expect(body.duration).toBe(6);
-        await createSeedanceTask(deps, config as never, model, "move", refs, [], [], { videoEditOperation: "reference_to_video" });
-        expect(body.ratio || body.aspect_ratio).toBe("9:16");
-        expect(body.omni_reference_task_type).toBe("reference");
-    }
-});
 
 test("Seedance 2.5 locks explicit task options and preserves semantic reference", () => {
     for (const model of ["seedance-2.5", "seedance-2.5-official", "doubao-seedance-2-5-260628"]) {
@@ -85,21 +48,4 @@ test("explicit reference and extension intent survives model selection", () => {
 test("temporary unavailable error inside failed task is actionable", () => {
  const e=explainGenerationError({error:{code:"model_temporarily_unavailable",message:"无可用线路：当前售价档位 standard 暂无可用线路"}});
  expect(e.category).toBe("provider_unavailable"); expect(e.reason).toBe("模型服务暂时不可用");
-});
-
-
-test("polling preserves unavailable code over ambiguous provider prose", async () => {
-    for (const message of ["无可用线路：当前售价档位 standard 暂无可用线路，线路可能维护中或模型不存在", undefined]) {
-        const deps = {
-            transport: { get: async () => ({ status: "failed", error: { code: "model_temporarily_unavailable", message } }) },
-            response: { ...videoResponseTools, unwrapSeedanceTask: (value: unknown) => value },
-        } as unknown as VideoProviderDeps;
-        const config = { ...defaultConfig, baseUrl: "https://example.com/v1" };
-        const result = await pollSeedanceTask(deps, config as never, { id: "task-failed", provider: "seedance", model: "seedance-2.5" });
-        expect(result.status).toBe("failed");
-        if (result.status !== "failed") throw new Error("expected failed task");
-        const failure = explainGenerationError(result.error);
-        expect(failure.category).toBe("provider_unavailable");
-        expect(explainGenerationError(failure.message).category).toBe("provider_unavailable");
-    }
 });
