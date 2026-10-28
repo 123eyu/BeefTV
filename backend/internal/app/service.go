@@ -105,6 +105,8 @@ type Service struct {
 	workspaceOpsMu           sync.Mutex
 	imageRecoveryActive      atomic.Bool
 	imageRecoveryAfterID     string
+	videoRecoveryActive      atomic.Bool
+	videoRecoveryAfterID     string
 	bindAfterID              string
 	bindCursorMu             sync.Mutex
 }
@@ -448,4 +450,8 @@ func defaultString(value string, fallback string) string {
 
 func newID() string {
 	return kernel.NewID()
+}
+
+func (s *Service) RecoverTask(ctx context.Context, userID, id string) (*model.Task, error) {
+	return s.taskDomain().RecoverTask(ctx, userID, id)
 }

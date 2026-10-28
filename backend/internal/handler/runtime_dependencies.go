@@ -79,6 +79,7 @@ type serviceRuntimeAdapter struct {
 	createTimelineRender        func(string, localtask.TimelineRenderCreateRequest) (*model.Task, error)
 	createTimelineTranscription func(string, localtask.TimelineTranscriptionCreateRequest) (*model.Task, error)
 	createDepthCapture          func(string, localtask.DepthCaptureCreateRequest) (*model.Task, error)
+	recoverTask                 func(context.Context, string, string) (*model.Task, error)
 }
 
 func newServiceRuntimeAdapter(value *app.Service) serviceRuntimeAdapter {
@@ -88,7 +89,7 @@ func newServiceRuntimeAdapter(value *app.Service) serviceRuntimeAdapter {
 		resources: value.Resources, uploadLocalResource: value.UploadLocalResource,
 		listProjects: value.ListProjects, tasksWithOptions: value.TasksWithOptions, createTask: value.CreateLocalTask,
 		createTimelineRender: value.CreateTimelineRenderTask, createTimelineTranscription: value.CreateTimelineTranscriptionTask,
-		createDepthCapture: value.CreateDepthCaptureTask,
+		createDepthCapture: value.CreateDepthCaptureTask, recoverTask: value.RecoverTask,
 	}
 }
 
@@ -138,6 +139,10 @@ func (a serviceRuntimeAdapter) CreateTimelineTranscriptionTask(userID string, re
 
 func (a serviceRuntimeAdapter) CreateDepthCaptureTask(userID string, request localtask.DepthCaptureCreateRequest) (*model.Task, error) {
 	return a.createDepthCapture(userID, request)
+}
+
+func (a serviceRuntimeAdapter) RecoverTask(ctx context.Context, userID, id string) (*model.Task, error) {
+	return a.recoverTask(ctx, userID, id)
 }
 
 func requestAssetPort(c *gin.Context, fallback *app.Service) localapp.AssetPort {

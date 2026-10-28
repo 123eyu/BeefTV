@@ -42,6 +42,7 @@ func (s *Service) taskDependencies() localtask.Dependencies {
 		Failures:               taskFailuresAdapter{},
 		TextReplay:             s.TextReplay(),
 		Provider:               taskProviderAdapter{s},
+		Recovery:               taskRecoveryAdapter{s},
 		Present:                taskPresenterAdapter{s},
 		Logs:                   taskLogAdapter{s},
 		Activity:               taskActivityAdapter{s},
@@ -288,6 +289,24 @@ type taskProviderAdapter struct{ s *Service }
 
 func (a taskProviderAdapter) RequestCancel(ctx context.Context, task *model.Task) error {
 	return a.s.requestProviderCancellation(ctx, task)
+}
+
+type taskRecoveryAdapter struct{ s *Service }
+
+func (a taskRecoveryAdapter) ResetBackoff(userID, taskID string) error {
+	return a.s.repo.ResetTaskRecoveryBackoff(userID, taskID)
+}
+
+func (a taskRecoveryAdapter) ResumeDelivery(ctx context.Context, userID, taskID string) (*model.Task, error) {
+	return a.s.resumeTaskDeliveryForUser(ctx, userID, taskID)
+}
+
+func (a taskRecoveryAdapter) RecoverImage(ctx context.Context, userID, taskID string) (*model.Task, error) {
+	return a.s.recoverFailedImageForUser(ctx, userID, taskID)
+}
+
+func (a taskRecoveryAdapter) RecoverVideoOrUpscale(ctx context.Context, userID, taskID string) (*model.Task, error) {
+	return a.s.recoverFailedVideoOrUpscaleForUser(ctx, userID, taskID)
 }
 
 type taskPresenterAdapter struct{ s *Service }

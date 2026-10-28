@@ -55,6 +55,33 @@ func TestComputeOutcome(t *testing.T) {
 		{"计费不明", failed, "", OutcomeFacts{}, want("failed", "confirm", "task_failed")},
 		{"接受证据覆盖旧未发出阶段", with(func(t *model.Task) { t.Stage = "request_not_sent"; t.RecoveryOutcome = &noResult }), "", OutcomeFacts{DispatchState: "accepted", ImageResponseAccepted: true}, want("failed", "confirm", "no_result")},
 		{"视频沿用原任务查询", with(func(t *model.Task) { t.Type = "canvas_video"; t.ProviderRequestID = "original" }), "", OutcomeFacts{}, want("retrievable", "blocked", "provider_result_pending")},
+		{"视频确认上游失败", with(func(t *model.Task) {
+			t.Type = "canvas_video"
+			t.ProviderRequestID = "original"
+			t.RecoveryOutcome = &noResult
+		}), "", OutcomeFacts{}, want("failed", "confirm", "no_result")},
+		{"视频过保或无法取回", with(func(t *model.Task) {
+			t.Type = "canvas_video"
+			t.ProviderRequestID = "original"
+			t.RecoveryOutcome = &unrecoverable
+		}), "", OutcomeFacts{}, want("failed", "confirm", "result_unrecoverable")},
+		{"图片超分沿用上游查询", with(func(t *model.Task) {
+			t.Type = "canvas_image"
+			t.Model = "topaz-standard-v2"
+			t.ProviderRequestID = "upscale-req-1"
+		}), "", OutcomeFacts{}, want("retrievable", "blocked", "provider_result_pending")},
+		{"图片超分确认无结果", with(func(t *model.Task) {
+			t.Type = "canvas_image"
+			t.Model = "topaz-standard-v2"
+			t.ProviderRequestID = "upscale-req-1"
+			t.RecoveryOutcome = &noResult
+		}), "", OutcomeFacts{}, want("failed", "confirm", "no_result")},
+		{"图片超分确认取不回", with(func(t *model.Task) {
+			t.Type = "canvas_image"
+			t.Model = "topaz-standard-v2"
+			t.ProviderRequestID = "upscale-req-1"
+			t.RecoveryOutcome = &unrecoverable
+		}), "", OutcomeFacts{}, want("failed", "confirm", "result_unrecoverable")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

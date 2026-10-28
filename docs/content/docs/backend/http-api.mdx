@@ -296,6 +296,8 @@ Windows 的运行地址描述文件位于用户目录的 `.beeftv/runtime/`，�
 
 旧任务若没有请求摘要，不能凭编号推断内容相同，因此拒绝重放，应先查询已有任务。此编号仅保证本地任务不重复创建，不代表上游扣费或取消结算已经确认。
 
+`POST /tasks/:id/recover` 是免费的通用结果取回接口（经由 `localapp.TaskPort` 路由）：对已生成但尚未入库的任务继续下载并落盘，对失败的图片任务按已接受回执或同键重放取回结果，对失败的视频与 AI 超分任务按原 `provider_request_id` 查询上游状态并重置轮询退避（`next_poll_at = nil`）。该接口结构上绝不调用 `RetryTask`、不创建新任务、不递增 `routeRun`。后台恢复循环同样会自动扫描处于 `retrievable` 的图片、视频与超分任务，并在确认上游无结果或超过保留期/回执冲突时记录 `recovery_outcome`（`no_result` 或 `unrecoverable`），使公开 `outcome.phase` 收敛为 `failed`。`POST /media/upscale/tasks/:id/recover` 亦仅查询与取回已接受的原任务结果，不再对未发出任务隐式触发付费重试。
+
 标准 OpenAI Images 配置中的 `gpt-image-2` 默认质量为 `low`，设置面板保留低、中、高三个选项；旧内置配置中的自动质量迁移为低质量。任务提交时，image2 的空值、`auto` 和 `any` 明确发送为 `low`，用户选择的中、高质量及 1K/2K/4K 尺寸保持原值。GPT Image 2.5 的默认质量与完整质量选项不变，工作流参数不受此规则影响。
 
 ## 任务诊断

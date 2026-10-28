@@ -31,6 +31,7 @@ type TaskPort interface {
 	CreateTimelineRenderTask(string, localtask.TimelineRenderCreateRequest) (*model.Task, error)
 	CreateTimelineTranscriptionTask(string, localtask.TimelineTranscriptionCreateRequest) (*model.Task, error)
 	CreateDepthCaptureTask(string, localtask.DepthCaptureCreateRequest) (*model.Task, error)
+	RecoverTask(context.Context, string, string) (*model.Task, error)
 }
 
 type GenerationPort interface {

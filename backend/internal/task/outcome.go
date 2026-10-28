@@ -3,6 +3,7 @@ package task
 import (
 	"strings"
 
+	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 )
 
@@ -64,10 +65,10 @@ func ComputeOutcome(task model.Task, resultState string, facts OutcomeFacts) Out
 			return out("failed", regenerate, "no_result")
 		}
 	}
-	if task.Type == "canvas_image" && (facts.HasImageReceipt || facts.ImageResponseAccepted || facts.SafeImageReplay || facts.DispatchState == "accepted" || facts.DispatchState == "submission_unknown" || task.Stage == "submission_unknown") {
+	if task.Type == "canvas_image" && generation.UpscaleMediaType(task.Model) == "" && (facts.HasImageReceipt || facts.ImageResponseAccepted || facts.SafeImageReplay || facts.DispatchState == "accepted" || facts.DispatchState == "submission_unknown" || task.Stage == "submission_unknown") {
 		return out("retrievable", "blocked", "image_recovery_pending")
 	}
-	if task.ProviderRequestID != "" {
+	if task.ProviderRequestID != "" || ((task.Type == "canvas_video" || strings.HasPrefix(task.Type, "video_") || generation.UpscaleMediaType(task.Model) != "") && (facts.DispatchState == "submission_unknown" || task.Stage == "submission_unknown")) {
 		return out("retrievable", "blocked", "provider_result_pending")
 	}
 	return out("failed", regenerate, "task_failed")

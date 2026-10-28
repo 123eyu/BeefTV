@@ -12,6 +12,7 @@ import (
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/provider/workflow"
 	"infinite-canvas/backend/internal/repository"
+	localtask "infinite-canvas/backend/internal/task"
 )
 
 const providerTaskRecoveryLeaseDuration = 10 * time.Minute
@@ -79,6 +80,7 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	s.hydrateTaskProviderRequestID(task)
 	providerRequestID := strings.TrimSpace(task.ProviderRequestID)
 	if providerRequestID == "" {
+		s.recordMissingVideoReceiptOutcome(task, claimUserID)
 		return nil, BadAuthRequest("该任务没有可恢复的上游任务 ID")
 	}
 	decryptedInput, err := s.decryptTaskInputJSON(task.InputJSON)
@@ -87,6 +89,7 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	}
 	var input canvasGenerationInput
 	if err := json.Unmarshal([]byte(decryptedInput), &input); err != nil {
+		s.recordUnrecoverableVideoOutcome(task, claimUserID)
 		return nil, fmt.Errorf("任务输入解析失败：%w", err)
 	}
 	config, err := s.resolveProviderConfig(input.Config)
@@ -100,6 +103,7 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	_, officialVideo := generation.OfficialDeclarativeVideoInterface(config.InterfaceType)
 	legacyVideo := !officialVideo && (strings.TrimSpace(config.InterfaceType) == "" || isArkPlanVideoConfig(config))
 	if !declarative && !beefVideo && !workflowVideo && !legacyVideo && !upscale {
+		s.recordUnrecoverableVideoOutcome(task, claimUserID)
 		return nil, BadAuthRequest("该任务的请求协议不支持安全查询上游状态")
 	}
 	input.Config = config
@@ -143,12 +147,23 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 		result, providerStatus, err = queryProtocolAdapterVideoTask(queryCtx, input, adapter, providerRequestID)
 	}
 	if err != nil {
+		if outcome := classifyFailedVideoQueryOutcome(*task, providerStatus, err); outcome != "" {
+			_ = s.repo.FinishFailedVideoRecovery(*task, &outcome, nil)
+			task.RecoveryOutcome = &outcome
+		}
 		_ = s.log(task.UserID, task.ID, "error", "人工查询上游视频任务失败", err.Error())
 		return nil, err
 	}
 	if result == nil {
+		if videoTaskPastRetentionWindow(*task, time.Now()) {
+			outcome := localtask.RecoveryUnrecoverable
+			_ = s.repo.FinishFailedVideoRecovery(*task, &outcome, nil)
+			task.RecoveryOutcome = &outcome
+		}
+		projected := taskForOutput(*task)
+		s.attachTaskDelivery(projected)
 		_ = s.log(task.UserID, task.ID, "info", "人工查询完成，上游任务仍在处理", providerStatus)
-		return &ProviderTaskQueryResult{Task: taskForOutput(*task), ProviderStatus: providerStatus, Recovered: false}, nil
+		return &ProviderTaskQueryResult{Task: projected, ProviderStatus: providerStatus, Recovered: false}, nil
 	}
 
 	result, err = s.persistTaskGeneratedMediaResult(*task, result)

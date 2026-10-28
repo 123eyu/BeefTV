@@ -71,6 +71,9 @@ func (s *Service) recoverFailedImages(ctx context.Context, limit int) error {
 }
 
 func (s *Service) recoverFailedImage(ctx context.Context, candidate model.Task) error {
+	if generation.UpscaleMediaType(candidate.Model) != "" {
+		return nil
+	}
 	owner := "manual-recovery:" + newID()
 	if err := s.repo.ClaimFailedTaskProviderRecovery(candidate.ID, candidate.UserID, owner, providerTaskRecoveryLeaseDuration); err != nil {
 		return err

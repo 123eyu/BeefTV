@@ -67,9 +67,11 @@ func (r *Repository) ImageRecoveryEvidence(taskIDs []string) (map[string]ImageRe
 	return facts, nil
 }
 
+var upscaleModelKeys = []string{"topaz-standard-v2", "topaz-wonder-3.5", "topaz-proteus", "topaz-starlight-fast-2"}
+
 func (r *Repository) FailedImagesForRecovery(afterID string, limit int) ([]model.Task, error) {
 	var tasks []model.Task
-	err := r.db.Where("tasks.id > ? AND tasks.type = ? AND tasks.status = ?", afterID, "canvas_image", model.TaskStatusFailed).
+	err := r.db.Where("tasks.id > ? AND tasks.type = ? AND tasks.model NOT IN ? AND tasks.status = ?", afterID, "canvas_image", upscaleModelKeys, model.TaskStatusFailed).
 		Where("(recovery_outcome IS NULL OR recovery_outcome = '') AND (next_poll_at IS NULL OR next_poll_at <= ?)", time.Now()).
 		Where(`stage = 'submission_unknown' OR EXISTS (SELECT 1 FROM api_call_logs l WHERE l.task_id = tasks.id AND l.user_id = tasks.user_id AND l.capability = 'image' AND l.request_kind = 'create' AND l.method = 'POST') OR (SELECT a.dispatch_state FROM route_attempts a WHERE a.task_id = tasks.id AND a.route_run = tasks.route_run ORDER BY a.attempt_number DESC, a.id ASC LIMIT 1) IN ('accepted', 'submission_unknown')`).
 		Order("tasks.id ASC").Limit(limit).Find(&tasks).Error

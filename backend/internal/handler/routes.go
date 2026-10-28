@@ -218,6 +218,19 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc *app.Service, hostedProfile ...b
 		}
 		ok(c, task)
 	})
+	r.POST("/tasks/:id/recover", func(c *gin.Context) {
+		user, err := currentUser(c, svc)
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		task, err := requestTaskPort(c, svc).RecoverTask(c.Request.Context(), user.ID, c.Param("id"))
+		if err != nil {
+			failService(c, err)
+			return
+		}
+		ok(c, task)
+	})
 	r.POST("/tasks/:id/query-provider", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
