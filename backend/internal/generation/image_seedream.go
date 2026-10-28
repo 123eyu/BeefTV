@@ -56,7 +56,9 @@ func seedreamImageBody(input Input) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	body := map[string]any{"model": input.Config.Model, "prompt": WithSystemPrompt(input.Config, input.Prompt), "size": size, "response_format": "b64_json", "watermark": input.Config.SeedreamWatermark == "true"}
+	// URL responses let the gateway transfer image bytes through its media store.
+	// The existing materializer also accepts Base64 from saved or older responses.
+	body := map[string]any{"model": input.Config.Model, "prompt": WithSystemPrompt(input.Config, input.Prompt), "size": size, "response_format": "url", "watermark": input.Config.SeedreamWatermark == "true"}
 	if len(refs) == 1 {
 		body["image"] = refs[0]
 	} else if len(refs) > 1 {
@@ -75,7 +77,6 @@ func seedreamImageBody(input Input) (map[string]any, error) {
 		}
 		if n > 1 {
 			body["stream"] = true
-			body["response_format"] = "url"
 			body["sequential_image_generation"] = "auto"
 			body["sequential_image_generation_options"] = map[string]any{"max_images": n}
 		}
