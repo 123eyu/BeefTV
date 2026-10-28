@@ -16,7 +16,7 @@ func (s *Service) taskOutcomeFacts(tasks []model.Task) map[string]localtask.Outc
 	evidence, err := s.repo.ImageRecoveryEvidence(ids)
 	facts := make(map[string]localtask.OutcomeFacts, len(tasks))
 	for _, task := range tasks {
-		f := localtask.OutcomeFacts{Unreadable: err != nil}
+		f := localtask.OutcomeFacts{Unreadable: err != nil, RequestNotSent: task.Stage == taskStageRequestNotSent}
 		if e, ok := evidence[task.ID]; ok {
 			f.HasImageReceipt = e.HasReceipt
 			if e.Attempt != nil && e.Attempt.RouteRun == task.RouteRun {
