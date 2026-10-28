@@ -1,5 +1,7 @@
 // 这一回合唯一的展示投影：可见正文与可读思考都从同一份官方事件里出。
 // 实时、终态与重开历史共用这里的形状，界面不另建只会拼字符串的 reasoning reducer。
+import { businessLifecycle } from './business-progress.mjs';
+
 const visibleTextOf = (message) => message?.role === 'assistant' && message.stopReason !== 'error'
   ? (message.content || []).filter((block) => block?.type === 'text').map((block) => block.text || '').join('') : '';
 
@@ -165,4 +167,103 @@ export function createDurableTurnProjection() {
       return payloads;
     },
   };
+}
+
+export function publicDurableTurn(active, running = false) {
+  if (!active) return null;
+  // Go canonicalizes continuationId from a claimed receipt before forwarding.
+  // `reasoning` is the curated thinking projection (id/text/status only), not a raw
+  // provider block; history and turn_end must both carry it or the panel would show
+  // thinking while streaming and lose it on reload.
+  const keys = ['permissionMode', 'turnId', 'requestId', 'submissionId', 'continuationId', 'userText', 'selectedNodeIds', 'attachments', 'skills',
+    'references', 'supplements', 'supplementInputs', 'createdAt', 'reply', 'toolCalls', 'change', 'proposals', 'plan',
+    'reasoning', 'cancelled', 'error', 'errorReason', 'sessionId', 'status'];
+  const result = Object.fromEntries(keys.filter((key) => active[key] !== undefined).map((key) => [key, active[key]]));
+  // Keep provider detail in the internal record; streams and old history share
+  // the same public projection so an upstream body cannot become UI copy.
+  if (result.error && ['model_error', 'provider_error'].includes(result.errorReason)) {
+    result.error = '模型没有完成回复。已经完成的操作会保留，请检查结果后再继续。';
+  }
+  if (running) { delete result.toolCalls; result.status = 'running'; }
+  return result;
+}
+
+export function durableCompletion(settled, assistant, budgetFailure, stopped = false, replyText = undefined) {
+  const cancelled = Boolean(stopped || settled.reason === 'aborted');
+  const fallbackText = assistant?.stopReason === 'error' ? '' : (assistant?.content?.filter((block) => block.type === 'text').map((block) => block.text).join('') || '');
+  const text = replyText !== undefined ? replyText : fallbackText;
+  if (cancelled) return { reply: text, cancelled, error: null, errorReason: null };
+  if (settled.status !== 'done') return { reply: '', cancelled: false,
+    error: String(budgetFailure?.message || settled.detail || settled.reason || 'agent_run_failed'),
+    errorReason: budgetFailure?.reason || settled.reason || 'agent_run_failed' };
+  if (!assistant || ['error', 'aborted'].includes(assistant.stopReason)) return { reply: '', cancelled: false,
+    error: assistant?.errorMessage || 'agent_answer_missing', errorReason: 'provider_error' };
+  return { reply: text,
+    cancelled: false, error: null, errorReason: null };
+}
+
+// Official retry text can carry upstream bodies. The panel only receives one of these reasons.
+const RETRY_REASONS = [
+  ['rate_limited', /rate.?limit|too many requests|\b429\b|resource.?exhausted/i],
+  ['timeout', /timed? out|timeout/i],
+  ['provider_unavailable', /overloaded|server.?busy|currently busy|high demand|at capacity|\b5\d\d\b|service.?unavailable|server.?error|internal.?error|provider.?returned/i],
+  ['network', /network|connection|other side closed|fetch failed|getaddrinfo|ENOTFOUND|EAI_AGAIN|upstream.?connect|reset before headers|socket|terminated|websocket|ended without|ended before|did not get a response|canceled/i],
+];
+
+export function durableRetryReason(message) {
+  const text = String(message || '');
+  return RETRY_REASONS.find(([, pattern]) => pattern.test(text))?.[0] || 'model_error';
+}
+
+const retryLifecycle = (attempt, error) => ({ type: 'lifecycle', phase: 'retry', attempt, reason: durableRetryReason(error) });
+
+function snapshotLifecycle(event) {
+  const compaction = (event.compactions || []).find((item) => item.blocking);
+  if (compaction) return { type: 'lifecycle', phase: 'compaction', taskId: compaction.taskId };
+  if (event.generation?.retry) return retryLifecycle(event.generation.attempt, event.generation.retry.error);
+  for (const slot of [...(event.nestedTools || []), ...(event.tools || [])]) {
+    if (slot.status !== 'running') continue;
+    const progress = businessLifecycle(slot.name, slot.details);
+    if (progress) return progress;
+  }
+  const tool = (event.tools || []).find((slot) => slot.status === 'running');
+  return tool ? { type: 'lifecycle', phase: 'tool', toolName: tool.name } : null;
+}
+
+// Official Durable events -> host lifecycle/plan lines. Visible text is projected separately.
+export function durableStreamEvents(event, current = null) {
+  switch (event?.type) {
+    case 'plan': return [{ type: 'plan', plan: event.plan }];
+    case 'tool_execution_start': return [{ type: 'lifecycle', phase: 'tool', toolName: event.toolName }];
+    case 'tool_execution_update': {
+      const progress = businessLifecycle(event.toolName, event.details);
+      return progress ? [progress] : [];
+    }
+    case 'tool_execution_end': {
+      const result = event.entry?.model?.find((message) => message.role === 'toolResult' && message.toolCallId === event.toolCallId && message.toolName === event.toolName);
+      return [{ type: 'lifecycle', phase: 'tool_end', toolName: event.toolName,
+        ...(typeof result?.isError === 'boolean' ? { success: !result.isError } : {}) }];
+    }
+    case 'compaction_start': return event.blocking ? [{ type: 'lifecycle', phase: 'compaction', taskId: event.taskId }] : [];
+    case 'compaction_end': return current?.phase === 'compaction' && current.taskId === event.taskId
+      ? [{ type: 'lifecycle', phase: 'compaction_end', success: !event.error }] : [];
+    case 'auto_retry_start': return [retryLifecycle(event.attempt, event.errorMessage)];
+    case 'auto_retry_end': return [{ type: 'lifecycle', phase: 'retry_end', attempt: event.attempt }];
+    case 'snapshot': { const progress = snapshotLifecycle(event); return progress ? [progress] : []; }
+    default: return [];
+  }
+}
+
+// Latest transient progress of a live turn, kept in memory for history reads; never persisted.
+export function durableLifecycleState(current, event) {
+  switch (event?.type) {
+    case 'snapshot': return snapshotLifecycle(event);
+    case 'auto_retry_start': case 'tool_execution_start': return durableStreamEvents(event)[0];
+    case 'tool_execution_update': return durableStreamEvents(event)[0] || current;
+    case 'compaction_start': return durableStreamEvents(event, current)[0] || current;
+    case 'compaction_end': return durableStreamEvents(event, current).length ? null : current;
+    case 'auto_retry_end': return current?.phase === 'retry' ? null : current;
+    case 'tool_execution_end': return ['tool', 'business'].includes(current?.phase) && current.toolName === event.toolName ? durableStreamEvents(event)[0] : current;
+    default: return current;
+  }
 }
