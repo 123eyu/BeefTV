@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { buildNodeGenerationContext } from "../src/components/canvas/canvas-node-generation";
-import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked, canvasTaskFailureMetadata, canvasGenerationTaskNodes, canvasImageGenerationHasPendingResult } from "../src/pages/canvas/canvas-generation-failure";
-import { taskAttentionReason, taskRetryBlocked } from "../src/pages/tasks/task-shared";
+import { canvasGenerationFailureMetadata, canvasTaskFailureMetadata, canvasGenerationTaskNodes } from "../src/pages/canvas/canvas-generation-failure";
+import { canReloadCanvasNodeResource, canvasNodeHasPendingOutcomeResult, isNodeRegenerateBlocked, isNodeRegenerateConfirm, isTaskRegenerateBlocked, readTaskOutcome } from "../src/lib/task-outcome";
+import { taskAttentionReason } from "../src/pages/tasks/task-shared";
 import { resolveMetadataReferences, generationTaskMetadata, resetGenerationTaskMetadata } from "../src/lib/canvas/canvas-project-generation";
 import { ApiError } from "../src/services/api/request";
-import { explainGenerationError, formatGenerationDiagnostics } from "../src/lib/generation-error";
+import { explainGenerationError, formatGenerationDiagnostics, unchangedModeratedPrompt } from "../src/lib/generation-error";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 import type { GenerationTask } from "../src/services/api/task-center";
 import moderationFixtures from "../../fixtures/moderation-errors.json";
@@ -14,19 +15,18 @@ const rejection = { code: "content_policy_violation", message: "opaque" };
 test("confirmed unsent submission remains retryable after restoring the task", () => {
     const task = { id: "unsent-task", type: "canvas_video", status: "failed", stage: "任务失败", errorCode: "request_not_sent", error: "未能连接服务，本次请求尚未提交。请检查网络或代理后重试。" } as GenerationTask;
     const metadata = { ...generationTaskMetadata(task), ...canvasTaskFailureMetadata(task) };
-    expect(taskRetryBlocked(task)).toBe(false);
-    expect(canvasGenerationRetryBlocked(metadata)).toBe(false);
-    expect(canvasGenerationRetryBlocked(metadata, { prompt: "same", mode: "video" })).toBe(false);
+    expect(isTaskRegenerateBlocked(task)).toBe(false);
+    expect(isNodeRegenerateBlocked(metadata)).toBe(false);
     expect(explainGenerationError({ code: task.errorCode, message: task.error }).message).toContain("尚未提交");
-    expect(canvasGenerationRetryBlocked({ ...metadata, taskStage: "submission_unknown", generationErrorCode: "submission_uncertain" })).toBe(true);
+    expect(isNodeRegenerateBlocked({ ...metadata, taskOutcome: undefined, taskStage: "submission_unknown", generationErrorCode: "submission_uncertain" })).toBe(true);
 });
 
 test("completed media with a canvas commit conflict offers reload without another paid generation", () => {
     const failure = canvasGenerationFailureMetadata({ code: "canvas_conflict" }, { prompt: "red square", mode: "video" });
     expect(failure.errorDetails).toContain("生成结果已保留");
     expect(failure.errorDetails).not.toContain("模型不接受");
-    expect(failure.resourceReloadAvailable).toBe(true);
-    expect(canvasGenerationRetryBlocked(failure, { prompt: "red square", mode: "video" })).toBe(true);
+    expect(canReloadCanvasNodeResource({ taskId: "task-1", ...failure })).toBe(true);
+    expect(isNodeRegenerateBlocked(failure)).toBe(true);
 });
 
 test("backend canvas revision 409 offers reload without treating it as a model failure", () => {
@@ -35,10 +35,10 @@ test("backend canvas revision 409 offers reload without treating it as a model f
         { prompt: "red square", mode: "image" },
     );
     expect(failure.generationErrorCode).toBe("canvas_conflict");
-    expect(failure.resourceReloadAvailable).toBe(true);
+    expect(canReloadCanvasNodeResource({ taskId: "task-1", ...failure })).toBe(true);
     expect(failure.errorDetails).toContain("生成结果已保留");
     expect(failure.errorDetails).not.toContain("模型不接受");
-    expect(canvasGenerationRetryBlocked(failure, { prompt: "red square", mode: "image" })).toBe(true);
+    expect(isNodeRegenerateBlocked(failure)).toBe(true);
 });
 const task: GenerationTask = { id: "task-failure", type: "canvas_image", status: "failed", prompt: "draw", attempts: 1, createdAt: "2026-09-26T00:00:00Z", updatedAt: "2026-09-26T00:00:00Z", errorCode: "content_policy_violation", error: "opaque" };
 const image = (id: string, storageKey: string): CanvasNodeData => ({ id, type: CanvasNodeType.Image, title: id, position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { content: `https://example.test/${id}.png`, storageKey } });
@@ -50,14 +50,15 @@ test("complete image input rejection permits changed input while uncertain tasks
     const restored = canvasGenerationTaskNodes([stale], stale.id, corrected)[0];
     expect(restored.metadata?.errorDetails).toContain("输入文本未通过内容安全审核");
     expect(restored.metadata?.errorDetails).not.toContain("结果尚未确认");
-    expect(canvasImageGenerationHasPendingResult(restored, [restored])).toBe(false);
-    expect(canvasGenerationRetryBlocked(restored.metadata, { mode: "image", prompt: "draw" })).toBe(true);
-    expect(canvasGenerationRetryBlocked(restored.metadata, { mode: "image", prompt: "a different drawing" })).toBe(false);
-    expect(taskRetryBlocked(corrected)).toBe(true);
+    expect(canvasNodeHasPendingOutcomeResult(restored, [restored])).toBe(false);
+    expect(isNodeRegenerateConfirm(restored.metadata)).toBe(true);
+    expect(unchangedModeratedPrompt(restored.metadata, "draw")).toBe(true);
+    expect(unchangedModeratedPrompt(restored.metadata, "a different drawing")).toBe(false);
+    expect(readTaskOutcome(corrected)?.regenerate).toBe("confirm");
     const uncertain: GenerationTask = { ...task, stage: "submission_unknown", errorCode: "submission_uncertain", error: "图片结果尚未确认" };
     const pending = canvasGenerationTaskNodes([stale], stale.id, uncertain)[0];
-    expect(canvasImageGenerationHasPendingResult(pending, [pending])).toBe(true);
-    expect(canvasGenerationRetryBlocked(pending.metadata, { mode: "image", prompt: "a different drawing" })).toBe(true);
+    expect(canvasNodeHasPendingOutcomeResult(pending, [pending])).toBe(true);
+    expect(isNodeRegenerateBlocked(pending.metadata)).toBe(true);
 });
 
 describe("canvas generation failure consumers", () => {
@@ -100,7 +101,7 @@ describe("canvas generation failure consumers", () => {
             expect(taskAttentionReason(failedTask)).toContain(fixture.reason);
             expect(taskAttentionReason(failedTask)).toContain(fixture.action);
             expect(canvasTaskFailureMetadata(failedTask).errorDetails).toBe(error);
-            expect(taskRetryBlocked(failedTask)).toBe(true);
+            expect(readTaskOutcome(failedTask)?.regenerate).toBe("confirm");
         }
     });
     test("actual connected reference, rather than the source image itself, controls moderation retry", () => {
@@ -112,28 +113,28 @@ describe("canvas generation failure consumers", () => {
         const submitted = context(first.id);
         const failure = canvasGenerationFailureMetadata(rejection, submitted);
         expect(submitted.referenceImages.map((reference) => reference.id)).toEqual([first.id]);
-        expect(canvasGenerationRetryBlocked(failure, context(first.id))).toBe(true);
-        expect(canvasGenerationRetryBlocked(failure, context(second.id))).toBe(false);
-        expect(canvasGenerationRetryBlocked(failure, { ...submitted, prompt: "different drawing" })).toBe(false);
+        expect(unchangedModeratedPrompt(failure, submitted.prompt, submitted.referenceImages)).toBe(true);
+        expect(unchangedModeratedPrompt(failure, context(second.id).prompt, context(second.id).referenceImages)).toBe(false);
+        expect(unchangedModeratedPrompt(failure, "different drawing", submitted.referenceImages)).toBe(false);
     });
 
     test("stable resources ignore preview URL rotation but detect content replacement", () => {
         const input = { prompt: "draw", referenceImages: [{ id: "ref", storageKey: "resource:old", url: "blob:old" }] };
         const failure = canvasGenerationFailureMetadata(rejection, input);
-        expect(canvasGenerationRetryBlocked(failure, { ...input, referenceImages: [{ id: "ref", storageKey: "resource:old", url: "blob:new" }] })).toBe(true);
-        expect(canvasGenerationRetryBlocked(failure, { ...input, referenceImages: [{ id: "ref", storageKey: "resource:new", url: "blob:new" }] })).toBe(false);
+        expect(unchangedModeratedPrompt(failure, "draw", [{ storageKey: "resource:old" }])).toBe(true);
+        expect(unchangedModeratedPrompt(failure, "draw", [{ storageKey: "resource:new" }])).toBe(false);
         const raw = { prompt: "draw", referenceImages: [{ id: "ref", dataUrl: "data:image/png;base64,a" }] };
-        expect(canvasGenerationRetryBlocked(canvasGenerationFailureMetadata(rejection, raw), { ...raw, referenceImages: [{ id: "ref", dataUrl: "data:image/png;base64,b" }] })).toBe(false);
+        expect(unchangedModeratedPrompt(canvasGenerationFailureMetadata(rejection, raw), "draw", [{ url: "data:image/png;base64,b" }])).toBe(false);
     });
 
     test("video, audio and masks are part of the submitted moderation input", () => {
         const input = { prompt: "draw", referenceVideos: [{ id: "video", storageKey: "resource:video" }], referenceAudios: [{ id: "audio", storageKey: "resource:audio" }], mask: { id: "mask", dataUrl: "mask-a" } };
         const failure = canvasGenerationFailureMetadata(rejection, input);
-        expect(canvasGenerationRetryBlocked(failure, input)).toBe(true);
-        expect(canvasGenerationRetryBlocked(failure, { ...input, referenceAudios: [] })).toBe(false);
-        expect(canvasGenerationRetryBlocked(failure, { ...input, mask: { id: "mask", dataUrl: "mask-b" } })).toBe(false);
+        expect(unchangedModeratedPrompt(failure, "draw", [{ storageKey: "resource:video" }, { storageKey: "resource:audio" }, { url: "mask-a" }])).toBe(true);
+        expect(unchangedModeratedPrompt(failure, "draw", [{ storageKey: "resource:video" }, { url: "mask-a" }])).toBe(false);
+        expect(unchangedModeratedPrompt(failure, "draw", [{ storageKey: "resource:video" }, { storageKey: "resource:audio" }, { url: "mask-b" }])).toBe(false);
         const imageOnly = { ...input, mode: "image" as const };
-        expect(canvasGenerationRetryBlocked(canvasGenerationFailureMetadata(rejection, imageOnly), { ...imageOnly, referenceAudios: [] })).toBe(true);
+        expect(unchangedModeratedPrompt(canvasGenerationFailureMetadata(rejection, imageOnly), "draw", [{ url: "mask-a" }])).toBe(true);
     });
 
     test("stored references survive a deleted source without pretending to be new input", async () => {
@@ -142,26 +143,26 @@ describe("canvas generation failure consumers", () => {
         const recovered = await resolveMetadataReferences({ generationType: "edit", references: ["https://example.test/reference.png"] });
         expect(recovered).not.toBeNull();
         expect(recovered).toHaveLength(1);
-        expect(canvasGenerationRetryBlocked(failure, { prompt: "draw", referenceImages: recovered! })).toBe(true);
+        expect(unchangedModeratedPrompt(failure, "draw", recovered!.map((ref) => ({ url: ref.url })))).toBe(true);
         expect(await resolveMetadataReferences({ generationType: "edit", references: [] })).toBeNull();
     });
 
-    test("bulk retries and missing moderation snapshots stay blocked until reviewed", () => {
-        for (const generationErrorCode of ["invalid_params", "submission_uncertain", "download_failed", "moderation_reference"]) {
-            expect(canvasGenerationRetryBlocked({ generationErrorCode, errorDetails: "opaque" })).toBe(true);
+    test("retrievable and input-rejected outcomes map to blocked or confirm regenerate modes", () => {
+        for (const generationErrorCode of ["submission_uncertain", "download_failed"]) {
+            expect(isNodeRegenerateBlocked({ generationErrorCode, errorDetails: "opaque" })).toBe(true);
         }
-        expect(canvasGenerationRetryBlocked({ generationErrorCode: "moderation_reference", errorDetails: "opaque" }, { prompt: "draw", referenceImages: [{ id: "ref" }] })).toBe(true);
-        expect(canvasGenerationRetryBlocked({ generationErrorCode: "throttled", errorDetails: "opaque" })).toBe(false);
-        expect(canvasGenerationRetryBlocked({ generationErrorCode: "invalid_params", errorDetails: "opaque" }, { prompt: "draw" })).toBe(false);
-        expect(canvasGenerationRetryBlocked({ generationErrorCode: "auth", errorDetails: "opaque" }, { prompt: "draw" })).toBe(false);
-        expect(canvasGenerationRetryBlocked({ generationErrorCode: "submission_uncertain", errorDetails: "opaque" }, { prompt: "changed" })).toBe(true);
+        for (const generationErrorCode of ["invalid_params", "moderation_reference"]) {
+            expect(isNodeRegenerateConfirm({ generationErrorCode, errorDetails: "opaque" })).toBe(true);
+        }
+        expect(isNodeRegenerateBlocked({ generationErrorCode: "throttled", errorDetails: "opaque" })).toBe(false);
+        expect(isNodeRegenerateBlocked({ generationErrorCode: "auth", errorDetails: "opaque" })).toBe(false);
     });
 
     test("task recovery uses the original submitted references and structured error code", () => {
         const submitted = { prompt: "draw", referenceImages: [{ id: "ref", storageKey: "resource:old" }] };
         const failure = canvasTaskFailureMetadata({ ...task, inputJson: JSON.stringify(submitted) });
-        expect(canvasGenerationRetryBlocked(failure, submitted)).toBe(true);
-        expect(canvasGenerationRetryBlocked(failure, { ...submitted, referenceImages: [{ id: "ref", storageKey: "resource:new" }] })).toBe(false);
+        expect(unchangedModeratedPrompt(failure, "draw", [{ storageKey: "resource:old" }])).toBe(true);
+        expect(unchangedModeratedPrompt(failure, "draw", [{ storageKey: "resource:new" }])).toBe(false);
         const restored = canvasTaskFailureMetadata(task, { ...failure, taskId: task.id });
         expect(restored.failedInputFingerprint).toBe(failure.failedInputFingerprint);
     });
@@ -179,14 +180,14 @@ describe("canvas generation failure consumers", () => {
 
     test("task cards preserve a machine-readable failure code alongside an opaque message", () => {
         expect(taskAttentionReason({ ...task, error: undefined, errorCode: "moderation_reference" })).toContain("参考素材");
-        expect(taskRetryBlocked({ ...task, errorCode: "download_failed" })).toBe(true);
-        expect(taskRetryBlocked({ ...task, errorCode: "invalid_params" })).toBe(true);
-        expect(taskRetryBlocked({ ...task, errorCode: "throttled" })).toBe(false);
-        expect(taskRetryBlocked({ ...task, errorCode: "throttled", stage: "submission_unknown" })).toBe(true);
+        expect(isTaskRegenerateBlocked({ ...task, errorCode: "download_failed" })).toBe(true);
+        expect(readTaskOutcome({ ...task, errorCode: "invalid_params" })?.regenerate).toBe("confirm");
+        expect(isTaskRegenerateBlocked({ ...task, errorCode: "throttled" })).toBe(false);
+        expect(isTaskRegenerateBlocked({ ...task, errorCode: "throttled", stage: "submission_unknown" })).toBe(true);
     });
 
     test("canvas batch items and creation recovery preserve errorCode and classify via structured { code, message }", async () => {
-        const { isContentModerationError, shouldBlockManualRetry, generationErrorMessage } = await import("../src/lib/generation-error");
+        const { isContentModerationError, generationErrorMessage } = await import("../src/lib/generation-error");
         const { recoverCreationTextTask } = await import("../src/services/creation-text-task-recovery");
         const { reconcileCreationTaskMessages } = await import("../src/pages/create/creation-conversations");
         const { isGenerationSubmissionUncertainError } = await import("../src/lib/canvas/canvas-generation-batch");
@@ -202,7 +203,7 @@ describe("canvas generation failure consumers", () => {
         };
         const batchErrorInput = { code: batchItem.errorCode, message: batchItem.errorDetails };
         expect(isContentModerationError(batchErrorInput)).toBe(true);
-        expect(shouldBlockManualRetry(batchErrorInput)).toBe(true);
+        expect(explainGenerationError(batchErrorInput).blockManualRetry).toBe(true);
         expect(generationErrorMessage(batchErrorInput)).toBe(batchItem.errorDetails);
         expect(isGenerationSubmissionUncertainError({ code: "submission_uncertain", message: "普通错误描述" })).toBe(true);
 
@@ -230,6 +231,6 @@ describe("canvas generation failure consumers", () => {
         expect(failedMsg?.status).toBe("error");
         expect(failedMsg?.generationErrorCode).toBe("moderation_output");
         expect(explainGenerationError({ code: failedMsg?.generationErrorCode, message: failedMsg?.error }).category).toBe("moderation_output");
-        expect(shouldBlockManualRetry({ code: failedMsg?.generationErrorCode, message: failedMsg?.error })).toBe(true);
+        expect(explainGenerationError({ code: failedMsg?.generationErrorCode, message: failedMsg?.error }).blockManualRetry).toBe(true);
     });
 });

@@ -6,7 +6,8 @@ import { isolateCopiedNodeMetadata } from "@/lib/canvas/canvas-node-copy";
 import { prepareInPlaceMediaVersion } from "@/lib/canvas/canvas-media-versions";
 import { assistantProposalProgress } from "@/pages/canvas/canvas-assistant-copy";
 import { captureUserScope, UserScopeAbandonedError } from "@/lib/user-scope-guard";
-import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked, canvasGenerationTaskNodes, canvasTaskFailureMetadata } from "@/pages/canvas/canvas-generation-failure";
+import { canvasGenerationFailureMetadata, canvasGenerationTaskNodes, canvasTaskFailureMetadata } from "@/pages/canvas/canvas-generation-failure";
+import { canReloadCanvasNodeResource, isNodeRegenerateBlocked } from "@/lib/task-outcome";
 import { isCanvasNodeGenerating } from "@/lib/canvas/canvas-node-task-state";
 import { ApiError } from "@/services/api/request";
 import { CanvasGenerationDurableAckError, persistCanvasGenerationTarget } from "@/services/canvas-generation-consumer";
@@ -84,11 +85,12 @@ test("submission creates a stable operation ID without randomUUID in an HTTP Web
 });
 
 test("restoring a completed image retains recovery flags and cannot open a second paid generation", () => {
-    const target = { ...project.nodes[0], metadata: { taskId: task.id, taskStatus: "succeeded" as const, status: "error" as const, resourceReloadAvailable: true, generationErrorCode: "canvas_conflict" as const, errorDetails: "生成结果已保留，请点击「继续取回」" } };
+    const target = { ...project.nodes[0], metadata: { taskId: task.id, taskStatus: "succeeded" as const, status: "error" as const, taskOutcome: { phase: "retrievable" as const, regenerate: "blocked" as const, reason: "delivery_pending" }, generationErrorCode: "canvas_conflict" as const, errorDetails: "生成结果已保留，请点击「继续取回」" } };
     const restored = canvasGenerationTaskNodes([target], target.id, task)[0];
-    expect(restored.metadata).toMatchObject({ status: "error", taskStatus: "succeeded", resourceReloadAvailable: true, generationErrorCode: "canvas_conflict" });
+    expect(restored.metadata).toMatchObject({ status: "error", taskStatus: "succeeded", generationErrorCode: "canvas_conflict" });
+    expect(canReloadCanvasNodeResource(restored)).toBe(true);
     expect(isCanvasNodeGenerating(restored)).toBe(true);
-    expect(canvasGenerationRetryBlocked(restored.metadata, { prompt: "已经修改", mode: "image" })).toBe(true);
+    expect(isNodeRegenerateBlocked(restored.metadata)).toBe(true);
     const firstTerminal = canvasGenerationTaskNodes(project.nodes, input.nodeId, task)[0];
     expect(isCanvasNodeGenerating(firstTerminal)).toBe(true);
 });
@@ -228,7 +230,7 @@ test("account abandonment or cancellation during result consumption cannot repor
 
 test("main generation and batch generation stop before changing nodes when a paid result awaits recovery", async () => {
     for (const batch of [false, true]) {
-        const target = { ...project.nodes[0], metadata: { taskId: task.id, taskStatus: "succeeded" as const, status: "error" as const, resourceReloadAvailable: true, generationErrorCode: "canvas_conflict" as const } };
+        const target = { ...project.nodes[0], metadata: { taskId: task.id, taskStatus: "succeeded" as const, status: "error" as const, taskOutcome: { phase: "retrievable" as const, regenerate: "blocked" as const, reason: "delivery_pending" }, generationErrorCode: "canvas_conflict" as const } };
         const root = batch ? { ...target, id: "batch-root", metadata: { batchChildIds: [target.id], status: "success" as const } } : target;
         let mutations = 0;
         const notices: string[] = [];
@@ -341,9 +343,9 @@ test("a succeeded image with a bind failure keeps its original task and HTTP evi
     expect(recovered.taskFailureDiagnostics?.executionResult).toBe("completed");
     expect(recovered.taskFailureDiagnostics?.requests?.[0]?.httpStatus).toBe(200);
     const metadata = canvasGenerationFailureMetadata(caught, { prompt: input.prompt, mode: "image" });
-    expect(metadata.resourceReloadAvailable).toBe(false);
+    expect(canReloadCanvasNodeResource({ taskId: task.id, ...metadata })).toBe(false);
     expect(metadata.generationErrorCode).toBe("result_target_unavailable");
     expect(metadata.errorDetails).toContain("生成历史");
-    expect(canvasGenerationRetryBlocked(metadata, { prompt: "已修改提示词", mode: "image" })).toBe(true);
+    expect(isNodeRegenerateBlocked(metadata)).toBe(true);
     expect(submissions).toBe(1);
 });

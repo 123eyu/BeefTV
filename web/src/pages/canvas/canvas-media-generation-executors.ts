@@ -75,7 +75,7 @@ export async function executeVideoGeneration({
             errorDetails: undefined,
             generationErrorCode: undefined,
             outputParameterWarning: undefined,
-            resourceReloadAvailable: undefined,
+            taskOutcome: undefined,
             failedPromptFingerprint: undefined,
             model: generationConfig.model,
             size: generationConfig.size,

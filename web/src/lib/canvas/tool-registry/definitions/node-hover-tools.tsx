@@ -1,7 +1,7 @@
 import { AudioLines, Captions, Clapperboard, Download, FolderPlus, Images, Image as ImageIcon, Info, LoaderCircle, Lock, Maximize2, MessageSquare, Minus, Music2, Plus, RefreshCw, Scissors, Settings2, Trash2, Unlock, Upload, UserRound, Video, WandSparkles } from "lucide-react";
 
-import { explainGenerationError } from "@/lib/generation-error";
 import { canvasNodeFailureExplanation, canRecoverOrRetryDepthCapture } from "@/lib/canvas/canvas-depth-capture";
+import { isNodeRegenerateBlocked } from "@/lib/task-outcome";
 import { registerToolbarTools, type ToolContext, type ToolDefinition } from "@/lib/canvas/tool-registry";
 import { CanvasNodeType } from "@/types/canvas";
 import { canOpenCanvasNodePromptPanel } from "@/lib/canvas/canvas-node-semantics";
@@ -26,11 +26,9 @@ function isImageBatchRoot(ctx: ToolContext) { return isImage(ctx) && Boolean(ctx
 function opensSavedHistory(ctx: ToolContext) { return Boolean(ctx.node && canvasNodeFailureExplanation(ctx.node).category === "result_target_unavailable"); }
 function canRetry(ctx: ToolContext) {
     if (ctx.nodeMetadata?.fileUpload) return false;
-    const code = ctx.nodeMetadata?.generationErrorCode || ctx.nodeMetadata?.taskErrorCode;
-    const explanation = ctx.node
-        ? canvasNodeFailureExplanation(ctx.node)
-        : explainGenerationError(code ? { code, message: ctx.nodeMetadata?.errorDetails } : ctx.nodeMetadata?.errorDetails, { stage: ctx.nodeMetadata?.taskStage });
-    const blocked = explanation.uncertain || (explanation.category === "download_failed" && !(ctx.node && canRecoverOrRetryDepthCapture(ctx.node)));
+    if (opensSavedHistory(ctx)) return ctx.nodeMetadata?.status === "error";
+    if (ctx.node && canRecoverOrRetryDepthCapture(ctx.node)) return ctx.nodeMetadata?.status === "error";
+    const blocked = isNodeRegenerateBlocked(ctx.nodeMetadata);
     const batchHasFailures = isImageBatchRoot(ctx) && (ctx.nodeMetadata?.batchFailedCount || (ctx.nodeMetadata?.status === "error" ? 1 : 0)) > 0;
     return (ctx.nodeMetadata?.status === "error" || (batchHasFailures && ctx.nodeMetadata?.status !== "loading")) && !blocked;
 }

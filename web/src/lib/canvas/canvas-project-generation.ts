@@ -234,6 +234,7 @@ export function generationTaskMetadata(task: GenerationTask): CanvasNodeMetadata
     return {
         taskId: task.id,
         taskType: task.type,
+        taskOutcome: task.outcome,
         taskClientOperationId: task.clientOperationId,
         generationSubmissionState: "accepted",
         retryOf: task.retryOf,
@@ -264,12 +265,12 @@ export function resetGenerationTaskMetadata(metadata: CanvasNodeMetadata | undef
         generationErrorCode: undefined,
         generationErrorSummary: undefined,
         generationPreflightError: undefined,
-        resourceReloadAvailable: undefined,
         failedPromptFingerprint: undefined,
         failedInputFingerprint: undefined,
     };
     delete next.taskId;
     delete next.taskType;
+    delete next.taskOutcome;
     delete next.taskOutputIndex;
     delete next.generationOutputNodeIds;
     delete next.taskClientOperationId;

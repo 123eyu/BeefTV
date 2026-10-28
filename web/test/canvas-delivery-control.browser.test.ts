@@ -51,7 +51,7 @@ for (const oldContent of [false, true]) {
         await page.getByRole("button", { name: "继续取回", exact: true }).waitFor();
         const paused = JSON.parse(await page.locator("#snapshot").innerText()).nodes[0].metadata;
         expect(paused.status).toBe("error");
-        expect(paused.resourceReloadAvailable).toBe(true);
+        expect(paused.taskOutcome?.phase).toBe("retrievable");
         await page.getByRole("button", { name: "继续取回", exact: true }).click();
         await page.waitForFunction(() => JSON.parse(document.getElementById("snapshot")!.textContent!).nodes[0].metadata.taskStage === "正在取回结果");
         const resumed = JSON.parse(await page.locator("#snapshot").innerText()).nodes[0].metadata;

@@ -364,10 +364,6 @@ export function shouldBlockAutomaticRetry(error: unknown, stage?: string) {
     return explainGenerationError(error, { stage }).blockAutomaticRetry;
 }
 
-export function shouldBlockManualRetry(error: unknown, stage?: string) {
-    return explainGenerationError(error, { stage }).blockManualRetry;
-}
-
 export function unchangedModeratedPrompt(
     metadata: { errorDetails?: string; generationErrorCode?: string; failedPromptFingerprint?: string; failedInputFingerprint?: string } | undefined,
     prompt: string,
@@ -393,9 +389,14 @@ export function generationPromptFingerprint(value: string) {
     return `${normalized.length}:${(hash >>> 0).toString(36)}`;
 }
 
-export function generationInputFingerprint(prompt: string, references: Array<string | { id?: string; storageKey?: string; url?: string }> = []) {
+export function generationInputFingerprint(prompt: string, references: Array<string | { id?: string; storageKey?: string; url?: string; dataUrl?: string }> = []) {
     const referenceKeys = references
-        .map((item) => (typeof item === "string" ? item : [item.id, item.storageKey, item.url].filter(Boolean).join("|")))
+        .map((item) => {
+            if (typeof item === "string") return item;
+            if (item.storageKey) return item.storageKey;
+            if (item.url || item.dataUrl) return item.url || item.dataUrl || "";
+            return item.id || "";
+        })
         .map((item) => item.trim())
         .filter(Boolean)
         .sort();

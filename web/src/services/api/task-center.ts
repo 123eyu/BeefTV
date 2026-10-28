@@ -32,6 +32,7 @@ export type GenerationTaskDeliveryProgress = {
 
 export type GenerationTask = {
     failureDiagnostics?: import("@/lib/generation-error").GenerationFailureDiagnostics;
+    outcome?: import("@/lib/task-outcome").TaskOutcome;
     id: string;
     traceId?: string;
     clientOperationId?: string;
@@ -340,6 +341,10 @@ export function retryGenerationTask(id: string, options?: { signal?: AbortSignal
     return http.post<GenerationTask>(`/tasks/${encodeURIComponent(id)}/retry`, undefined, options);
 }
 
+export function recoverTask(id: string, options?: { signal?: AbortSignal; expectedScope?: CapturedUserScope }) {
+    return http.post<GenerationTask>(`/tasks/${encodeURIComponent(id)}/recover`, undefined, options);
+}
+
 export function cancelGenerationTask(id: string, expectedScope = captureUserScope()) {
     return http.post<GenerationTask>(`/tasks/${encodeURIComponent(id)}/cancel`, undefined, { expectedScope }).then((task) => {
         window.dispatchEvent(new CustomEvent("canvas:task-cancelled", { detail: { task } }));
@@ -349,10 +354,6 @@ export function cancelGenerationTask(id: string, expectedScope = captureUserScop
 
 export function queryFailedVideoProviderTask(id: string) {
     return http.post<ProviderTaskQueryResult>(`/tasks/${encodeURIComponent(id)}/query-provider`);
-}
-
-export function canRetrieveVideoResult(task: GenerationTask) {
-    return task.status === "failed" && (task.type.startsWith("canvas_video") || task.type.startsWith("video_")) && Boolean(task.providerRequestId);
 }
 
 export function refreshGenerationTaskStatus(id: string, options?: { signal?: AbortSignal }) {
@@ -470,8 +471,9 @@ export async function waitForGenerationTask(id: string, options?: WaitForGenerat
             }
             if (task.status === "failed" || task.status === "cancelled") {
                 const message = task.error ? generationErrorMessage(task.errorCode ? { code: task.errorCode, message: task.error } : task.error) : `任务${task.status === "cancelled" ? "已取消" : "失败"}`;
-                const error = new Error(message) as Error & { code?: string };
+                const error = new Error(message) as Error & { code?: string; taskOutcome?: import("@/lib/task-outcome").TaskOutcome };
                 if (task.errorCode) error.code = task.errorCode;
+                if (task.outcome) error.taskOutcome = task.outcome;
                 throw error;
             }
             const retrieving = Boolean(task.delivery) || task.stage === GENERATION_RESULT_FETCH_STAGE;

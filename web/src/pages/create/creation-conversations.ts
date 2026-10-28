@@ -131,6 +131,7 @@ export function reconcileCreationTaskMessages(runtime: CreationRuntime, conversa
                 content: "生成失败",
                 error: generationErrorMessage(rawError),
                 generationErrorCode: failed?.creationError ? generationErrorCode(failed.creationError) : failed?.errorCode || generationErrorCode(rawError),
+                taskOutcome: failed?.outcome,
                 taskIds: nextTaskIds,
             };
         });

@@ -252,7 +252,7 @@ export function assistantProposalProgress(proposal: AssistantGenerationProposal,
     for (const node of outputs.values()) {
         const meta = node.metadata || {};
         const phase = (meta as typeof meta & { taskOutcome?: { phase?: string } }).taskOutcome?.phase;
-        const bound = meta.status === "success" && Boolean(meta.content || meta.storageKey) && !meta.resourceReloadAvailable;
+        const bound = meta.status === "success" && Boolean(meta.content || meta.storageKey);
         if (phase === "running" || phase === "fetching" || phase === "retrievable") {
             pending++;
         } else if (phase === "ready") {

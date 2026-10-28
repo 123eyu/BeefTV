@@ -5,7 +5,8 @@ import { explainGenerationError } from "../src/lib/generation-error";
 import { GenerationFailureNotice } from "../src/components/generation/generation-failure-notice";
 import { canvasGenerationFailureMetadata } from "../src/pages/canvas/canvas-generation-failure";
 import { canvasNodeFailureExplanation } from "../src/lib/canvas/canvas-depth-capture";
-import { taskAttentionReason, taskRetryBlocked } from "../src/pages/tasks/task-shared";
+import { isTaskRegenerateBlocked } from "../src/lib/task-outcome";
+import { taskAttentionReason } from "../src/pages/tasks/task-shared";
 import { CanvasNodeType } from "../src/types/canvas";
 import type { GenerationTask } from "../src/services/api/task-center";
 
@@ -36,7 +37,7 @@ for (const [key, copy] of Object.entries(contract.copies)) {
             expect(nodeResult.blockAutomaticRetry).toBe(true);
             const task: GenerationTask = { id: "task-vod-123", type: "canvas_image", status: "failed", stage: "submission_unknown", prompt: "draw", attempts: 1, createdAt: "2026-10-17T00:00:00Z", updatedAt: "2026-10-17T00:00:00Z", errorCode: result.category, error: result.message };
             expect(taskAttentionReason(task)).toContain(copy.reason);
-            expect(taskRetryBlocked(task)).toBe(true);
+            expect(isTaskRegenerateBlocked(task)).toBe(true);
         }
         expect(html).not.toContain("opaque");
     });

@@ -8,6 +8,7 @@ import { GenerationFailureNotice } from "@/components/generation/generation-fail
 import { explainGenerationError } from "@/lib/generation-error";
 import { canvasNodeFailureExplanation, canRecoverOrRetryDepthCapture } from "@/lib/canvas/canvas-depth-capture";
 import { isGenerationTaskSubmissionUncertain } from "@/lib/generation-task-display";
+import { canReloadCanvasNodeResource, isNodeRegenerateBlocked } from "@/lib/task-outcome";
 import { canvasNodeOperation } from "@/lib/operation-progress";
 import { useOperationProgress } from "@/stores/use-operation-progress";
 import { canvasRichTextHTML } from "@/lib/canvas/canvas-rich-text";
@@ -198,7 +199,10 @@ function ErrorContent({ node, theme, onRetry, onReloadResource, onOpenTaskDetail
     const batchChild = Boolean(node.metadata?.batchRootId);
     const localDepthAction = canRecoverOrRetryDepthCapture(node);
     const upscaleAction = Boolean(node.metadata?.workflowOperation?.id.endsWith(".ai-upscale"));
+    const canReload = canReloadCanvasNodeResource(node);
+    const retryBlocked = !localDepthAction && explanation.category !== "result_target_unavailable" && (canReload || isNodeRegenerateBlocked(node.metadata));
     const errorDisplayTask = {
+        outcome: node.metadata?.taskOutcome,
         provider: node.metadata?.taskProvider,
         status: (node.metadata?.taskStatus || "failed") as GenerationTask["status"],
         stage: node.metadata?.taskStage,
@@ -227,11 +231,12 @@ function ErrorContent({ node, theme, onRetry, onReloadResource, onOpenTaskDetail
                     explanation={explanation}
                     context={{ ...canvasNodeDiagnosticContext(node), model: node.metadata?.model, createdAt: node.metadata?.taskCreatedAt, stage: node.metadata?.taskStage, providerRequestId: node.metadata?.taskProviderRequestId, failureDiagnostics: node.metadata?.taskFailureDiagnostics, errorSummary: node.metadata?.generationErrorSummary, completedAt: node.metadata?.taskCompletedAt, updatedAt: node.metadata?.taskUpdatedAt }}
                     onOpenDetails={node.metadata?.taskId && onOpenTaskDetails ? () => onOpenTaskDetails(node) : undefined}
-                    onRetry={!localDepthAction && (submissionUncertain || explanation.uncertain || explanation.category === "download_failed") ? undefined : onRetry ? () => onRetry(node) : undefined}
+                    retryDisabled={retryBlocked}
+                    onRetry={retryBlocked ? undefined : onRetry ? () => onRetry(node) : undefined}
                     retryLabel={upscaleAction ? node.metadata?.taskId ? "取回原结果" : "重试未提交项" : explanation.category === "result_target_unavailable" ? "生成历史" : localDepthAction && node.metadata?.taskStatus === "succeeded" ? "恢复结果" : node.metadata?.isBatchRoot ? "重新生成失败项" : "重新生成"}
                 />
             </div>
-            {node.metadata?.resourceReloadAvailable ? (
+            {canReload ? (
                 <button
                     type="button"
                     className="inline-flex h-8 items-center gap-1.5 rounded-[var(--r-md)] px-3 text-xs font-medium transition-colors"

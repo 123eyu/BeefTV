@@ -4,7 +4,7 @@ import { nanoid } from "nanoid";
 
 import { generationBatchStatus, isGenerationSubmissionUncertainError } from "@/lib/canvas/canvas-generation-batch";
 import { buildGenerationConfig, createGenerationRetryContext, generationTaskMetadata, resetGenerationTaskMetadata } from "@/lib/canvas/canvas-project-generation";
-import { shouldBlockManualRetry } from "@/lib/generation-error";
+import { isNodeRegenerateBlocked } from "@/lib/task-outcome";
 import { listGenerationTasks } from "@/services/api/task-center";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -250,9 +250,7 @@ export function useCanvasGenerationBatches({ projectId, projectLoaded, nodes, no
             const nodeById = new Map(nodesRef.current.map((node) => [node.id, node]));
             const blockedItems = failedItems.filter((item) => {
                 const node = nodeById.get(item.nodeId);
-                const code = item.errorCode || node?.metadata?.generationErrorCode || node?.metadata?.taskErrorCode;
-                const messageText = item.errorDetails || node?.metadata?.errorDetails;
-                return item.submissionUncertain || shouldBlockManualRetry(code ? { code, message: messageText } : messageText, node?.metadata?.taskStage);
+                return item.submissionUncertain || isNodeRegenerateBlocked(node?.metadata);
             });
             const retryableItems = failedItems.filter((item) => !blockedItems.includes(item));
             if (blockedItems.length) message.warning(`${blockedItems.length} 个镜头需要先处理失败原因，请打开对应节点查看`);
