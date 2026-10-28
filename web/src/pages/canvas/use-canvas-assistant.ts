@@ -499,7 +499,7 @@ export function useCanvasAssistant({ canvasId, onCanvasChanged }: Options) {
                         permissionMode: assistantPermissionMode(end.permissionMode),
                         userText: message,
                         selectedNodeIds: selectedSnapshot,
-                        reply: end.reply || current.streamed,
+                        reply: typeof end.reply === "string" ? end.reply : "",
                         toolCalls: end.toolCalls || [],
                         // 宿主终态是权威值（含空数组）：照它替换，清掉流里可能已经过期的旧内容。
                         // 只有字段确实缺失（旧记录、旧宿主）才退回流里已收到的片段，且这一轮已结束，不再有「正在思考」。

@@ -347,3 +347,33 @@ func TestContinuationCancellationScopeAndOwnershipRemainDurable(t *testing.T) {
 		t.Fatalf("cross session rows %+v %v", rows, err)
 	}
 }
+
+func TestContinuationReplacedRunningTargetWaitsForSiblingThenReportsTargetChanged(t *testing.T) {
+	fx, row := continuationFixture(t, "image")
+	manifest := continuationManifest(t, fx, row, false, "out-a", "out-b")
+	continuationTask(t, fx, row, manifest.Submissions[0], "task-a-old", "running", false)
+	continuationTask(t, fx, row, manifest.Submissions[1], "task-b", "running", false)
+
+	// Target out-a is taken over by a newer task while task-a-old is still running.
+	doc := fx.readCanvas(t)
+	for _, value := range doc["nodes"].([]any) {
+		node := value.(map[string]any)
+		if node["id"] == "out-a" {
+			node["metadata"] = map[string]any{"taskId": "task-a-new", "taskStatus": "running", "status": "loading"}
+		}
+	}
+	fx.writeCanvas(t, doc)
+
+	// Sibling out-b is still running, so claim reports waiting first.
+	_, err := fx.turns.ClaimContinuation(fx.userID, row.ID, nil)
+	contextReason(t, err, "continuation_waiting")
+
+	// Once sibling out-b finishes and is delivered, replaced out-a reports target_changed even though task-a-old is still running.
+	if err := fx.db.Delete(&model.Task{}, "id = ?", "task-b").Error; err != nil {
+		t.Fatal(err)
+	}
+	continuationTask(t, fx, row, manifest.Submissions[1], "task-b", "succeeded", true)
+
+	_, err = fx.turns.ClaimContinuation(fx.userID, row.ID, nil)
+	contextReason(t, err, "continuation_target_changed")
+}

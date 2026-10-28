@@ -236,7 +236,7 @@ func (s *Service) continuationResults(tx *gorm.DB, row *model.AssistantContinuat
 		nodes[n.ID] = n.Metadata
 	}
 	ids, selected := []string{}, []string{}
-	waiting := false
+	waiting, targetChanged := false, false
 	for _, source := range sources {
 		manifest, ok := manifests[source]
 		if !ok {
@@ -273,6 +273,18 @@ func (s *Service) continuationResults(tx *gorm.DB, row *model.AssistantContinuat
 				return nil, nil, continuationError("task_mismatch")
 			}
 			ids = append(ids, task.ID)
+			replaced := false
+			for _, nodeID := range targets {
+				meta, exists := nodes[nodeID]
+				if !exists || meta["taskId"] != task.ID {
+					targetChanged = true
+					replaced = true
+					break
+				}
+			}
+			if replaced {
+				continue
+			}
 			if task.Status != "succeeded" && task.Status != "failed" && task.Status != "cancelled" {
 				waiting = true
 				continue
@@ -299,10 +311,7 @@ func (s *Service) continuationResults(tx *gorm.DB, row *model.AssistantContinuat
 				}
 			}
 			for index, nodeID := range targets {
-				meta, exists := nodes[nodeID]
-				if !exists || meta["taskId"] != task.ID {
-					return ids, nil, continuationError("target_changed")
-				}
+				meta := nodes[nodeID]
 				if task.Status == "succeeded" {
 					key, _ := meta["storageKey"].(string)
 					output, present := outputs[index]
@@ -314,12 +323,14 @@ func (s *Service) continuationResults(tx *gorm.DB, row *model.AssistantContinuat
 					// Native multi-image destinations are the immutable indexed outputNodeIds
 					// checked above, exactly as taskbinding.Bind resolves them.
 					if key != "resource:"+output.ResourceID || output.TargetBinding == nil || output.TargetBinding.NodeID != input.Metadata.NodeID || output.MediaType != row.Kind {
-						return ids, nil, continuationError("target_changed")
+						targetChanged = true
+						continue
 					}
 					var resource model.Resource
 					if err = tx.First(&resource, "id = ? AND user_id = ? AND status = ?", strings.TrimPrefix(key, "resource:"), row.UserID, "ready").Error; err != nil {
 						if errors.Is(err, gorm.ErrRecordNotFound) {
-							return ids, nil, continuationError("waiting")
+							waiting = true
+							continue
 						}
 						return nil, nil, err
 					}
@@ -330,6 +341,9 @@ func (s *Service) continuationResults(tx *gorm.DB, row *model.AssistantContinuat
 	}
 	if waiting {
 		return uniqueSorted(ids), nil, continuationError("waiting")
+	}
+	if targetChanged {
+		return uniqueSorted(ids), nil, continuationError("target_changed")
 	}
 	var admittedIDs []string
 	if row.TaskIDsJSON != "" {
@@ -402,9 +416,11 @@ func (s *Service) ClaimContinuation(userID, id string, prepare func(*gorm.DB, *m
 			ready, err := prepare(tx, &row)
 			if err != nil {
 				var changed *Error
-				if errors.As(err, &changed) && changed.Reason == "continuation_intent_changed" {
-					if err := s.cancelContinuations(tx, row.UserID, row.CanvasID, row.SessionID, row.SourceTurnID, false); err != nil {
-						return err
+				if errors.As(err, &changed) && (changed.Reason == "continuation_intent_changed" || changed.Reason == "continuation_target_changed") {
+					if changed.Reason == "continuation_intent_changed" {
+						if err := s.cancelContinuations(tx, row.UserID, row.CanvasID, row.SessionID, row.SourceTurnID, false); err != nil {
+							return err
+						}
 					}
 					stopped = changed
 					return nil

@@ -61,14 +61,25 @@ func (s *Service) prepareAssistantProduction(tx *gorm.DB, receipt *model.Assista
 	saved, planned := map[string]bool{}, map[string]bool{}
 	pending := []operations.GenerationTarget{}
 	allSaved := true
-	failed, running := false, false
+	failed, running, targetChanged, changed := false, false, false, false
 	for _, target := range plan.Targets {
 		planned[target.NodeID] = true
-		task, err := domain.repo.TaskByClientOperation(receipt.UserID, productionTaskKey(plan, target.NodeID))
+		key := productionTaskKey(plan, target.NodeID)
+		task, err := domain.repo.TaskByClientOperation(receipt.UserID, key)
 		if err != nil {
 			return false, err
 		}
+		node := nodes[target.NodeID]
+		meta, _ := node["metadata"].(map[string]any)
+		nodeTaskID, _ := meta["taskId"].(string)
+		nodeTaskID = strings.TrimSpace(nodeTaskID)
 		if task == nil {
+			if node == nil || nodeTaskID != "" || meta["status"] == "loading" || meta["taskStatus"] == "queued" || meta["taskStatus"] == "running" || meta["generationSubmissionState"] == "submitting" {
+				targetChanged = true
+				failed = true
+				allSaved = false
+				continue
+			}
 			pending = append(pending, target)
 			allSaved = false
 			continue
@@ -76,11 +87,20 @@ func (s *Service) prepareAssistantProduction(tx *gorm.DB, receipt *model.Assista
 		if err := validateProductionTask(task, receipt.CanvasID, target); err != nil {
 			return false, err
 		}
-		if task.Status == model.TaskStatusFailed || task.Status == model.TaskStatusCancelled {
+		if node == nil || nodeTaskID != task.ID {
+			targetChanged = true
 			failed = true
+			allSaved = false
 			continue
 		}
-		meta, _ := nodes[target.NodeID]["metadata"].(map[string]any)
+		if task.Status == model.TaskStatusFailed || task.Status == model.TaskStatusCancelled {
+			failed = true
+			allSaved = false
+			if syncProductionNodeFailure(node, meta, task, key) {
+				changed = true
+			}
+			continue
+		}
 		var settled bool
 		saved[target.NodeID], settled, err = productionTargetState(tx, receipt.UserID, target, task, meta)
 		if err != nil {
@@ -91,6 +111,21 @@ func (s *Service) prepareAssistantProduction(tx *gorm.DB, receipt *model.Assista
 		running = running || !settled
 		failed = failed || (settled && !saved[target.NodeID])
 		allSaved = allSaved && saved[target.NodeID]
+	}
+	if changed {
+		encoded, err := json.Marshal(doc)
+		if err != nil {
+			return false, err
+		}
+		if _, _, err := domain.CommitUserCanvasDocument(receipt.UserID, receipt.CanvasID, assistantDocRevision(doc), encoded); err != nil {
+			return false, err
+		}
+	}
+	if targetChanged {
+		if running {
+			return false, nil
+		}
+		return false, &assistantturns.Error{Reason: "continuation_target_changed", Message: "暂不能自动继续，请查看本次生成或手动继续"}
 	}
 	if failed {
 		// Keep the single wake until every already-admitted sibling settles.
@@ -147,4 +182,30 @@ func productionTargetState(tx *gorm.DB, userID string, target operations.Generat
 		return count == 1, count == 1, err
 	}
 	return false, false, nil
+}
+
+func syncProductionNodeFailure(node, meta map[string]any, task *model.Task, key string) bool {
+	if node == nil || task == nil {
+		return false
+	}
+	if meta == nil {
+		meta = map[string]any{}
+		node["metadata"] = meta
+	}
+	changed := false
+	for field, value := range map[string]any{
+		"taskId":                    task.ID,
+		"taskStatus":                string(task.Status),
+		"taskClientOperationId":     key,
+		"generationSubmissionState": "accepted",
+		"status":                    "error",
+		"error":                     task.Error,
+		"errorDetails":              task.Error,
+	} {
+		if meta[field] != value {
+			meta[field] = value
+			changed = true
+		}
+	}
+	return changed
 }

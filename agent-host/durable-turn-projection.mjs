@@ -1,6 +1,6 @@
 // 这一回合唯一的展示投影：可见正文与可读思考都从同一份官方事件里出。
 // 实时、终态与重开历史共用这里的形状，界面不另建只会拼字符串的 reasoning reducer。
-const visibleTextOf = (message) => message?.role === 'assistant'
+const visibleTextOf = (message) => message?.role === 'assistant' && message.stopReason !== 'error'
   ? (message.content || []).filter((block) => block?.type === 'text').map((block) => block.text || '').join('') : '';
 
 // 只留展示需要的字段：签名、redacted 载荷、工具参数与上游错误都不进投影。
@@ -11,7 +11,35 @@ function projectBlock(block) {
 }
 
 function projectMessage(message) {
-  return message?.role === 'assistant' ? { role: 'assistant', content: (message.content || []).map(projectBlock) } : null;
+  return message?.role === 'assistant'
+    ? { role: 'assistant', ...(message.stopReason !== undefined ? { stopReason: message.stopReason } : {}), content: (message.content || []).map(projectBlock) }
+    : null;
+}
+
+/**
+ * 实时流、turn_end 与重开历史共用的唯一正文纯投影：
+ * 按本次提交的官方条目顺序与身份去重拼接，后续仅调用工具（如 control.terminate）
+ * 且无新正文的步骤不会清空前面已提交给用户的说明。
+ */
+export function durableTurnReplyText(entries, liveMessage = null) {
+  const byId = new Map();
+  for (const entry of entries || []) {
+    if (!entry || entry.id === undefined) continue;
+    if (entry.role === 'user' || (entry.model || []).some((message) => message?.role === 'user')) {
+      byId.clear();
+      continue;
+    }
+    const assistant = entry.role === 'assistant' ? entry : (entry.model || []).find((message) => message?.role === 'assistant');
+    if (assistant) byId.set(entry.id, projectMessage(assistant));
+  }
+  const parts = [];
+  for (const message of byId.values()) {
+    const part = visibleTextOf(message);
+    if (part.trim()) parts.push(part);
+  }
+  const live = visibleTextOf(projectMessage(liveMessage));
+  if (live) parts.push(live);
+  return parts.join('\n\n');
 }
 
 /**
@@ -54,7 +82,7 @@ export function createDurableTurnProjection() {
   const compose = () => {
     const entries = [...completed.entries()];
     return {
-      text: [...entries.map(([, entry]) => visibleTextOf(entry)), visibleTextOf(message)].filter(Boolean).join('\n\n'),
+      text: durableTurnReplyText(entries.map(([id, entry]) => ({ id, ...entry })), message),
       reasoning: [
         ...entries.flatMap(([entryId, entry]) => segmentsOf(entryId, readableThinking(entry), -1)),
         ...(message ? segmentsOf(`live-${messageSerial}`, readableThinking(message), message.content.length - 1) : []),
@@ -70,8 +98,15 @@ export function createDurableTurnProjection() {
       switch (event?.type) {
         case 'snapshot':
           if (event.afterEntry !== undefined) afterEntry = event.afterEntry;
-          completed = new Map((event.entries || []).filter((entry) => entry.id > afterEntry)
-            .map((entry) => [entry.id, projectMessage(entry.model?.[0])]));
+          completed = new Map();
+          for (const entry of (event.entries || []).filter((item) => item.id > afterEntry)) {
+            if ((entry.model || []).some((item) => item?.role === 'user')) {
+              completed.clear();
+              continue;
+            }
+            const projected = projectMessage(entry.model?.[0]);
+            if (projected) completed.set(entry.id, projected);
+          }
           message = projectMessage(event.generation?.message);
           if (message) messageSerial += 1;
           break;
@@ -103,7 +138,13 @@ export function createDurableTurnProjection() {
           }
           break;
         case 'message_end':
-          if (event.entry?.model?.[0]?.role !== 'assistant' || event.entry.id <= afterEntry) return [];
+          if (!event.entry || event.entry.id <= afterEntry) return [];
+          if ((event.entry.model || []).some((item) => item?.role === 'user')) {
+            completed.clear();
+            message = null;
+            break;
+          }
+          if (event.entry?.model?.[0]?.role !== 'assistant') return [];
           completed.set(event.entry.id, projectMessage(event.entry.model[0]));
           message = null;
           break;

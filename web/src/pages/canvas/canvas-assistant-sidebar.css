@@ -280,6 +280,35 @@
 .canvas-assistant-card strong {
     font-weight: 600;
 }
+.canvas-assistant-proposal-details {
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    padding: 6px 0;
+}
+.canvas-assistant-proposal-details summary {
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--muted-foreground);
+    user-select: none;
+}
+.canvas-assistant-proposal-details summary:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+}
+.canvas-assistant-proposal-targets {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 8px;
+}
+.canvas-assistant-proposal-target {
+    font-size: 12px;
+    line-height: 1.65;
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+    padding-left: 8px;
+    border-left: 2px solid var(--border);
+}
 .canvas-assistant-plan { display: block; overflow-wrap: anywhere; }
 .canvas-assistant-plan summary { cursor: pointer; font-weight: 500; }
 .canvas-assistant-plan p { margin: 8px 0; }

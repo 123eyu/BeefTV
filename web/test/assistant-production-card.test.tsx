@@ -113,3 +113,61 @@ test("started production does not ask the user to manually continue the next ste
     expect(html).not.toContain(">检查结果<");
     expect(html).toContain("0/2");
 });
+test("production proposal card collapses per-item target details by default while keeping overview and confirm action visible",()=>{
+    const turn: AssistantTurn = {
+        turnId: "turn-collapsed",
+        userText: "做一支花店短片",
+        selectedNodeIds: [],
+        reply: "已为你准备好花店短片方案。",
+        toolCalls: [],
+        change: null,
+        error: null,
+        cancelled: false,
+        createdAt: "2026-10-28",
+        proposals: [proposal],
+    };
+    const html = renderToStaticMarkup(
+        <CanvasAssistantTurnView
+            turn={turn}
+            handledProposals={new Set()}
+            nodes={[]}
+            onLocate={() => {}}
+            onUndo={() => {}}
+            onRunProposal={() => {}}
+            onDismissProposal={() => {}}
+        />,
+    );
+    expect(html).toContain("已为你准备好花店短片方案。");
+    expect(html).toContain("整片制作方案：1 张图片、0 段视频、1 段配音");
+    expect(html).toContain("<details class=\"canvas-assistant-proposal-details\"><summary>查看 2 项镜头与提示词明细</summary>");
+    expect(html).not.toContain("<details open");
+    expect(html).toContain("确认并制作整片");
+});
+test("legacy proposal without turn reply shows proposal note inside the card without pretending to be a model reply",()=>{
+    const turn: AssistantTurn = {
+        turnId: "turn-legacy-note",
+        userText: "把首帧改成 9:16",
+        selectedNodeIds: [],
+        reply: "",
+        toolCalls: [],
+        change: null,
+        error: null,
+        cancelled: false,
+        createdAt: "2026-10-28",
+        proposals: [{ ...proposal, note: "已将首帧调整为竖屏 9:16。" }],
+    };
+    const html = renderToStaticMarkup(
+        <CanvasAssistantTurnView
+            turn={turn}
+            handledProposals={new Set()}
+            nodes={[]}
+            onLocate={() => {}}
+            onUndo={() => {}}
+            onRunProposal={() => {}}
+            onDismissProposal={() => {}}
+        />,
+    );
+    expect(html).not.toContain("canvas-assistant-reply");
+    expect(html).toContain("canvas-assistant-proposal-note");
+    expect(html).toContain("已将首帧调整为竖屏 9:16。");
+});

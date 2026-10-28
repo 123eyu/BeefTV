@@ -18,7 +18,7 @@ import { PLAN_UPDATE_PARAMETERS, applyPlanUpdate, emptyPlan, planContinuation, p
 import { buildStudioDigest, describeChangesSince, withCurrentStudio } from './studio-digest.mjs';
 import { normalizeModelTransportError } from './model-transport-error.mjs';
 import { businessLifecycle } from './business-progress.mjs';
-import { durableReasoningSegments } from './durable-turn-projection.mjs';
+import { durableReasoningSegments, durableTurnReplyText } from './durable-turn-projection.mjs';
 
 // On-disk format tag written into manifests and host state since 1.0.4; not the
 // package version. Changing it rejects every existing session as mismatched.
@@ -68,16 +68,17 @@ export function publicDurableTurn(active, running = false) {
   if (running) { delete result.toolCalls; result.status = 'running'; }
   return result;
 }
-export function durableCompletion(settled, assistant, budgetFailure, stopped = false) {
+export function durableCompletion(settled, assistant, budgetFailure, stopped = false, replyText = undefined) {
   const cancelled = Boolean(stopped || settled.reason === 'aborted');
-  const text = assistant?.content?.filter((block) => block.type === 'text').map((block) => block.text).join('') || '';
+  const fallbackText = assistant?.stopReason === 'error' ? '' : (assistant?.content?.filter((block) => block.type === 'text').map((block) => block.text).join('') || '');
+  const text = replyText !== undefined ? replyText : fallbackText;
   if (cancelled) return { reply: text, cancelled, error: null, errorReason: null };
   if (settled.status !== 'done') return { reply: '', cancelled: false,
     error: String(budgetFailure?.message || settled.detail || settled.reason || 'agent_run_failed'),
     errorReason: budgetFailure?.reason || settled.reason || 'agent_run_failed' };
   if (!assistant || ['error', 'aborted'].includes(assistant.stopReason)) return { reply: '', cancelled: false,
     error: assistant?.errorMessage || 'agent_answer_missing', errorReason: 'provider_error' };
-  return { reply: assistant.content?.filter((block) => block.type === 'text').map((block) => block.text).join('') || '',
+  return { reply: text,
     cancelled: false, error: null, errorReason: null };
 }
 
@@ -1103,15 +1104,20 @@ export function createDurableSessionStore({ sessionRoot, workspaceRoot, getModel
     const lowerBound = originalStatus?.entry ?? settled.entry;
     const view = lowerBound === undefined ? null : await entry.root.context(CTX);
     const turnEntries = view ? view.entries.filter((item) => item.id > lowerBound
-      && (settled.answer === undefined || item.id <= settled.answer)) : [];
+      && (settled.answer === undefined || item.id <= settled.answer)) : (answer ? [answer] : []);
     if (active.stopped || settled.reason === 'aborted') {
       // Official abort converts its committed partial into an assistant entry.
       const partial = turnEntries.flatMap((item) => item.model || [])
         .filter((message) => message.role === 'assistant' && message.stopReason === 'aborted').at(-1);
       if (partial) assistant = partial;
     }
+    const scopedEntries = turnEntries.length ? turnEntries : (answer ? [{ id: settled.answer ?? 0, ...answer }] : []);
+    const replyText = durableTurnReplyText(scopedEntries)
+      || ((active.stopped || settled.reason === 'aborted' || entry.generation.pendingInputError || entry.generation.skillContextFailure) && assistant
+        ? durableTurnReplyText([{ id: settled.answer ?? 0, model: [assistant] }])
+        : '');
     const preparationError = entry.generation.pendingInputError || entry.generation.skillContextFailure;
-    const completion = preparationError ? { reply: assistant?.content?.filter(block => block.type === 'text').map(block => block.text).join('') || '', cancelled: false, error: preparationError.message, errorReason: preparationError.reason } : durableCompletion(settled, assistant, entry.budget?.failure, active.stopped);
+    const completion = preparationError ? { reply: replyText, cancelled: false, error: preparationError.message, errorReason: preparationError.reason } : durableCompletion(settled, assistant, entry.budget?.failure, active.stopped, replyText);
     const planView = entry.turn.plan || active.plan || null;
     // 思考是权威值：即使为空也要写进终态和历史，界面才能区分「没有思考」与「字段缺失」并清掉旧内容。
     const reasoning = durableReasoningSegments(turnEntries);
