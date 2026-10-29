@@ -203,6 +203,9 @@ func newCanvasHostWithRepo(service *Service, repo *repository.Repository) canvas
 	}
 }
 
+// CanvasService exposes the domain service to the HTTP composition layer.
+func (s *Service) CanvasService() *canvas.Service { return s.canvasDomain() }
+
 func (s *Service) canvasDomain() *canvas.Service {
 	if s == nil {
 		return canvas.New(nil, nil)
@@ -225,26 +228,6 @@ func (s *Service) validateAssetReplacementCanvasReferences(userID string, replac
 	return s.canvasDomain().ValidateAssetReplacementCanvasReferences(userID, replacement)
 }
 
-func (s *Service) UserDataSnapshot(userID string) (UserDataSnapshot, error) {
-	return s.canvasDomain().UserDataSnapshot(userID)
-}
-
-func (s *Service) UserAssetSummaries(userID string) ([]UserDataSummary, error) {
-	return s.canvasDomain().UserAssetSummaries(userID)
-}
-
-func (s *Service) UserAsset(userID string, id string) (json.RawMessage, error) {
-	return s.canvasDomain().UserAsset(userID, id)
-}
-
-func (s *Service) UpsertUserAsset(userID string, raw json.RawMessage) (UserDataSummary, error) {
-	return s.canvasDomain().UpsertUserAsset(userID, raw)
-}
-
-func (s *Service) DeleteUserAsset(userID string, id string, expectedStatus ...string) error {
-	return s.canvasDomain().DeleteUserAsset(userID, id, expectedStatus...)
-}
-
 func (s *Service) UserAssets(userID string) ([]json.RawMessage, error) {
 	return s.canvasDomain().UserAssets(userID)
 }
@@ -255,18 +238,6 @@ func (s *Service) ReplaceUserAssets(userID string, req AssetsSyncRequest) ([]jso
 
 func (s *Service) UserCanvasProjects(userID string) ([]json.RawMessage, error) {
 	return s.canvasDomain().UserCanvasProjects(userID)
-}
-
-func (s *Service) UserCanvasProjectSummaries(userID string) ([]UserDataSummary, error) {
-	return s.canvasDomain().UserCanvasProjectSummaries(userID)
-}
-
-func (s *Service) UserCanvasProject(userID string, id string) (json.RawMessage, error) {
-	return s.canvasDomain().UserCanvasProject(userID, id)
-}
-
-func (s *Service) UpsertUserCanvasProject(userID string, raw json.RawMessage) (UserDataSummary, error) {
-	return s.canvasDomain().UpsertUserCanvasProject(userID, raw)
 }
 
 // Database 暴露本进程使用的数据库连接，供操作层与业务写入共用同一事务边界。
@@ -286,10 +257,6 @@ func (s *Service) canvasDomainWithTx(tx *gorm.DB) *canvas.Service {
 // UpsertUserCanvasProjectWithTx 把画布写入放进调用方给出的事务，使操作记录与业务写入原子提交。
 func (s *Service) UpsertUserCanvasProjectWithTx(tx *gorm.DB, userID string, raw json.RawMessage) (UserDataSummary, error) {
 	return s.canvasDomainWithTx(tx).UpsertUserCanvasProject(userID, raw)
-}
-
-func (s *Service) DeleteUserCanvasProject(userID string, id string) error {
-	return s.canvasDomain().DeleteUserCanvasProject(userID, id)
 }
 
 func (s *Service) UserCanvasFolders(userID string) ([]model.CanvasLibraryFolder, error) {
@@ -352,18 +319,6 @@ func (s *Service) runCanvasLibraryWrite(fn func(*canvas.Service) error) error {
 	})
 }
 
-func (s *Service) CanvasHistory(userID, canvasID string) (CanvasHistoryList, error) {
-	return s.canvasDomain().CanvasHistory(userID, canvasID)
-}
-
-func (s *Service) CanvasHistorySnapshot(userID, canvasID, snapshotID string) (*model.CanvasSnapshot, error) {
-	return s.canvasDomain().CanvasHistorySnapshot(userID, canvasID, snapshotID)
-}
-
-func (s *Service) RestoreCanvasHistory(userID, canvasID, snapshotID string, revision *int64) (UserDataSummary, error) {
-	return s.canvasDomain().RestoreCanvasHistory(userID, canvasID, snapshotID, revision)
-}
-
 func saveCreationCanvasWithHistory(repo *repository.Repository, project *model.CanvasProject, previous string) error {
 	before, err := repo.CanvasProjectForUser(project.UserID, project.ID)
 	if err != nil {
@@ -378,18 +333,6 @@ func saveCreationCanvasWithHistory(repo *repository.Repository, project *model.C
 		return repository.ErrCreationConflict
 	}
 	return err
-}
-
-func (s *Service) UserAssetsByIDs(userID string, ids []string) ([]json.RawMessage, error) {
-	return s.canvasDomain().UserAssetsByIDs(userID, ids)
-}
-
-func (s *Service) UserAssetsPage(userID string, page int, pageSize int, filter UserAssetPageFilter) (UserAssetPage, error) {
-	return s.canvasDomain().UserAssetsPage(userID, page, pageSize, filter)
-}
-
-func (s *Service) UserCanvasProjectsPage(userID string, page int, pageSize int, projectID string, search string, sort string) (CanvasLibraryPage, error) {
-	return s.canvasDomain().UserCanvasProjectsPage(userID, page, pageSize, projectID, search, sort)
 }
 
 func clientAssetPayload(asset model.Asset) json.RawMessage {
@@ -688,3 +631,23 @@ var (
 	_ operations.DomainBinder = (*Service)(nil)
 	_ operations.Domain       = (*operationSession)(nil)
 )
+
+func (s *Service) DeleteUserAsset(userID string, id string, expectedStatus ...string) error {
+	return s.canvasDomain().DeleteUserAsset(userID, id, expectedStatus...)
+}
+
+func (s *Service) UserAsset(userID string, id string) (json.RawMessage, error) {
+	return s.canvasDomain().UserAsset(userID, id)
+}
+
+func (s *Service) UserCanvasProject(userID string, id string) (json.RawMessage, error) {
+	return s.canvasDomain().UserCanvasProject(userID, id)
+}
+
+func (s *Service) UpsertUserAsset(userID string, raw json.RawMessage) (UserDataSummary, error) {
+	return s.canvasDomain().UpsertUserAsset(userID, raw)
+}
+
+func (s *Service) UpsertUserCanvasProject(userID string, raw json.RawMessage) (UserDataSummary, error) {
+	return s.canvasDomain().UpsertUserCanvasProject(userID, raw)
+}

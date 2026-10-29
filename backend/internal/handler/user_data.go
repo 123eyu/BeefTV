@@ -29,6 +29,8 @@ func RegisterDesktopUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 }
 
 func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
+	canvasData, prompts, library := svc.CanvasService(), svc.PromptService(), svc.AssetLibraryService()
+	resources, playback := svc.ResourceService(), svc.PlaybackService()
 	registerCanvasLibraryRoutes(r, svc)
 	registerCanvasWorkflowRoutes(r, svc)
 	r.POST("/assets/batch", func(c *gin.Context) {
@@ -45,7 +47,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			fail(c, http.StatusBadRequest, err)
 			return
 		}
-		assets, err := svc.UserAssetsByIDs(user.ID, req.IDs)
+		assets, err := canvasData.UserAssetsByIDs(user.ID, req.IDs)
 		if err != nil {
 			failService(c, err)
 			return
@@ -58,7 +60,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			failService(c, err)
 			return
 		}
-		preferences, err := svc.UserPromptPreferences(user)
+		preferences, err := prompts.UserPromptPreferences(user)
 		if err != nil {
 			failService(c, err)
 			return
@@ -77,7 +79,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			fail(c, http.StatusBadRequest, err)
 			return
 		}
-		customization, err := svc.UpdateUserPromptCustomization(user, c.Param("operation"), req)
+		customization, err := prompts.UpdateUserPromptCustomization(user, c.Param("operation"), req)
 		if err != nil {
 			failService(c, err)
 			return
@@ -90,7 +92,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			failService(c, err)
 			return
 		}
-		if err := svc.ResetUserPromptCustomization(user, c.Param("operation")); err != nil {
+		if err := prompts.ResetUserPromptCustomization(user, c.Param("operation")); err != nil {
 			failService(c, err)
 			return
 		}
@@ -133,7 +135,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			failService(c, err)
 			return
 		}
-		cleared, err := svc.ClearVideoPreviewCache(user.ID)
+		cleared, err := playback.ClearCache(user.ID)
 		if err != nil {
 			failService(c, err)
 			return
@@ -178,9 +180,9 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			failService(c, err)
 			return
 		}
-		resource, err := svc.Resource(user.ID, c.Param("id"))
+		resource, err := resources.Resource(user.ID, c.Param("id"))
 		if err == nil && c.Query("metadata") == "ensure" {
-			resource, err = svc.EnsureResourceMediaMetadata(c.Request.Context(), user.ID, c.Param("id"))
+			resource, err = resources.EnsureMediaMetadata(c.Request.Context(), user.ID, c.Param("id"))
 			if err != nil {
 				if errors.Is(err, context.Canceled) {
 					writeFailure(c, 499, 499, "request_cancelled", "检查素材已取消")
@@ -219,7 +221,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			failService(c, err)
 			return
 		}
-		delivery, err := svc.PrepareResourceDelivery(user.ID, c.Param("id"), app.ResourceDeliveryOptions{
+		delivery, err := resources.PrepareDelivery(user.ID, c.Param("id"), app.ResourceDeliveryOptions{
 			ForceDirect: c.Query("direct") == "1",
 			ForceProxy:  c.Query("proxy") == "1",
 		})
@@ -243,7 +245,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			resource.PlaybackStatus == model.PlaybackStatusReady && resource.PlaybackObjectKey != ""
 		var stream *app.ResourceStream
 		if usePlayback {
-			stream, err = svc.OpenResourcePlaybackRange(user.ID, resource.ID)
+			stream, err = playback.OpenRange(user.ID, resource.ID)
 			if errors.Is(err, app.ErrPlaybackNotReady) {
 				usePlayback = false
 			} else if err != nil {
@@ -282,7 +284,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			rangeHeader = ""
 		}
 		if stream == nil {
-			stream, err = svc.OpenResourceRange(user.ID, resource.ID, rangeHeader)
+			stream, err = resources.OpenRange(user.ID, resource.ID, rangeHeader)
 			if err != nil {
 				failService(c, err)
 				return
@@ -323,7 +325,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			if value, present := c.GetQuery("folderId"); present {
 				folderID = &value
 			}
-			assets, pageErr := svc.UserAssetsPage(user.ID, page, pageSize, app.UserAssetPageFilter{
+			assets, pageErr := canvasData.UserAssetsPage(user.ID, page, pageSize, app.UserAssetPageFilter{
 				Kind: c.Query("kind"), Category: c.Query("category"), FolderID: folderID,
 				Uncategorized: queryFlag(c, "uncategorized"), Status: c.Query("status"), Query: c.Query("q"),
 				Favorite: queryFlag(c, "favorite"), Recent: queryFlag(c, "recent"), Project: c.Query("project"),
@@ -336,7 +338,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			ok(c, assets)
 			return
 		}
-		assets, err := svc.UserAssetSummaries(user.ID)
+		assets, err := canvasData.UserAssetSummaries(user.ID)
 		if err != nil {
 			failService(c, err)
 			return
@@ -349,7 +351,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			failService(c, err)
 			return
 		}
-		folders, err := svc.AssetFolders(user.ID)
+		folders, err := library.AssetFolders(user.ID)
 		if err != nil {
 			failService(c, err)
 			return
@@ -367,7 +369,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			fail(c, http.StatusBadRequest, err)
 			return
 		}
-		folder, err := svc.CreateAssetFolder(user.ID, req)
+		folder, err := library.CreateAssetFolder(user.ID, req)
 		if err != nil {
 			failService(c, err)
 			return
@@ -385,7 +387,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			fail(c, http.StatusBadRequest, err)
 			return
 		}
-		folder, err := svc.UpdateAssetFolder(user.ID, c.Param("id"), req)
+		folder, err := library.UpdateAssetFolder(user.ID, c.Param("id"), req)
 		if err != nil {
 			failService(c, err)
 			return
@@ -398,7 +400,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			failService(c, err)
 			return
 		}
-		if err := svc.DeleteAssetFolder(user.ID, c.Param("id")); err != nil {
+		if err := library.DeleteAssetFolder(user.ID, c.Param("id")); err != nil {
 			failService(c, err)
 			return
 		}
@@ -415,7 +417,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			fail(c, http.StatusBadRequest, err)
 			return
 		}
-		if err := svc.MoveUserAssetsToFolder(user.ID, req); err != nil {
+		if err := library.MoveUserAssetsToFolder(user.ID, req); err != nil {
 			failService(c, err)
 			return
 		}
@@ -427,7 +429,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			failService(c, err)
 			return
 		}
-		snapshot, err := svc.UserDataSnapshot(user.ID)
+		snapshot, err := canvasData.UserDataSnapshot(user.ID)
 		if err != nil {
 			failService(c, err)
 			return
@@ -440,7 +442,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			failService(c, err)
 			return
 		}
-		asset, err := svc.UserAsset(user.ID, c.Param("id"))
+		asset, err := canvasData.UserAsset(user.ID, c.Param("id"))
 		if err != nil {
 			fail(c, http.StatusNotFound, err)
 			return
@@ -472,7 +474,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			fail(c, http.StatusBadRequest, app.BadAuthRequest("素材 ID 与请求路径不一致"))
 			return
 		}
-		asset, err := svc.UpsertUserAsset(user.ID, req.Asset)
+		asset, err := canvasData.UpsertUserAsset(user.ID, req.Asset)
 		if err != nil {
 			failService(c, err)
 			return
@@ -485,7 +487,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			failService(c, err)
 			return
 		}
-		if err := svc.DeleteUserAsset(user.ID, c.Param("id"), strings.TrimSpace(c.Query("expectedStatus"))); err != nil {
+		if err := canvasData.DeleteUserAsset(user.ID, c.Param("id"), strings.TrimSpace(c.Query("expectedStatus"))); err != nil {
 			failService(c, err)
 			return
 		}
@@ -503,7 +505,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 				fail(c, http.StatusBadRequest, pageErr)
 				return
 			}
-			result, pageErr := svc.UserCanvasProjectsPage(user.ID, page, pageSize, c.Query("projectId"), c.Query("q"), c.Query("sort"))
+			result, pageErr := canvasData.UserCanvasProjectsPage(user.ID, page, pageSize, c.Query("projectId"), c.Query("q"), c.Query("sort"))
 			if pageErr != nil {
 				failService(c, pageErr)
 				return
@@ -511,7 +513,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			ok(c, result)
 			return
 		}
-		projects, err := svc.UserCanvasProjectSummaries(user.ID)
+		projects, err := canvasData.UserCanvasProjectSummaries(user.ID)
 		if err != nil {
 			failService(c, err)
 			return
@@ -524,7 +526,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			failService(c, err)
 			return
 		}
-		project, err := svc.UserCanvasProject(user.ID, c.Param("id"))
+		project, err := canvasData.UserCanvasProject(user.ID, c.Param("id"))
 		if err != nil {
 			fail(c, http.StatusNotFound, err)
 			return
@@ -537,7 +539,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			failService(c, err)
 			return
 		}
-		project, err := svc.UserCanvasProject(user.ID, c.Param("id"))
+		project, err := canvasData.UserCanvasProject(user.ID, c.Param("id"))
 		if err != nil {
 			failService(c, err)
 			return
@@ -564,7 +566,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			case <-c.Request.Context().Done():
 				return
 			case <-ticker.C:
-				latest, readErr := svc.UserCanvasProject(user.ID, c.Param("id"))
+				latest, readErr := canvasData.UserCanvasProject(user.ID, c.Param("id"))
 				if readErr != nil {
 					return
 				}
@@ -586,7 +588,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			failService(c, err)
 			return
 		}
-		result, err := svc.CanvasHistory(user.ID, c.Param("id"))
+		result, err := canvasData.CanvasHistory(user.ID, c.Param("id"))
 		if err != nil {
 			failService(c, err)
 			return
@@ -599,7 +601,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			failService(c, err)
 			return
 		}
-		snapshot, err := svc.CanvasHistorySnapshot(user.ID, c.Param("id"), c.Param("snapshotId"))
+		snapshot, err := canvasData.CanvasHistorySnapshot(user.ID, c.Param("id"), c.Param("snapshotId"))
 		if err != nil {
 			failService(c, err)
 			return
@@ -624,7 +626,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			fail(c, http.StatusBadRequest, app.BadAuthRequest("恢复请求格式错误"))
 			return
 		}
-		project, err := svc.RestoreCanvasHistory(user.ID, c.Param("id"), c.Param("snapshotId"), req.Revision)
+		project, err := canvasData.RestoreCanvasHistory(user.ID, c.Param("id"), c.Param("snapshotId"), req.Revision)
 		if err != nil {
 			failService(c, err)
 			return
@@ -667,7 +669,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 		if audit.Revision != nil {
 			baseRevision = *audit.Revision
 		}
-		project, err := svc.UpsertUserCanvasProject(user.ID, req.Project)
+		project, err := canvasData.UpsertUserCanvasProject(user.ID, req.Project)
 		defer func() {
 			nodesBefore, nodesAfter := -1, len(audit.Nodes)
 			if project.SaveAudit != nil {
@@ -688,7 +690,7 @@ func registerUserDataRoutes(r *gin.RouterGroup, svc *app.Service) {
 			failService(c, err)
 			return
 		}
-		if err := svc.DeleteUserCanvasProject(user.ID, c.Param("id")); err != nil {
+		if err := canvasData.DeleteUserCanvasProject(user.ID, c.Param("id")); err != nil {
 			failService(c, err)
 			return
 		}

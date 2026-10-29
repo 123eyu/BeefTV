@@ -54,6 +54,9 @@ func newPromptAdminGate(service *Service) promptAdminGate {
 	return promptAdminGate{requireAdmin: service.RequireAdmin, appendAudit: service.appendAdminAudit}
 }
 
+// PromptService exposes the domain service to the HTTP composition layer.
+func (s *Service) PromptService() *prompts.Service { return s.promptDomain() }
+
 func (s *Service) promptDomain() *prompts.Service {
 	if s == nil {
 		return prompts.New(nil, nil)
@@ -106,18 +109,6 @@ func (s *Service) UpdatePromptTemplate(actor *model.User, id string, req PromptT
 
 func (s *Service) DeletePromptTemplate(actor *model.User, id string) error {
 	return s.promptDomain().DeletePromptTemplate(actor, id)
-}
-
-func (s *Service) UserPromptPreferences(user *model.User) ([]UserPromptPreference, error) {
-	return s.promptDomain().UserPromptPreferences(user)
-}
-
-func (s *Service) UpdateUserPromptCustomization(user *model.User, operation string, req UserPromptCustomizationRequest) (*model.UserPromptCustomization, error) {
-	return s.promptDomain().UpdateUserPromptCustomization(user, operation, req)
-}
-
-func (s *Service) ResetUserPromptCustomization(user *model.User, operation string) error {
-	return s.promptDomain().ResetUserPromptCustomization(user, operation)
 }
 
 func (s *Service) compilePrompt(userID string, operation string, values map[string]string) (CompiledPrompt, error) {
