@@ -7,7 +7,6 @@ import { resolveCanvasRightPanel, useCanvasAssistant, useCanvasAssistantDockable
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, MouseEvent as ReactMouseEvent, SetStateAction } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
-import { appHref } from "@/lib/app-routing";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { queryGenerationTask, type GenerationTask } from "@/services/api/task-center";
 import { generationErrorMessage } from "@/lib/generation-error";
@@ -84,8 +83,7 @@ import { CanvasFreeformEmptyState, CanvasLinkedProjectEmptyState, CanvasShortDra
 import { resolveCanvasEmptyStateKind } from "@/lib/canvas/canvas-starter";
 import { createCanvasNode, getInputSummary } from "@/lib/canvas/canvas-project-domain";
 import { connectDirectorReferenceNodes } from "@/lib/canvas/director/director-reference-assets";
-import { canvasWorkspaceProjectId, listCanvasWorkspaceProjectCanvases } from "@/lib/canvas/canvas-workspace-project";
-import { deleteWorkspaceCanvasProjects } from "@/services/workspace-project-repository";
+import { listCanvasWorkspaceProjectCanvases } from "@/lib/canvas/canvas-workspace-project";
 import { stampCanvasNodeChanges } from "@/lib/canvas/canvas-node-timestamps";
 import { batchSourceRestriction } from "@/lib/canvas/canvas-batch-connection";
 import { deriveStoryboardPipelineProgress } from "@/lib/canvas/canvas-storyboard-progress";
@@ -122,6 +120,7 @@ import { useCanvasKeyboard } from "./use-canvas-keyboard";
 import { useCanvasMediaTools } from "./use-canvas-media-tools";
 import { useCanvasNodeEditor } from "./use-canvas-node-editor";
 import { useCanvasNodeOperations } from "./use-canvas-node-operations";
+import { useCanvasProjectMenu } from "./use-canvas-project-menu";
 import { useCanvasProjectLifecycle } from "./use-canvas-project-lifecycle";
 import { useCanvasRenderModel } from "./use-canvas-render-model";
 import { useCanvasSelectionController } from "./use-canvas-selection-controller";
@@ -352,8 +351,6 @@ function InfiniteCanvasPage() {
     const [nodeImageSettingsOpen, setNodeImageSettingsOpen] = useState(false);
     const [dialogNodeId, setDialogNodeId] = useState<string | null>(null);
     const [scriptScrollTopById, setScriptScrollTopById] = useState<Record<string, number>>({});
-    const [titleEditing, setTitleEditing] = useState(false);
-    const [titleDraft, setTitleDraft] = useState("");
     const [shortcutRequestNonce, setShortcutRequestNonce] = useState(0);
     const [workspaceView, setWorkspaceView] = useState<"workflow" | "storyboard">("workflow");
 
@@ -480,66 +477,22 @@ function InfiniteCanvasPage() {
         saveCanvasProject,
     });
 
-    const duplicateCurrentProject = useCallback(async () => {
-        if (!currentProject) return;
-        const now = new Date().toISOString();
-        const id = importCanvasProject({
-            ...currentProject,
-            title: `${currentProject.title || "未命名画布"} 副本`,
-            revision: 0,
-            remoteContentHash: undefined,
-            createdAt: now,
-            updatedAt: now,
-            nodes: nodesRef.current,
-            connections: connectionsRef.current,
-            chatSessions: chatSessionsRef.current,
-            activeChatId: activeChatIdRef.current,
-            viewport: viewportRef.current,
-        });
-        await flushCanvasStorePersistence();
-        navigate(`/canvas/${id}`);
-    }, [currentProject, importCanvasProject, navigate]);
-
-    const openCanvasInNewWindow = useCallback((canvasId: string) => {
-        window.open(appHref(`/canvas/${canvasId}`), "_blank", "noopener,noreferrer");
-    }, []);
-
-    const renameCanvasFromMenu = useCallback(async (canvasId: string, canvasTitle: string) => {
-        updateProject(canvasId, { canvasTitle });
-        await flushCanvasStorePersistence();
-        message.success("画布已重命名");
-    }, [message, updateProject]);
-
-    const duplicateCanvasFromMenu = useCallback(async (canvasId: string) => {
-        const source = useCanvasStore.getState().openProject(canvasId);
-        if (!source) {
-            message.error("画布不存在或已被删除");
-            return;
-        }
-        const sourceSnapshot = canvasId === projectId ? {
-            ...source,
-            nodes: nodesRef.current,
-            connections: connectionsRef.current,
-            chatSessions: chatSessionsRef.current,
-            activeChatId: activeChatIdRef.current,
-            viewport: viewportRef.current,
-        } : source;
-        const fallbackTitle = canvasProjects.find((canvas) => canvas.id === canvasId)?.title || "画布";
-        const now = new Date().toISOString();
-        importCanvasProject({
-            ...sourceSnapshot,
-            canvasTitle: `${sourceSnapshot.canvasTitle?.trim() || fallbackTitle} 副本`,
-            revision: 0,
-            remoteContentHash: undefined,
-            createdAt: now,
-            updatedAt: now,
-        }, canvasWorkspaceProjectId(sourceSnapshot));
-        await flushCanvasStorePersistence();
-        message.success("画布副本已创建");
-    }, [canvasProjects, importCanvasProject, message, projectId]);
-
-    const [deletingCanvas, setDeletingCanvas] = useState<{ id: string; scope: CapturedUserScope } | null>(null);
-    const deleteCanvasFromMenu = useCallback((id: string) => setDeletingCanvas({ id, scope: captureUserScope() }), []);
+    const readLiveCanvasContent = useCallback(() => ({
+        nodes: nodesRef.current,
+        connections: connectionsRef.current,
+        chatSessions: chatSessionsRef.current,
+        activeChatId: activeChatIdRef.current,
+        viewport: viewportRef.current,
+    }), []);
+    const projectMenu = useCanvasProjectMenu({
+        projectId,
+        currentProject,
+        canvasProjects,
+        workspaceTitle: workspaceProject?.title,
+        readLiveContent: readLiveCanvasContent,
+        renameCurrentProject,
+        deleteCurrentProject,
+    });
 
     const versions = useCanvasVersionHistory(projectId, restoreCanvasProjectVersion, currentProject);
     // 画布右侧只有一个栏位：助手和版本记录互斥，谁被打开另一个就让位。
@@ -1847,17 +1800,6 @@ function InfiniteCanvasPage() {
         setActiveChatId(activeId);
     }, []);
 
-    const startTitleEditing = useCallback(() => {
-        setTitleDraft(workspaceProject?.title || "未命名工作区");
-        setTitleEditing(true);
-    }, [workspaceProject?.title]);
-
-    const finishTitleEditing = useCallback(() => {
-        const nextTitle = titleDraft.trim();
-        if (nextTitle) renameCurrentProject(nextTitle);
-        setTitleEditing(false);
-    }, [renameCurrentProject, titleDraft]);
-
     const pasteAtPosition = useCallback(
         (position: Position) => {
             if (shouldPreferCopiedNodes() && pasteCopiedNodes(position)) return;
@@ -2391,14 +2333,9 @@ function InfiniteCanvasPage() {
 
     return (
         <>
-            {deletingCanvas ? <CanvasDeleteConfirmation scope={deletingCanvas.scope} title="删除画布？"
-                description={`将删除「${canvasProjects.find((canvas) => canvas.id === deletingCanvas.id)?.title || "该画布"}」，里面的节点和连线也会一起移除。`}
-                onCancel={() => setDeletingCanvas(null)} onConfirm={async (assertCurrent) => {
-                    if (deletingCanvas.id === projectId) await deleteCurrentProject();
-                    else await deleteWorkspaceCanvasProjects([deletingCanvas.id]);
-                    assertCurrent();
-                    message.success("画布已删除");
-                }} /> : null}
+            {projectMenu.deletingCanvas ? <CanvasDeleteConfirmation scope={projectMenu.deletingCanvas.scope} title="删除画布？"
+                description={`将删除「${projectMenu.deletingCanvasTitle}」，里面的节点和连线也会一起移除。`}
+                onCancel={projectMenu.cancelDeleteCanvas} onConfirm={projectMenu.confirmDeleteCanvas} /> : null}
             <a
                 href="#canvas-main"
                 onClick={(event) => {
@@ -2436,7 +2373,7 @@ function InfiniteCanvasPage() {
                                 }}
                                 syncStatus={<CanvasSyncStatus projectId={projectId} onLoadLatest={reloadLatestCanvasProject} onOpenVersions={openVersions} />}
                                 readOnly={readOnly}
-                                onDuplicateProject={duplicateCurrentProject}
+                                onDuplicateProject={projectMenu.duplicateCurrentProject}
                                 versionsOpen={versions.open}
                                 onToggleVersions={toggleVersions}
                                 onOpenWorkflows={readOnly ? undefined : () => workflowsRef.current?.toggleLibrary()}
@@ -2446,23 +2383,23 @@ function InfiniteCanvasPage() {
                                 // LibTV 的画布工作区使用“未命名工作区”作为首屏默认标题；
                                 // 项目库仍保留“未命名项目”，因此只在画布顶栏做显示层映射。
                                 title={workspaceProject?.title === "未命名项目" || !workspaceProject?.title ? "未命名工作区" : workspaceProject.title}
-                                titleDraft={titleDraft}
-                                isTitleEditing={titleEditing}
-                                onTitleDraftChange={setTitleDraft}
-                                onStartTitleEditing={startTitleEditing}
-                                onFinishTitleEditing={finishTitleEditing}
-                                onCancelTitleEditing={() => setTitleEditing(false)}
+                                titleDraft={projectMenu.titleDraft}
+                                isTitleEditing={projectMenu.titleEditing}
+                                onTitleDraftChange={projectMenu.setTitleDraft}
+                                onStartTitleEditing={projectMenu.startTitleEditing}
+                                onFinishTitleEditing={projectMenu.finishTitleEditing}
+                                onCancelTitleEditing={projectMenu.cancelTitleEditing}
                                 canUndo={historyState.canUndo}
                                 canRedo={historyState.canRedo}
                                 onCreateCanvas={createAndOpenCanvas}
                                 projectCanvases={canvasProjects}
                                 currentCanvasId={projectId}
                                 onSwitchCanvas={(id) => navigate(`/canvas/${id}`)}
-                                onOpenCanvasInNewWindow={openCanvasInNewWindow}
-                                onRenameCanvas={renameCanvasFromMenu}
-                                onDuplicateCanvas={duplicateCanvasFromMenu}
-                                onDeleteCanvas={deleteCanvasFromMenu}
-                                onDeleteProject={() => deleteCanvasFromMenu(projectId)}
+                                onOpenCanvasInNewWindow={projectMenu.openCanvasInNewWindow}
+                                onRenameCanvas={projectMenu.renameCanvas}
+                                onDuplicateCanvas={projectMenu.duplicateCanvas}
+                                onDeleteCanvas={projectMenu.requestDeleteCanvas}
+                                onDeleteProject={() => projectMenu.requestDeleteCanvas(projectId)}
                                 onSave={() => void saveCanvasProject()}
                                 onForceSave={confirmForceSaveCanvas}
                                 localOnly={localOnly}
