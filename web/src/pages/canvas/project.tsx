@@ -63,15 +63,12 @@ import { STORYBOARD_HEADER_HEIGHT, STORYBOARD_ROW_HEIGHT, storyboardMinNodeHeigh
 import { CanvasDirectorNodePanel } from "@/components/canvas/director/canvas-director-node-panel";
 import { useFocusMode } from "@/hooks/use-focus-mode";
 import { connectCanvasTextMention } from "@/lib/canvas/canvas-text-mention";
-import { writeCanvasNodePrompt } from "@/lib/canvas/canvas-node-prompt";
 import {
     applyCanvasConnectionPromptSync,
     buildCanvasAgentMentionReferences,
-    buildCanvasNodeMentionReferenceMap,
     buildCanvasResourceReferences,
     getContextResourceNodes,
     reorderCanvasResourceConnections,
-    replaceCanvasReferenceMentions,
     type CanvasResourceReference,
 } from "@/lib/canvas/canvas-resource-references";
 import { CanvasConnectionCreateMenu, CanvasNodePanelOverlay, type PendingConnectionCreate } from "@/components/canvas/canvas-workspace-overlays";
@@ -122,6 +119,7 @@ import { useCanvasNodeOperations } from "./use-canvas-node-operations";
 import { useCanvasProjectMenu } from "./use-canvas-project-menu";
 import { buildLinkedFolderPreviewNodes } from "@/lib/canvas/canvas-linked-folder-previews";
 import { appendCanvasImport } from "@/lib/canvas/canvas-import-snapshot";
+import { replaceCanvasNodeReference } from "@/lib/canvas/canvas-reference-replace";
 import { useCanvasProjectLifecycle } from "./use-canvas-project-lifecycle";
 import { useCanvasRenderModel } from "./use-canvas-render-model";
 import { useCanvasSelectionController } from "./use-canvas-selection-controller";
@@ -1127,51 +1125,13 @@ function InfiniteCanvasPage() {
 
     const handleReplaceNodeReference = useCallback(
         (targetNodeId: string, oldReference: { id: string; nodeId?: string; label?: string; title?: string }, sourceNodeId: string) => {
-            const sourceNode = nodesRef.current.find((n) => n.id === sourceNodeId);
-            if (!sourceNode || sourceNode.id === oldReference.nodeId) return;
-
-            const previousNodes = nodesRef.current;
-            const previousConnections = connectionsRef.current;
-
-            const configNodeId = previousConnections.find((c) => c.fromNodeId === targetNodeId && previousNodes.find((n) => n.id === c.toNodeId)?.type === CanvasNodeType.Config)?.toNodeId;
-            const receiverId = configNodeId || targetNodeId;
-
-            let rewired = false;
-            const nextConnections = previousConnections.map((c) => {
-                if (!rewired && c.fromNodeId === oldReference.nodeId && (c.toNodeId === targetNodeId || c.toNodeId === configNodeId)) {
-                    rewired = true;
-                    return { ...c, fromNodeId: sourceNodeId };
-                }
-                return c;
-            });
-
-            if (!rewired) {
-                nextConnections.push({
-                    id: nanoid(),
-                    fromNodeId: sourceNodeId,
-                    toNodeId: receiverId,
-                });
-            }
-
-            const nextReferencesMap = buildCanvasNodeMentionReferenceMap(previousNodes, nextConnections, previousNodes);
-            const targetNextReferences = nextReferencesMap.get(targetNodeId) || [];
-            const newRef = targetNextReferences.find((r) => r.nodeId === sourceNodeId);
-
-            const targetNode = previousNodes.find((n) => n.id === targetNodeId);
-            let nextNodes = previousNodes;
-            if (targetNode && newRef) {
-                const currentPrompt = targetNode.metadata?.composerContent ?? targetNode.metadata?.prompt ?? "";
-                const replacementToken = `@${newRef.label}`;
-                const updatedPrompt = replaceCanvasReferenceMentions(currentPrompt, oldReference, replacementToken, sourceNode.title ? sourceNode.title : newRef.label);
-
-                nextNodes = previousNodes.map((n) => (n.id === targetNodeId ? writeCanvasNodePrompt(n, updatedPrompt) : n));
-            }
-
-            nodesRef.current = nextNodes;
-            connectionsRef.current = nextConnections;
-            setNodes(nextNodes);
-            setConnections(nextConnections);
-            message.success(`已将参考图「${oldReference.label || "参考图"}」替换为「${sourceNode.title || "新图片"}」，提示词已同步更新`);
+            const result = replaceCanvasNodeReference(nodesRef.current, connectionsRef.current, targetNodeId, oldReference, sourceNodeId);
+            if (!result.notice) return;
+            nodesRef.current = result.nodes;
+            connectionsRef.current = result.connections;
+            setNodes(result.nodes);
+            setConnections(result.connections);
+            message.success(result.notice);
         },
         [connectionsRef, message, nodesRef, setConnections, setNodes],
     );
