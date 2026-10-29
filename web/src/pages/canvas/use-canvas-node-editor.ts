@@ -28,6 +28,8 @@ type UseCanvasNodeEditorOptions = {
     setDialogNodeId: Dispatch<SetStateAction<string | null>>;
     setToolbarNodeId: Dispatch<SetStateAction<string | null>>;
     setHoveredNodeId: Dispatch<SetStateAction<string | null>>;
+    /** 点开已关联项目素材的画框时，在画框右侧打开该文件夹。 */
+    openProjectAssets?: (initialCategory: string, position: Position | undefined, scope: "canvas" | "timeline", initialFolderId: string) => void;
 };
 
 export function useCanvasNodeEditor({
@@ -41,6 +43,7 @@ export function useCanvasNodeEditor({
     setDialogNodeId,
     setToolbarNodeId,
     setHoveredNodeId,
+    openProjectAssets,
 }: UseCanvasNodeEditorOptions) {
     const { message } = App.useApp();
     const queryClient = useQueryClient();
@@ -93,6 +96,16 @@ export function useCanvasNodeEditor({
         setToolbarNodeId(null);
         setHoveredNodeId(null);
     }, [nodesRef, setDialogNodeId, setHoveredNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds, setToolbarNodeId]);
+
+    const handleFrameToggle = useCallback((nodeId: string) => {
+        const node = nodesRef.current.find((item) => item.id === nodeId);
+        const linkedFolderId = node?.metadata?.folder?.assetFolderId;
+        if (linkedFolderId) {
+            openProjectAssets?.("all", node ? { x: node.position.x + node.width + 40, y: node.position.y } : undefined, "canvas", linkedFolderId);
+            return;
+        }
+        toggleFrameCollapsed(nodeId);
+    }, [nodesRef, openProjectAssets, toggleFrameCollapsed]);
 
     const handleNodeTitleChange = useCallback((nodeId: string, title: string) => {
         setNodes((current) => current.map((node) => (node.id === nodeId ? { ...node, title } : node)));
@@ -281,6 +294,7 @@ export function useCanvasNodeEditor({
         setBatchPrimary,
         toggleBatchExpanded,
         toggleFrameCollapsed,
+        handleFrameToggle,
         toggleNodeFreeResize,
     };
 }

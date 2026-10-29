@@ -1372,6 +1372,7 @@ function InfiniteCanvasPage() {
         setBatchPrimary,
         toggleBatchExpanded,
         toggleFrameCollapsed,
+        handleFrameToggle,
         toggleNodeFreeResize,
     } = useCanvasNodeEditor({
         canvasId: projectId,
@@ -1384,6 +1385,7 @@ function InfiniteCanvasPage() {
         setDialogNodeId,
         setToolbarNodeId,
         setHoveredNodeId,
+        openProjectAssets,
     });
 
     const handleRemoveNodeReference = useCallback(
@@ -1443,19 +1445,6 @@ function InfiniteCanvasPage() {
             createFolder(projectAssetInsertPosition, { id: folder.id, projectId: linkedProjectId, title: folder.name, style, theme, createdAt: folder.createdAt });
         },
         [createFolder, linkedProjectId, linkedProjectQuery.data?.assetFolders, projectAssetInsertPosition],
-    );
-
-    const handleFrameToggle = useCallback(
-        (nodeId: string) => {
-            const node = nodesRef.current.find((item) => item.id === nodeId);
-            const linkedFolderId = node?.metadata?.folder?.assetFolderId;
-            if (linkedFolderId) {
-                openProjectAssets("all", node ? { x: node.position.x + node.width + 40, y: node.position.y } : undefined, "canvas", linkedFolderId);
-                return;
-            }
-            toggleFrameCollapsed(nodeId);
-        },
-        [nodesRef, openProjectAssets, toggleFrameCollapsed],
     );
 
     const linkedFolderPreviewNodesById = useMemo(() => buildLinkedFolderPreviewNodes(assets, linkedProjectQuery.data?.assets || []), [assets, linkedProjectQuery.data?.assets]);
