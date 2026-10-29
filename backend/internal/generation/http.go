@@ -29,6 +29,7 @@ var ErrVideoJSONRequestTooLarge = errors.New("video request body exceeds the 64 
 
 type submissionKeyContext struct{}
 type binaryNoRedirectContext struct{}
+type providerDownloadContext struct{}
 
 func doBinaryWithoutRedirect(req *http.Request) ([]byte, string, error) {
 	return DoBinary(req.WithContext(context.WithValue(req.Context(), binaryNoRedirectContext{}, true)))
@@ -126,6 +127,7 @@ func GetExternalBinary(ctx context.Context, rawURL string) ([]byte, string, erro
 }
 
 func GetProviderExternalBinary(ctx context.Context, config Config, rawURL string) ([]byte, string, error) {
+	ctx = context.WithValue(ctx, providerDownloadContext{}, true)
 	downloadURL := ProviderDownloadURL(config.BaseURL, rawURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
@@ -348,6 +350,24 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 	client := outbound.OutboundHTTPClient(requestTimeout)
 	if videoIdleTimeout > 0 {
 		client = videoDownloadHTTPClient(req, requestTimeout)
+	} else if download, _ := req.Context().Value(providerDownloadContext{}).(bool); download {
+		checkRedirect := client.CheckRedirect
+		leftOrigin := false
+		client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+			if err := checkRedirect(next, via); err != nil {
+				return err
+			}
+			if !SameProviderOrigin(req.URL.String(), next.URL.String()) {
+				leftOrigin = true
+			}
+			// Go may copy custom headers (and same-host Authorization) to a CDN.
+			// Never restore provider headers after leaving, even on a return hop.
+			if leftOrigin {
+				next.Header = make(http.Header)
+				outbound.ApplyDefaultOutboundHeaders(next)
+			}
+			return nil
+		}
 	}
 	if noRedirect, _ := req.Context().Value(binaryNoRedirectContext{}).(bool); noRedirect {
 		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }

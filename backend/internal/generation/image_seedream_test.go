@@ -74,7 +74,7 @@ func TestSeedreamGroupAndLayerOptionsStayInOneRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if body["sequential_image_generation"] != "auto" || body["sequential_image_generation_options"].(map[string]any)["max_images"] != 3 {
+	if body["response_format"] != "url" || body["stream"] != true || body["sequential_image_generation"] != "auto" || body["sequential_image_generation_options"].(map[string]any)["max_images"] != 3 {
 		t.Fatalf("body=%#v", body)
 	}
 	input.Config.Model = "dola-seedream-5-0-flash-260915"

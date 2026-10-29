@@ -22,16 +22,19 @@ import (
 // 由 #78 附录改成产品回归：真实 SQLite、NewLocal 启动和原任务取回，
 // 不再用无盘点构造器替换运行时。旧清单逐字取自 v2.0.4（542124ba）。
 func TestVideoProtocolUpgradeRecoversOriginalTasks(t *testing.T) {
+	allowLoopbackProviderTest(t)
+	// Startup reads this process-wide setting. Prepare every independent runtime
+	// before parallel subtests resume; no environment changes occur during polling.
+	setOfficialDirectory := func(dir string) { t.Setenv("CANVAS_OFFICIAL_PLUGIN_DIR", dir) }
 	for _, id := range []string{"luma-dream-machine", "runway-video"} {
 		for _, source := range []string{"row-id", "log-id", "running"} {
 			for _, prefix := range []string{"", "/proxy/v1"} {
 				t.Run(id+"/"+source+"/"+prefix, func(t *testing.T) {
-					allowLoopbackProviderTest(t)
 					oldRaw := readVideoUpgradeFixture(t, filepath.Join("testdata/video-protocol-v2.0.4", id+".json"))
 					newRaw := readVideoUpgradeFixture(t, filepath.Join("../../../plugin-packages", id, "manifest.json"))
 					payload := readVideoUpgradeFixture(t, "testdata/reference-fragmented-30fps.mp4")
 					release := t.TempDir()
-					t.Setenv("CANVAS_OFFICIAL_PLUGIN_DIR", release)
+					setOfficialDirectory(release)
 					shipVideoUpgradePackage(t, release, id, oldRaw)
 					var posts, originalPolls, newPolls, downloads atomic.Int32
 					var allowCreate atomic.Bool
@@ -146,6 +149,9 @@ func TestVideoProtocolUpgradeRecoversOriginalTasks(t *testing.T) {
 					if !bytes.Equal(configBytes, readVideoUpgradeFixture(t, configPath)) {
 						t.Fatal("startup rewrote saved configuration")
 					}
+					// Each case owns its database, loaded registry, server and resources.
+					// Keep real 30-second polling without serializing twelve waits.
+					t.Parallel()
 
 					if source != "running" {
 						// 旧失败任务仍在时，新建任务也必须使用当前单一 registry。
