@@ -180,7 +180,7 @@ Thank you to the partners, sponsors, and customers supporting BeefTV's continued
   <tr><th width="26%" align="center">Acknowledgements</th><th align="center">About</th></tr>
   <tr>
     <td align="center" valign="middle"><img src="assets/readme/partner-tencent-cloud.png" width="32" height="32" alt="Tencent Cloud icon"><br><strong>Tencent Cloud</strong></td>
-    <td><a href="https://cloud.tencent.com/">Tencent Cloud</a> provides cloud computing, AI, and audio and video services, including media storage, processing, and delivery, for developers and enterprises.</td>
+    <td><a href="https://cloud.tencent.com/">Tencent Cloud</a> provides cloud computing, AI, and audio and video services, including media storage, processing, and delivery, for developers and enterprises. Special thanks to Tencent Cloud for its compute resources and ecosystem support for this project.</td>
   </tr>
   <tr>
     <td align="center" valign="middle"><img src="assets/readme/partner-byteplus.png" width="32" height="32" alt="BytePlus icon"><br><strong>BytePlus</strong></td>
