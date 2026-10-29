@@ -27,7 +27,7 @@ beforeAll(async () => {
                     if (holdCancellation) await new Promise<void>((resolve) => { releaseCancellation = resolve; });
                     stage = "delivery_paused";
                 }
-                if (path.endsWith("/retry")) stage = "正在取回结果";
+                if (path.endsWith("/recover")) stage = "正在取回结果";
             } else if (holdQuery) {
                 holdQuery = false;
                 await new Promise<void>((resolve) => { releaseQuery = resolve; });
@@ -57,7 +57,7 @@ for (const oldContent of [false, true]) {
         const resumed = JSON.parse(await page.locator("#snapshot").innerText()).nodes[0].metadata;
         expect(resumed.status).toBe("loading");
         expect(resumed.taskId).toBe("task-test");
-        expect(writes).toEqual(["/api/tasks/task-test/cancel", "/api/tasks/task-test/retry"]);
+        expect(writes).toEqual(["/api/tasks/task-test/cancel", "/api/tasks/task-test/recover"]);
     }, 15_000);
 }
 
@@ -75,7 +75,7 @@ test("resume delivery yields the node when another request takes it over", async
     releaseQuery?.();
     // The superseded resume must neither restart delivery nor overwrite the new owner.
     const settle = Date.now() + 1000;
-    while (!writes.includes("/api/tasks/task-test/retry") && Date.now() < settle) await Bun.sleep(20);
+    while (!writes.includes("/api/tasks/task-test/recover") && Date.now() < settle) await Bun.sleep(20);
     expect(writes).toEqual(["/api/tasks/task-test/cancel"]);
     const metadata = JSON.parse(await page.locator("#snapshot").innerText()).nodes[0].metadata;
     expect(metadata.status).toBe("loading");
