@@ -92,12 +92,6 @@ export type GenerationTask = {
     updated_at?: string;
 };
 
-export type ProviderTaskQueryResult = {
-    task: GenerationTask;
-    providerStatus: string;
-    recovered: boolean;
-};
-
 export type TaskTextDelta = {
     id: string;
     taskId: string;
@@ -350,10 +344,6 @@ export function cancelGenerationTask(id: string, expectedScope = captureUserScop
         window.dispatchEvent(new CustomEvent("canvas:task-cancelled", { detail: { task } }));
         return task;
     });
-}
-
-export function queryFailedVideoProviderTask(id: string) {
-    return http.post<ProviderTaskQueryResult>(`/tasks/${encodeURIComponent(id)}/query-provider`);
 }
 
 export function refreshGenerationTaskStatus(id: string, options?: { signal?: AbortSignal }) {

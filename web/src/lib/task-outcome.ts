@@ -24,6 +24,7 @@ export type TaskOutcomeSource = {
     stage?: string;
     errorCode?: string;
     error?: string;
+    providerRequestId?: string;
     outputs?: Array<{
         materializedAssetId?: string;
         materializationErrorCode?: string;
@@ -151,6 +152,10 @@ export function readTaskOutcome(source?: TaskOutcome | TaskOutcomeSource | null)
         }
         if (LEGACY_INPUT_REJECTED_ERROR_CODES.has(errorCode)) {
             return { phase: "failed", regenerate: "confirm", reason: "input_rejected" };
+        }
+        // 与后端 ComputeOutcome 一致：已有上游任务号的失败任务先免费查询原任务。
+        if (status === "failed" && typeof record.providerRequestId === "string" && record.providerRequestId.trim()) {
+            return { phase: "retrievable", regenerate: "blocked", reason: "provider_result_pending" };
         }
         if (errorCode === "request_not_sent" || status === "cancelled") {
             return { phase: "failed", regenerate: "allowed", reason: "not_charged" };
