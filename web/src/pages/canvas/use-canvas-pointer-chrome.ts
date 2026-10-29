@@ -37,8 +37,9 @@ export function useCanvasPointerSelectionChrome({
     const handleNodeDragEnd = useCallback(
         (nodeId: string) => {
             const chrome = canvasNodeDragEndChrome(nodesRef.current.find((item) => item.id === nodeId));
-            canvasPageUiStore(projectId).getState().setDialogNodeId(chrome.dialogNodeId);
-            if (chrome.toolbarNodeId) canvasPageUiStore(projectId).getState().setToolbarNodeId(chrome.toolbarNodeId);
+            const { setDialogNodeId, setToolbarNodeId } = canvasPageUiStore(projectId).getState();
+            setDialogNodeId(chrome.dialogNodeId);
+            if (chrome.toolbarNodeId) setToolbarNodeId(chrome.toolbarNodeId);
         },
         [nodesRef, projectId],
     );

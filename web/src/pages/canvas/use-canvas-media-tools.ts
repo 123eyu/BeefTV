@@ -330,13 +330,14 @@ export function useCanvasMediaTools({
         const portraitTextureSettings = { ...DEFAULT_PORTRAIT_TEXTURE_SETTINGS, ...node.metadata?.portraitTexture };
         const child = createPortraitTextureNode(node, nanoid());
         child.metadata = { ...child.metadata, portraitTexture: portraitTextureSettings };
-        canvasPageUiStore(projectId).getState().setHoveredNodeId(null);
-        canvasPageUiStore(projectId).getState().setToolbarNodeId(null);
+        const { setHoveredNodeId, setToolbarNodeId, setSelectedNodeIds, setSelectedConnectionId, setDialogNodeId } = canvasPageUiStore(projectId).getState();
+        setHoveredNodeId(null);
+        setToolbarNodeId(null);
         setNodes((current) => [...current, child]);
         setConnections((current) => [...current, { id: nanoid(), fromNodeId: node.id, toNodeId: child.id }]);
-        canvasPageUiStore(projectId).getState().setSelectedNodeIds(new Set([child.id]));
-        canvasPageUiStore(projectId).getState().setSelectedConnectionId(null);
-        canvasPageUiStore(projectId).getState().setDialogNodeId(child.id);
+        setSelectedNodeIds(new Set([child.id]));
+        setSelectedConnectionId(null);
+        setDialogNodeId(child.id);
     }, [projectId, message, setConnections, setNodes]);
 
     const cropImageNode = useCallback(async (node: CanvasNodeData, crop: CanvasImageCropRect) => {

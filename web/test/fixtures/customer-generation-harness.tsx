@@ -101,7 +101,7 @@ function Harness() {
         return next;
     }), []);
     const nodeOperations = useCanvasNodeOperations({ projectId: project.id, defaultDrawingEngine: "excalidraw", nodesRef, connectionsRef, selectedNodeIdsRef,
-        getCanvasCenter: () => ({ x: 400, y: 300 }), setNodes, setConnections,
+        getCanvasCenter: () => ({ x: 400, y: 300 }), setNodes, setConnections, onNodesDeleted: noop });
     const generation = useCanvasGeneration({ projectId: project.id, domainProjectId: "synthetic-domain", projectLoaded: params.has("recover"), nodes, nodesRef, setNodes });
     const generate = useCanvasGenerationExecutor({ projectId: project.id, domainProjectId: "synthetic-domain", addedSkills: [], assets: [], nodesRef, connectionsRef, setNodes, setConnections: noop,
         setRunningNodeId: generation.setRunningNodeId, startGenerationRequest: generation.startGenerationRequest, finishGenerationRequest: generation.finishGenerationRequest, bindGenerationTask: generation.bindGenerationTask, applyGenerationTaskResult: generation.applyGenerationTaskResult });
