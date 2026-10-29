@@ -85,7 +85,14 @@ func registerDesktopCanvasAPI(api *gin.RouterGroup, svc *app.Service, dependenci
 	RegisterPluginRoutes(api, svc, false)
 	projectAPI := api.Group("")
 	projectAPI.Use(RequireFeature(svc, app.FeatureShortDrama))
-	RegisterProjectRoutes(projectAPI, svc)
+	registerShortDramaRoutes(projectAPI, svc)
+}
+
+// registerShortDramaRoutes groups the routes gated by the short-drama feature.
+func registerShortDramaRoutes(r *gin.RouterGroup, svc *app.Service) {
+	RegisterStyleProfileRoutes(r, svc)
+	registerCanvasProductionRoutes(r, svc)
+	RegisterProjectRoutes(r, svc, svc.ProjectService(), svc)
 }
 
 func RegisterOpenAPIRoutes(api *gin.RouterGroup) {
