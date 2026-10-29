@@ -3,6 +3,7 @@ import { mock } from "bun:test";
 import { strict as assert } from "node:assert";
 import { defaultConfig } from "@/stores/use-config-store";
 import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
+import { createCanvasPageUiStore } from "@/stores/canvas/use-canvas-page-ui-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { CanvasGenerationDurableAckError } from "@/services/canvas-generation-errors";
 import { GenerationSubmissionUnknownError } from "@/services/api/generation-submission";
@@ -67,6 +68,7 @@ for (scenario of ["success", "bind-failed", "unknown", "cancel-after-accept", "c
         clientOperationId: "confirmed-operation", projectId: project.id, generationConfig: config, generationContext: { referenceImages: [], referenceVideos: [], referenceAudios: [] }, controller: activeController, nodesRef, setNodes,
         onSubmissionPlan: async (manifest: any) => { registeredOperations = manifest.submissions; },
         setConnections() {}, setSelectedNodeIds() {}, setSelectedConnectionId() {}, setDialogNodeId() {}, registerPendingNodeIds() {},
+        pageUi: createCanvasPageUiStore(),
         startGenerationRequest() {}, finishGenerationRequest() {}, styleMetadata: {}, skillMetadata: {}, showError() {},
         bindGenerationTask: (id: string, task: any) => setNodes(canvasGenerationTaskNodes(nodesRef.current, id, task)),
         applyGenerationTaskResult: async (id: string, task: any) => {

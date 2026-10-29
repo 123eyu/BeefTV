@@ -14,6 +14,7 @@ import { CanvasGenerationDurableAckError, persistCanvasGenerationTarget } from "
 import { CanvasBackendSubmitPausedError } from "@/services/canvas-revision-conflict";
 import type { GenerationTask } from "@/services/api/task-center";
 import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
+import { createCanvasPageUiStore } from "@/stores/canvas/use-canvas-page-ui-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { executeImageGeneration } from "@/pages/canvas/canvas-image-generation-executor";
 import { executeAudioGeneration, executeVideoGeneration } from "@/pages/canvas/canvas-media-generation-executors";
@@ -29,6 +30,7 @@ test("continuation manifest freezes split output identities before any image tas
     const rejected = new Error("confirmation receipt unavailable");
     let manifest: Parameters<NonNullable<CanvasGenerationExecution["onSubmissionPlan"]>>[0] | undefined;
     await expect(executeImageGeneration({
+        pageUi: createCanvasPageUiStore(),
         sourceNode: target, nodeId: target.id, canvasNodes: [target], canvasConnections: [],
         prompt: "生成画面", effectivePrompt: "生成画面", projectId: project.id, clientOperationId: "proposal:gp-one:source",
         generationConfig: { model: "test-model", count: "2", channels: [] }, generationContext: { referenceImages: [] }, controller: new AbortController(),
@@ -236,6 +238,7 @@ test("main generation and batch generation stop before changing nodes when a pai
         const notices: string[] = [];
         const unexpected = () => { mutations++; };
         await executeImageGeneration({
+            pageUi: createCanvasPageUiStore(),
             sourceNode: root, nodeId: root.id, canvasNodes: batch ? [root, target] : [target], canvasConnections: [],
             prompt: "修改后再点生成", effectivePrompt: "修改后再点生成", projectId: project.id,
             generationConfig: { count: batch ? "2" : "1" }, generationContext: { referenceImages: [] }, controller: new AbortController(),
@@ -254,6 +257,7 @@ test("in-place media generation preserves the existing shot name before submissi
         const nodesRef = { current: [target] };
         const stopBeforeSubmission = new Error("test stops before paid submission");
         await expect(execute({
+            pageUi: createCanvasPageUiStore(),
             sourceNode: target, nodeId: target.id, canvasNodes: [target], canvasConnections: [], nodesRef,
             prompt: "新的完整动作提示词", effectivePrompt: "新的完整动作提示词", projectId: project.id,
             generationConfig: { model: "test-model", count: "1", size: "9:16", channels: [] },
@@ -276,6 +280,7 @@ test("executor retains original batch outputs after layout deletion, cancellatio
         useCanvasStore.setState({ projects: [{ ...structuredClone(project), nodes }] });
         const stopBeforeSubmission = new Error("test stops before paid submission");
         await expect(executeImageGeneration({
+            pageUi: createCanvasPageUiStore(),
             sourceNode: source, nodeId: source.id, canvasNodes: nodes, canvasConnections: [], nodesRef: { current: nodes },
             prompt: "两个镜头", effectivePrompt: "两个镜头", projectId: project.id, clientOperationId: "proposal:p1:source",
             generationConfig: { model: "test-model", count, channels: [] }, generationContext: { referenceImages: [] }, controller: new AbortController(),
