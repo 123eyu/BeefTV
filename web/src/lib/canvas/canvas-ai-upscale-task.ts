@@ -12,6 +12,8 @@ export function isAIUpscaleTask(task: Pick<GenerationTask, "type" | "model">): b
 
 export function hasPendingUpscaleTask(metadata?: CanvasNodeMetadata): boolean {
     if (!metadata) return false;
+    // 成功任务的结果已经落到节点上时，旧的「待取回」结论不再有效。
+    if (metadata.taskStatus === "succeeded" && (metadata.content || metadata.storageKey)) return false;
     const explicitOutcome = normalizeTaskOutcome(metadata.taskOutcome);
     if (explicitOutcome) {
         if (explicitOutcome.phase === "ready") return !metadata.content && !metadata.storageKey;
