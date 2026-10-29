@@ -34,16 +34,16 @@ func TestCanvasWorkflowCancelReconcilesUncheckpointedAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := s.StartCanvasWorkflow("owner", template.ID, cw.RunRequest{ClientOperationID: "cancel-recovery"})
+	run, err := s.workflowRuns().Start("owner", template.ID, cw.RunRequest{ClientOperationID: "cancel-recovery"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	op := workflowOperation(run.ID, "depth")
+	op := cw.StepOperation(run.ID, "depth")
 	task := model.Task{ID: "uncheckpointed", UserID: "owner", Type: "canvas_video", Status: model.TaskStatusQueued, ClientOperationID: &op, InputJSON: `{}`}
 	if err := db.Create(&task).Error; err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CancelCanvasWorkflow(context.Background(), "owner", run.ID); err != nil {
+	if _, err := s.workflowRuns().Cancel(context.Background(), "owner", run.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.First(&task, "id = ?", task.ID).Error; err != nil {
@@ -80,7 +80,7 @@ func TestCanvasWorkflowEditorPreservesTwoSlotsFromOneSource(t *testing.T) {
 	if template.Definition.Edges[0].Order != 0 || template.Definition.Edges[1].Order != 1 {
 		t.Fatalf("slots collapsed: %+v", template.Definition.Edges)
 	}
-	if _, err := s.StartCanvasWorkflow("owner", template.ID, cw.RunRequest{ClientOperationID: "two-frames", Inputs: map[string]cw.Value{"person": {ResourceID: "new-person"}}}); err != nil {
+	if _, err := s.workflowRuns().Start("owner", template.ID, cw.RunRequest{ClientOperationID: "two-frames", Inputs: map[string]cw.Value{"person": {ResourceID: "new-person"}}}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -99,8 +99,8 @@ func TestCanvasWorkflowUnreadableJSONFailsInsteadOfPollingForever(t *testing.T) 
 			if err := db.First(&row, "id = ?", row.ID).Error; err != nil {
 				t.Fatal(err)
 			}
-			s.advanceCanvasWorkflow(&row)
-			run, err := s.CanvasWorkflowRun("owner", row.ID)
+			s.workflowRuns().Advance(&row)
+			run, err := s.workflowRuns().Get("owner", row.ID)
 			if err != nil || run.Status != "failed" || run.Error == "" {
 				t.Fatalf("unreadable run still active: %+v %v", run, err)
 			}

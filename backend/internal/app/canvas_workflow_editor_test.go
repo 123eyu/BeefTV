@@ -137,11 +137,11 @@ func TestCanvasWorkflowEditorRevisionsAndPromptRebinding(t *testing.T) {
 	if _, e = s.workflowTemplates().Update("owner", first.ID, request); e == nil {
 		t.Fatal("stale editor overwrote revision")
 	}
-	old, e := s.StartCanvasWorkflow("owner", first.ID, cw.RunRequest{ClientOperationID: "revision-old", TemplateRevision: 1})
+	old, e := s.workflowRuns().Start("owner", first.ID, cw.RunRequest{ClientOperationID: "revision-old", TemplateRevision: 1})
 	if e != nil || old.TemplateRevision != 1 {
 		t.Fatalf("old=%+v err=%v", old, e)
 	}
-	newer, e := s.StartCanvasWorkflow("owner", first.ID, cw.RunRequest{ClientOperationID: "revision-new", TemplateRevision: 2})
+	newer, e := s.workflowRuns().Start("owner", first.ID, cw.RunRequest{ClientOperationID: "revision-new", TemplateRevision: 2})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -178,7 +178,7 @@ func TestCanvasWorkflowEditorRevisionsAndPromptRebinding(t *testing.T) {
 			t.Fatal("missing text binding")
 		}
 	}
-	if _, e = s.StartCanvasWorkflow("owner", first.ID, cw.RunRequest{ClientOperationID: "revision-old", TemplateRevision: 2}); e == nil {
+	if _, e = s.workflowRuns().Start("owner", first.ID, cw.RunRequest{ClientOperationID: "revision-old", TemplateRevision: 2}); e == nil {
 		t.Fatal("revision excluded from idempotency")
 	}
 }
@@ -190,14 +190,14 @@ func TestCanvasWorkflowTrimWithoutModelAndExplicitPorts(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	run, e := s.StartCanvasWorkflow("owner", template.ID, cw.RunRequest{ClientOperationID: "trim-only", TemplateRevision: 1, Inputs: map[string]cw.Value{"input": {ResourceID: "old-action"}}})
+	run, e := s.workflowRuns().Start("owner", template.ID, cw.RunRequest{ClientOperationID: "trim-only", TemplateRevision: 1, Inputs: map[string]cw.Value{"input": {ResourceID: "old-action"}}})
 	if e != nil {
 		t.Fatal(e)
 	}
 	var row model.CanvasWorkflowRun
 	s.repo.DB().First(&row, "id = ?", run.ID)
-	s.advanceCanvasWorkflow(&row)
-	updated, e := s.CanvasWorkflowRun("owner", run.ID)
+	s.workflowRuns().Advance(&row)
+	updated, e := s.workflowRuns().Get("owner", run.ID)
 	if e != nil || len(updated.Steps) != 2 || updated.Steps[1].TaskID == "" {
 		t.Fatalf("run=%+v err=%v", updated, e)
 	}

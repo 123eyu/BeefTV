@@ -31,23 +31,6 @@ type workflowRecipe struct {
 }
 type workflowRecipes map[string]workflowRecipe
 
-func workflowReferenceID(v any) string {
-	m, _ := v.(map[string]any)
-	for _, key := range []string{"resourceId", "storageKey", "url", "dataUrl", "id"} {
-		raw, _ := m[key].(string)
-		if strings.HasPrefix(raw, "resource:") {
-			return strings.TrimPrefix(raw, "resource:")
-		}
-		if id := assets.IDFromFileURL(raw); id != "" {
-			return id
-		}
-		if key == "resourceId" && raw != "" {
-			return raw
-		}
-	}
-	return ""
-}
-
 func workflowMediaField(kind string) string {
 	switch kind {
 	case "image":
@@ -438,28 +421,6 @@ func (s *Service) compileCanvasWorkflow(user string, d cw.Definition, existing .
 		recipes[n.ID] = recipe
 	}
 	return recipes, refs, nil
-}
-
-func workflowResourceIDs(value any) map[string]bool {
-	ids := map[string]bool{}
-	var visit func(any)
-	visit = func(value any) {
-		switch item := value.(type) {
-		case map[string]any:
-			if id := workflowReferenceID(item); id != "" {
-				ids[id] = true
-			}
-			for _, child := range item {
-				visit(child)
-			}
-		case []any:
-			for _, child := range item {
-				visit(child)
-			}
-		}
-	}
-	visit(value)
-	return ids
 }
 
 func (s *Service) materializeCanvasWorkflowRequest(user, operation string, recipe workflowRecipe, nodes map[string]cw.Node, steps map[string]*cw.Step) (CreateTaskRequest, error) {
