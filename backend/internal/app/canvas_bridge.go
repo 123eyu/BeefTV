@@ -624,18 +624,18 @@ func (s *Service) DeleteUserAsset(userID string, id string, expectedStatus ...st
 	return s.canvasDomain().DeleteUserAsset(userID, id, expectedStatus...)
 }
 
-func (s *Service) UserAsset(userID string, id string) (json.RawMessage, error) {
-	return s.canvasDomain().UserAsset(userID, id)
-}
-
-func (s *Service) UserCanvasProject(userID string, id string) (json.RawMessage, error) {
-	return s.canvasDomain().UserCanvasProject(userID, id)
-}
-
 func (s *Service) UpsertUserAsset(userID string, raw json.RawMessage) (UserDataSummary, error) {
 	return s.canvasDomain().UpsertUserAsset(userID, raw)
 }
 
 func (s *Service) UpsertUserCanvasProject(userID string, raw json.RawMessage) (UserDataSummary, error) {
 	return s.canvasDomain().UpsertUserCanvasProject(userID, raw)
+}
+
+func (s *Service) UserAsset(userID string, id string) (json.RawMessage, error) {
+	return s.canvasDomain().UserAsset(userID, id)
+}
+
+func (s *Service) UserCanvasProject(userID string, id string) (json.RawMessage, error) {
+	return s.canvasDomain().UserCanvasProject(userID, id)
 }

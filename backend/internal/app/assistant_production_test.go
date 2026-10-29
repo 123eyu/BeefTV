@@ -30,7 +30,7 @@ func TestAssistantProductionAtomicAuthorizationAndReplay(t *testing.T) {
 	if _, err := svc.BeginAssistantTurn("local", canvasID, source, AssistantTurnInput{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.BindAssistantDurableSession("local", source, backgroundContinuationSession, false); err != nil {
+	if err := svc.AssistantTurns().BindDurableSession("local", source, backgroundContinuationSession, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.FinalizeAssistantTurn(source); err != nil {
@@ -104,7 +104,7 @@ func TestAssistantProductionAtomicAuthorizationAndReplay(t *testing.T) {
 	if _, err = svc.BeginAssistantTurn("local", canvasID, next, AssistantTurnInput{}); err != nil {
 		t.Fatal(err)
 	}
-	if err = svc.BindAssistantDurableSession("local", next, backgroundContinuationSession, false); err != nil {
+	if err = svc.AssistantTurns().BindDurableSession("local", next, backgroundContinuationSession, false); err != nil {
 		t.Fatal(err)
 	}
 	svc.Database().Model(&model.AssistantTurn{}).Where("turn_id = ?", next).Update("generation_authorization_json", origin.GenerationAuthorizationJSON)
@@ -150,7 +150,7 @@ func TestAssistantProductionAtomicAuthorizationAndReplay(t *testing.T) {
 	if err == nil {
 		t.Fatal("changed paid input accepted")
 	}
-	if err = svc.CancelAssistantContinuations("local", canvasID, backgroundContinuationSession, false); err != nil {
+	if err = svc.AssistantTurns().CancelContinuations("local", canvasID, backgroundContinuationSession, false); err != nil {
 		t.Fatal(err)
 	}
 	err = svc.Database().Transaction(func(tx *gorm.DB) error {
@@ -193,7 +193,7 @@ func TestAssistantProductionPendingProposalCannotAuthorizeNextTurn(t *testing.T)
 	if _, err := svc.BeginAssistantTurn("local", canvasID, proposeTurn, AssistantTurnInput{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.BindAssistantDurableSession("local", proposeTurn, backgroundContinuationSession, false); err != nil {
+	if err := svc.AssistantTurns().BindDurableSession("local", proposeTurn, backgroundContinuationSession, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.Database().Transaction(func(tx *gorm.DB) error {
@@ -217,14 +217,14 @@ func TestAssistantProductionPendingProposalCannotAuthorizeNextTurn(t *testing.T)
 
 	// A new user turn (question, rejection, or edit request)
 	// invalidates previous continuations on /assistant/chat admission.
-	if err := svc.CancelAssistantContinuations("local", canvasID, backgroundContinuationSession, true); err != nil {
+	if err := svc.AssistantTurns().CancelContinuations("local", canvasID, backgroundContinuationSession, true); err != nil {
 		t.Fatal(err)
 	}
 	const confirmTurn = "5555666677778888"
 	if _, err := svc.BeginAssistantTurn("local", canvasID, confirmTurn, AssistantTurnInput{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.BindAssistantDurableSession("local", confirmTurn, backgroundContinuationSession, false); err != nil {
+	if err := svc.AssistantTurns().BindDurableSession("local", confirmTurn, backgroundContinuationSession, false); err != nil {
 		t.Fatal(err)
 	}
 

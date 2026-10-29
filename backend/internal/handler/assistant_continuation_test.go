@@ -33,7 +33,7 @@ func TestAssistantContinuationHTTPHasNoBrowserClaimAndKeepsTrustedTurn(t *testin
 	if _, err = env.service.BeginAssistantTurn(owner.ID, env.canvasID, source, app.AssistantTurnInput{PermissionMode: assistantturns.PermissionCanvas}); err != nil {
 		t.Fatal(err)
 	}
-	if err = env.service.BindAssistantDurableSession(owner.ID, source, session, false); err != nil {
+	if err = env.service.AssistantTurns().BindDurableSession(owner.ID, source, session, false); err != nil {
 		t.Fatal(err)
 	}
 	if err = env.service.FinalizeAssistantTurn(source); err != nil {
@@ -156,18 +156,18 @@ func TestAssistantContinuationSkillLoadKeepsItsBoundTurnAuthorized(t *testing.T)
 	}
 	source := "aabbccddffee"
 	env.beginTurn(t, source, app.AssistantTurnInput{})
-	if err = env.service.BindAssistantDurableSession(owner.ID, source, skillSessionOne, false); err != nil {
+	if err = env.service.AssistantTurns().BindDurableSession(owner.ID, source, skillSessionOne, false); err != nil {
 		t.Fatal(err)
 	}
 	if err = env.service.FinalizeAssistantTurn(source); err != nil {
 		t.Fatal(err)
 	}
-	row, err := env.service.ArmAssistantContinuation(owner.ID, assistantturns.ContinuationInput{CanvasID: env.canvasID, SessionID: skillSessionOne, SourceTurnID: source, ProposalID: "gp-load", Kind: "image", NodeIDs: []string{"n1"}})
+	row, err := env.service.AssistantTurns().ArmContinuation(owner.ID, assistantturns.ContinuationInput{CanvasID: env.canvasID, SessionID: skillSessionOne, SourceTurnID: source, ProposalID: "gp-load", Kind: "image", NodeIDs: []string{"n1"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	operation := "proposal:gp-load:n1"
-	if err = env.service.RegisterAssistantContinuationManifest(owner.ID, row.ID, assistantturns.ContinuationManifest{SourceNodeID: "n1", Submissions: []assistantturns.ContinuationSubmission{{OperationID: operation, OutputNodeIDs: []string{"n1"}}}}); err != nil {
+	if err = env.service.AssistantTurns().RegisterContinuationManifest(owner.ID, row.ID, assistantturns.ContinuationManifest{SourceNodeID: "n1", Submissions: []assistantturns.ContinuationSubmission{{OperationID: operation, OutputNodeIDs: []string{"n1"}}}}); err != nil {
 		t.Fatal(err)
 	}
 	if err = env.service.Database().Create(&model.Task{ID: "skill-load-task", UserID: owner.ID, ProjectID: env.canvasID, ClientOperationID: &operation, Type: "canvas_image", Status: model.TaskStatusFailed, InputJSON: `{"metadata":{"sourceNodeId":"n1","nodeId":"n1"}}`}).Error; err != nil {
@@ -176,21 +176,21 @@ func TestAssistantContinuationSkillLoadKeepsItsBoundTurnAuthorized(t *testing.T)
 	if _, err = env.service.ClaimAssistantContinuation(owner.ID, row.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = env.service.VerifyAssistantContinuation(owner.ID, row.ID, row.TurnID, skillSessionOne); err != nil {
+	if err = env.service.AssistantTurns().VerifyContinuation(owner.ID, row.ID, row.TurnID, skillSessionOne); err != nil {
 		t.Fatal(err)
 	}
-	companion, err := env.service.ArmAssistantContinuation(owner.ID, assistantturns.ContinuationInput{CanvasID: env.canvasID, SessionID: skillSessionOne, SourceTurnID: source, ProposalID: "gp-companion", Kind: "image", NodeIDs: []string{"n2"}})
+	companion, err := env.service.AssistantTurns().ArmContinuation(owner.ID, assistantturns.ContinuationInput{CanvasID: env.canvasID, SessionID: skillSessionOne, SourceTurnID: source, ProposalID: "gp-companion", Kind: "image", NodeIDs: []string{"n2"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	companionOperation := "proposal:gp-companion:n2"
-	if err = env.service.RegisterAssistantContinuationManifest(owner.ID, companion.ID, assistantturns.ContinuationManifest{SourceNodeID: "n2", Submissions: []assistantturns.ContinuationSubmission{{OperationID: companionOperation, OutputNodeIDs: []string{"n2"}}}}); err != nil {
+	if err = env.service.AssistantTurns().RegisterContinuationManifest(owner.ID, companion.ID, assistantturns.ContinuationManifest{SourceNodeID: "n2", Submissions: []assistantturns.ContinuationSubmission{{OperationID: companionOperation, OutputNodeIDs: []string{"n2"}}}}); err != nil {
 		t.Fatal(err)
 	}
 	if err = env.service.Database().Create(&model.Task{ID: "companion-task", UserID: owner.ID, ProjectID: env.canvasID, ClientOperationID: &companionOperation, Type: "canvas_image", Status: model.TaskStatusFailed, InputJSON: `{"metadata":{"sourceNodeId":"n2","nodeId":"n2"}}`}).Error; err != nil {
 		t.Fatal(err)
 	}
-	cancelled, err := env.service.ArmAssistantContinuation(owner.ID, assistantturns.ContinuationInput{CanvasID: env.canvasID, SessionID: skillSessionOne, SourceTurnID: source, ProposalID: "gp-cancelled", Kind: "image", NodeIDs: []string{"n2"}})
+	cancelled, err := env.service.AssistantTurns().ArmContinuation(owner.ID, assistantturns.ContinuationInput{CanvasID: env.canvasID, SessionID: skillSessionOne, SourceTurnID: source, ProposalID: "gp-cancelled", Kind: "image", NodeIDs: []string{"n2"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +209,7 @@ func TestAssistantContinuationSkillLoadKeepsItsBoundTurnAuthorized(t *testing.T)
 		}
 	}
 	for index := 0; index < 2; index++ {
-		ctx, err := env.service.AssistantSkillContext(owner.ID, env.canvasID, skillSessionOne)
+		ctx, err := env.service.AssistantTurns().SkillContext(owner.ID, env.canvasID, skillSessionOne)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -226,10 +226,10 @@ func TestAssistantContinuationSkillLoadKeepsItsBoundTurnAuthorized(t *testing.T)
 		if replay.Code != 200 {
 			t.Fatal(replay.Code, replay.Body.String())
 		}
-		if _, err = env.service.BoundAssistantSkillContext(owner.ID, row.TurnID, skillSessionOne); err != nil {
+		if _, err = env.service.AssistantTurns().BoundSkillContext(owner.ID, row.TurnID, skillSessionOne); err != nil {
 			t.Fatal("skill_load closed its own turn", err)
 		}
-		if _, allowed, scopeErr := env.service.AssistantTurnScopeForHost(owner.ID, row.TurnID); scopeErr != nil || !allowed {
+		if _, allowed, scopeErr := env.service.AssistantTurns().ScopeForHost(owner.ID, row.TurnID); scopeErr != nil || !allowed {
 			t.Fatal("skill_load revoked operation authorization", scopeErr)
 		}
 		var stored model.AssistantContinuation
@@ -262,14 +262,14 @@ func TestAssistantContinuationSkillLoadKeepsItsBoundTurnAuthorized(t *testing.T)
 	if _, err = env.service.ClaimAssistantContinuation(owner.ID, cancelled.ID); err == nil {
 		t.Fatal("cancelled result revived")
 	}
-	ctx, _ := env.service.AssistantSkillContext(owner.ID, env.canvasID, skillSessionOne)
+	ctx, _ := env.service.AssistantTurns().SkillContext(owner.ID, env.canvasID, skillSessionOne)
 	// An explicit user/session selection is not a runtime skill load.
 	body, _ := json.Marshal(map[string]any{"sessionId": skillSessionOne, "action": "activate", "requestId": "user-selection", "expectedRevision": ctx.Revision, "pins": []any{pin}})
 	response := env.callWithHeaders(t, http.MethodPost, path, string(body), headers)
 	if response.Code != 200 {
 		t.Fatal(response.Code, response.Body.String())
 	}
-	if _, err = env.service.BoundAssistantSkillContext(owner.ID, row.TurnID, skillSessionOne); err == nil {
+	if _, err = env.service.AssistantTurns().BoundSkillContext(owner.ID, row.TurnID, skillSessionOne); err == nil {
 		t.Fatal("user selection did not revoke automatic turn")
 	}
 	if _, err = env.service.ClaimAssistantContinuation(owner.ID, companion.ID); err == nil {
@@ -278,10 +278,10 @@ func TestAssistantContinuationSkillLoadKeepsItsBoundTurnAuthorized(t *testing.T)
 	// A new normal user turn's own explicit initial selection is valid new intent.
 	fresh := "aabbccddffaa"
 	env.beginTurn(t, fresh, app.AssistantTurnInput{})
-	if err = env.service.BindAssistantDurableSession(owner.ID, fresh, skillSessionOne, false); err != nil {
+	if err = env.service.AssistantTurns().BindDurableSession(owner.ID, fresh, skillSessionOne, false); err != nil {
 		t.Fatal(err)
 	}
-	ctx, _ = env.service.AssistantSkillContext(owner.ID, env.canvasID, skillSessionOne)
+	ctx, _ = env.service.AssistantTurns().SkillContext(owner.ID, env.canvasID, skillSessionOne)
 	body, _ = json.Marshal(map[string]any{"sessionId": skillSessionOne, "turnId": fresh, "action": "activate", "requestId": "select:new-user", "expectedRevision": ctx.Revision, "pins": []any{pin}})
 	response = env.callWithHeaders(t, http.MethodPost, path, string(body), headers)
 	if response.Code != 200 {
@@ -290,7 +290,7 @@ func TestAssistantContinuationSkillLoadKeepsItsBoundTurnAuthorized(t *testing.T)
 	if err = env.service.FinalizeAssistantTurn(fresh); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = env.service.ArmAssistantContinuation(owner.ID, assistantturns.ContinuationInput{CanvasID: env.canvasID, SessionID: skillSessionOne, SourceTurnID: fresh, ProposalID: "gp-fresh", Kind: "image", NodeIDs: []string{"n1"}}); err != nil {
+	if _, err = env.service.AssistantTurns().ArmContinuation(owner.ID, assistantturns.ContinuationInput{CanvasID: env.canvasID, SessionID: skillSessionOne, SourceTurnID: fresh, ProposalID: "gp-fresh", Kind: "image", NodeIDs: []string{"n1"}}); err != nil {
 		t.Fatal("initial user selection invalidated its new proposals", err)
 	}
 }

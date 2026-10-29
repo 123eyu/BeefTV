@@ -85,7 +85,7 @@ func TestAssistantSkillContextReceiptSurvivesSkillRemoval(t *testing.T) {
 					t.Fatalf("fresh %s accepted removed skill", action)
 				}
 			}
-			current, err := service.AssistantSkillContext("local", canvasID, change.SessionID)
+			current, err := service.AssistantTurns().SkillContext("local", canvasID, change.SessionID)
 			if err != nil || !reflect.DeepEqual(current, applied) {
 				t.Fatalf("rejected mutation changed context: %+v, %v", current, err)
 			}
@@ -100,7 +100,7 @@ func TestAssistantSkillContextReceiptSurvivesSkillRemoval(t *testing.T) {
 			if err != nil || !reflect.DeepEqual(replayed, applied) {
 				t.Fatalf("receipt changed after restoration: %+v, %v", replayed, err)
 			}
-			current, err = service.AssistantSkillContext("local", canvasID, change.SessionID)
+			current, err = service.AssistantTurns().SkillContext("local", canvasID, change.SessionID)
 			if err != nil || !reflect.DeepEqual(current, restored) {
 				t.Fatalf("old receipt overwrote restored pins: %+v, %v", current, err)
 			}
