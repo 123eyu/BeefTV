@@ -150,7 +150,7 @@ func TestDeleteUserCanvasProjectPreservesHistoricalTaskScope(t *testing.T) {
 		}
 	}
 
-	if err := service.DeleteUserCanvasProject("user-1", canvas.ID); err != nil {
+	if err := service.CanvasService().DeleteUserCanvasProject("user-1", canvas.ID); err != nil {
 		t.Fatal(err)
 	}
 	var storedCanvas model.CanvasProject

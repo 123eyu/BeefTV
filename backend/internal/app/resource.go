@@ -98,11 +98,6 @@ func (s *Service) directResourceURL(resource *model.Resource, expiresAt time.Tim
 	return s.signedPublicResourceURL(resource, expiresAt)
 }
 
-// PrepareResourceDelivery 统一决定浏览器资源出口：配置 CDN 时默认直连 CDN，显式代理仅用于需要同源 Blob 的内部读取。
-func (s *Service) PrepareResourceDelivery(userID string, id string, options ResourceDeliveryOptions) (*ResourceDelivery, error) {
-	return s.resourceDomain().PrepareDelivery(userID, id, options)
-}
-
 func (s *Service) prepareResourceDelivery(userID string, resource *model.Resource, options ResourceDeliveryOptions) (*ResourceDelivery, error) {
 	return s.resourceDomain().PrepareOwnedDelivery(userID, resource, options)
 }
@@ -279,10 +274,6 @@ func resourceUploadInProgress() *AppError {
 
 func (s *Service) OpenResource(userID string, id string) (*model.Resource, io.ReadCloser, error) {
 	return s.resourceDomain().Open(userID, id)
-}
-
-func (s *Service) OpenResourceRange(userID string, id string, rangeHeader string) (*ResourceStream, error) {
-	return s.resourceDomain().OpenRange(userID, id, rangeHeader)
 }
 
 func (s *Service) OpenPublicResourceRange(id string, expires string, signature string, rangeHeader string) (*ResourceStream, error) {
