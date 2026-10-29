@@ -26,8 +26,6 @@ test("creating a director shot opens an empty workbench at the requested canvas 
             getCanvasCenter: () => ({ x: 0, y: 0 }),
             setNodes: (value) => { nodesRef.current = typeof value === "function" ? value(nodesRef.current) : value; },
             setConnections: () => {},
-            setSelectedNodeIds: () => {},
-            setSelectedConnectionId: () => {},
             setDirectorNodeId: (value) => { openedNodeId = typeof value === "function" ? value(openedNodeId) : value; },
             updateProject: (_id, patch) => { savedScenes = patch.directorScenes; },
         });

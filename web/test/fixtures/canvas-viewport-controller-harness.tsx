@@ -43,10 +43,9 @@ function Harness() {
     const nodesRef = useRef<CanvasNodeData[]>([]);
     const selectedNodeIdsRef = useRef(new Set<string>());
     const controller = useCanvasViewportController({
+        projectId: "canvas",
         containerRef, size: { width: 800, height: 600 }, viewport, viewportRef,
         nodesRef, selectedNodeIdsRef, setViewport, setVirtualizationViewport,
-        setSelectedNodeIds: noop, setSelectedConnectionId: noop, setContextMenu: noop,
-        setDialogNodeId: noop, setToolbarNodeId: noop,
     });
     // Canvas load restores the saved camera through setViewport, not the controller.
     Object.assign(window, { viewportProbe: () => ({ viewport, virtualizationViewport, live: viewportRef.current, nodeRenders }), restoreViewport: (next: ViewportTransform) => { viewportRef.current = next; setViewport(next); } });

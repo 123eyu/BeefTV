@@ -24,7 +24,7 @@ function Harness() {
     const [observed, setObserved] = useState("");
     const nodesRef = useRef(nodes); nodesRef.current = nodes;
     const connectionsRef = useRef(connections); connectionsRef.current = connections;
-    const { startUpscaleBatch } = useCanvasUpscaleBatch({ projectId: "upscale-canvas", nodesRef, connectionsRef, setNodes, setConnections, setSelectedNodeIds: () => {}, prepareResource: async () => "owned-source", observeTask: task => setObserved(task.id) });
+    const { startUpscaleBatch } = useCanvasUpscaleBatch({ projectId: "upscale-canvas", nodesRef, connectionsRef, setNodes, setConnections, prepareResource: async () => "owned-source", observeTask: task => setObserved(task.id) });
     const processor = nodes.find(node => node.id === "processor")!;
     return <>
         <CanvasNodeGraphContext.Provider value={{ getUpstreamNodes: () => [nodes[0]], getNode: id => nodes.find(node => node.id === id) }}>

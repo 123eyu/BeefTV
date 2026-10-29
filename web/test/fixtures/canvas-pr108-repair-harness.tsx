@@ -40,8 +40,7 @@ function Editor() {
     const connectionsRef = useRef([]);
     const selectedNodeIdsRef = useRef(new Set<string>());
     const ops = useCanvasNodeOperations({ projectId, nodesRef, connectionsRef, selectedNodeIdsRef, defaultDrawingEngine: "excalidraw",
-        getCanvasCenter: () => ({ x: 0, y: 0 }), setNodes, setConnections: () => {}, setSelectedNodeIds: () => {},
-        setSelectedConnectionId: () => {}, setContextMenu: () => {}, setDialogNodeId: () => {},
+        getCanvasCenter: () => ({ x: 0, y: 0 }), setNodes, setConnections: () => {},
         onNodesDeleted: (_ids, _next, removed) => harness.deleted.push({ projectId, tasks: removed.map(item => item.metadata?.taskId) }) });
     harness.switchCanvas = () => { setProjectId(value => value === "canvas-a" ? "canvas-b" : "canvas-a"); setNodes([node("task-b")]); };
     harness.switchScope = () => { setActiveUserScope("owner-b"); setActiveUserScope("owner-a"); };

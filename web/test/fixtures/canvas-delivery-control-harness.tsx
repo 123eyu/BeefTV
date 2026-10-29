@@ -20,7 +20,7 @@ function Harness() {
     const nodesRef = useRef(nodes);
     nodesRef.current = nodes;
     const connectionsRef = useRef([]);
-    const generation = useCanvasGenerationOrchestration({ projectId, projectLoaded: false, localOnly: true, addedSkills: [], assets: [], nodes, connections: [], nodesRef, connectionsRef, setNodes, setConnections: noop, setSelectedNodeIds: noop, setSelectedConnectionId: noop, setDialogNodeId: noop, setGenerationHistoryOpen: noop, getCanvasCenter: () => ({ x: 0, y: 0 }) });
+    const generation = useCanvasGenerationOrchestration({ projectId, projectLoaded: false, localOnly: true, addedSkills: [], assets: [], nodes, connections: [], nodesRef, connectionsRef, setNodes, setConnections: noop, setGenerationHistoryOpen: noop, getCanvasCenter: () => ({ x: 0, y: 0 }) });
     // Applying a fully downloaded asset is outside this test. Keep the actual
     // resume hook and task metadata projection, then stop at resumed delivery.
     const handoff = useCanvasResourceHandoff({ projectId, linkedProjectId: "", projectLoaded: false, assets: [], assetsHydrated: false, nodesRef, searchParams: new URLSearchParams(), setSearchParams: noop, setNodes, getCanvasCenter: () => ({ x: 0, y: 0 }), createHandoffNodes: async () => [], applyGenerationTaskResult: async (id, task) => { generation.bindGenerationTask(id, task); }, startGenerationRequest: generation.startGenerationRequest, finishGenerationRequest: generation.finishGenerationRequest });

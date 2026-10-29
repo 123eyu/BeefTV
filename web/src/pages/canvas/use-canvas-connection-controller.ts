@@ -16,9 +16,10 @@ import { isFrameNode, isNodeHiddenByCollapsedFrame } from "@/lib/canvas/canvas-f
 import { preferredMediaGeneratorMetadata } from "@/lib/canvas/canvas-generation-config";
 import { canOpenCanvasNodePromptPanel } from "@/lib/canvas/canvas-node-semantics";
 import { normalizeRunningHubCapability, type AiConfig } from "@/stores/use-config-store";
-import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type ConnectionHandle, type ContextMenuState, type Position, type ViewportTransform } from "@/types/canvas";
+import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type ConnectionHandle, type Position, type ViewportTransform } from "@/types/canvas";
 import { workflowProviderPluginEnabled } from "@/lib/plugins/builtin/workflows";
 import { usePluginStore } from "@/stores/use-plugin-store";
+import { canvasPageUiStore } from "@/stores/canvas/use-canvas-page-ui-store";
 
 type UseCanvasConnectionControllerOptions = {
     projectId: string;
@@ -31,10 +32,6 @@ type UseCanvasConnectionControllerOptions = {
     screenToCanvas: (clientX: number, clientY: number) => Position;
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
     setConnections: Dispatch<SetStateAction<CanvasConnection[]>>;
-    setSelectedNodeIds: Dispatch<SetStateAction<Set<string>>>;
-    setSelectedConnectionId: Dispatch<SetStateAction<string | null>>;
-    setContextMenu: Dispatch<SetStateAction<ContextMenuState | null>>;
-    setDialogNodeId: Dispatch<SetStateAction<string | null>>;
     setDrawingNodeId: Dispatch<SetStateAction<string | null>>;
     onConnectedNodeCreated?: (node: CanvasNodeData, sourceNodeId?: string) => void;
     onReplaceReference?: (targetNodeId: string, oldReference: { id: string; nodeId?: string; label?: string; title?: string }, sourceNodeId: string) => void;
@@ -123,10 +120,6 @@ export function useCanvasConnectionController({
     screenToCanvas,
     setNodes,
     setConnections,
-    setSelectedNodeIds,
-    setSelectedConnectionId,
-    setContextMenu,
-    setDialogNodeId,
     setDrawingNodeId,
     onConnectedNodeCreated,
     onReplaceReference,
@@ -236,14 +229,14 @@ export function useCanvasConnectionController({
         }
         setNodes((currentNodes) => plan.connections.reduce((current, connection) => attachNodeToStoryboardRow(current, connection), currentNodes));
         setConnections((currentConnections) => [...currentConnections, ...plan.connections]);
-        setContextMenu(null);
+        canvasPageUiStore(projectId).getState().setContextMenu(null);
         const skippedCount = plan.skipped.length;
         const duplicateCount = plan.duplicates.length;
         const suffix = skippedCount || duplicateCount ? `，跳过 ${skippedCount + duplicateCount} 个` : "";
         if (skippedCount) message.warning(`已连接 ${plan.connected.length} 个节点${suffix}：${plan.skipped[0].reason}`);
         else message.success(`已连接 ${plan.connected.length} 个节点${suffix}`);
         return plan;
-    }, [config, connectionsRef, message, nodesRef, setConnections, setContextMenu, setNodes]);
+    }, [projectId, config, connectionsRef, message, nodesRef, setConnections, setNodes]);
 
     const connectNodes = useCallback((current: ConnectionHandle, targetNodeId: string, targetHandleId?: string, targetAnchorRatio?: number) => {
         if (current.nodeId === targetNodeId) return;
@@ -269,8 +262,8 @@ export function useCanvasConnectionController({
             setConnections((currentConnections) => [...currentConnections, { id: `conn-${Date.now()}`, fromNodeId, toNodeId, fromHandleId, toHandleId, fromAnchorRatio, toAnchorRatio }]);
             setNodes((currentNodes) => attachNodeToStoryboardRow(currentNodes, { fromNodeId, toNodeId, fromHandleId, toHandleId }));
         }
-        setContextMenu(null);
-    }, [config, connectionsRef, message, nodesRef, setConnections, setContextMenu, setNodes]);
+        canvasPageUiStore(projectId).getState().setContextMenu(null);
+    }, [projectId, config, connectionsRef, message, nodesRef, setConnections, setNodes]);
 
     const createConnectedNode = useCallback(async (type: CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Script | CanvasNodeType.BatchTable | CanvasNodeType.Video | CanvasNodeType.Audio | CanvasNodeType.Drawing | CanvasNodeType.Config | CanvasNodeType.MediaConversion, pending: PendingConnectionCreate, workflowProvider?: "runninghub") => {
         const nodeType = type;
@@ -362,9 +355,9 @@ export function useCanvasConnectionController({
             connectionsRef.current = nextConnections;
             setNodes(nextNodes);
             setConnections(nextConnections);
-            setSelectedNodeIds(new Set([newNode.id]));
-            setSelectedConnectionId(null);
-            setDialogNodeId(nodeType !== CanvasNodeType.Text && nodeType !== CanvasNodeType.BatchTable && nodeType !== CanvasNodeType.MediaConversion && canOpenCanvasNodePromptPanel(newNode) ? newNode.id : null);
+            canvasPageUiStore(projectId).getState().setSelectedNodeIds(new Set([newNode.id]));
+            canvasPageUiStore(projectId).getState().setSelectedConnectionId(null);
+            canvasPageUiStore(projectId).getState().setDialogNodeId(nodeType !== CanvasNodeType.Text && nodeType !== CanvasNodeType.BatchTable && nodeType !== CanvasNodeType.MediaConversion && canOpenCanvasNodePromptPanel(newNode) ? newNode.id : null);
             const skippedCount = batchPlan.skipped.length;
             const duplicateCount = batchPlan.duplicates.length;
             const suffix = skippedCount || duplicateCount ? `，跳过 ${skippedCount + duplicateCount} 个` : "";
@@ -428,13 +421,13 @@ export function useCanvasConnectionController({
         onConnectedNodeCreated?.(newNode, pending.connection.nodeId);
         setNodes((currentNodes) => attachNodeToStoryboardRow([...currentNodes, newNode], connected));
         setConnections((currentConnections) => [...currentConnections, { id: nanoid(), ...connected }]);
-        setSelectedNodeIds(new Set([newNode.id]));
-        setSelectedConnectionId(null);
+        canvasPageUiStore(projectId).getState().setSelectedNodeIds(new Set([newNode.id]));
+        canvasPageUiStore(projectId).getState().setSelectedConnectionId(null);
         if (nodeType === CanvasNodeType.Drawing) setDrawingNodeId(newNode.id);
-        setDialogNodeId(nodeType !== CanvasNodeType.Text && nodeType !== CanvasNodeType.BatchTable && nodeType !== CanvasNodeType.MediaConversion && canOpenCanvasNodePromptPanel(newNode) ? newNode.id : null);
+        canvasPageUiStore(projectId).getState().setDialogNodeId(nodeType !== CanvasNodeType.Text && nodeType !== CanvasNodeType.BatchTable && nodeType !== CanvasNodeType.MediaConversion && canOpenCanvasNodePromptPanel(newNode) ? newNode.id : null);
         closeConnectionCreateMenu();
         setConnecting(null);
-    }, [closeConnectionCreateMenu, config, connectionsRef, defaultDrawingEngine, message, nodesRef, onConnectedNodeCreated, projectId, runtimeStatuses, setConnecting, setConnections, setDialogNodeId, setDrawingNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds]);
+    }, [closeConnectionCreateMenu, config, connectionsRef, defaultDrawingEngine, message, nodesRef, onConnectedNodeCreated, projectId, runtimeStatuses, setConnecting, setConnections, setDrawingNodeId, setNodes]);
 
     const getConnectionCreateDisabledReason = useCallback((type: CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Script | CanvasNodeType.BatchTable | CanvasNodeType.Video | CanvasNodeType.Audio | CanvasNodeType.Drawing | CanvasNodeType.Config | CanvasNodeType.MediaConversion, pending: PendingConnectionCreate, workflowProvider?: "runninghub") => {
         const nodeType = type;
@@ -550,10 +543,10 @@ export function useCanvasConnectionController({
         event.stopPropagation();
         batchConnectionPointerIdRef.current = event.pointerId;
         batchConnectionPointerStartRef.current = { x: event.clientX, y: event.clientY };
-        setSelectedConnectionId(null);
+        canvasPageUiStore(projectId).getState().setSelectedConnectionId(null);
         const mouseWorld = screenToCanvas(event.clientX, event.clientY);
         previewBatchConnection(eligible, null, undefined, undefined, mouseWorld);
-    }, [message, nodesRef, previewBatchConnection, screenToCanvas, setSelectedConnectionId]);
+    }, [projectId, message, nodesRef, previewBatchConnection, screenToCanvas]);
 
     const beginBatchConnectionMode = useCallback((sourceNodeIds: string[]) => {
         const eligible = sourceNodeIds.filter((id) => {
@@ -566,8 +559,8 @@ export function useCanvasConnectionController({
             return;
         }
         previewBatchConnection(eligible, null, undefined, undefined, { x: source.position.x + source.width, y: source.position.y + source.height / 2 });
-        setSelectedConnectionId(null);
-    }, [message, nodesRef, previewBatchConnection, setSelectedConnectionId]);
+        canvasPageUiStore(projectId).getState().setSelectedConnectionId(null);
+    }, [projectId, message, nodesRef, previewBatchConnection]);
 
     const finishBatchConnection = useCallback((clientX: number, clientY: number) => {
         const batch = batchConnectionPreviewRef.current;
@@ -712,8 +705,8 @@ export function useCanvasConnectionController({
         setConnecting({ nodeId, handleType, handleId, anchorRatio });
         setConnectionTargetNodeId(null);
         setConnectionTargetAnchorRatio(undefined);
-        setSelectedConnectionId(null);
-    }, [clearBatchConnection, closeConnectionCreateMenu, commitBatchConnection, connectNodes, screenToCanvas, setConnecting, setSelectedConnectionId]);
+        canvasPageUiStore(projectId).getState().setSelectedConnectionId(null);
+    }, [projectId, clearBatchConnection, closeConnectionCreateMenu, commitBatchConnection, connectNodes, screenToCanvas, setConnecting]);
 
     const handleConnectDrop = useCallback((event: ReactPointerEvent, nodeId: string, handleId?: string) => {
         event.preventDefault();

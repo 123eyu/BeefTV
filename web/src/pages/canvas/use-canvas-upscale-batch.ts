@@ -11,17 +11,17 @@ import { createUpscaleTask, estimateUpscale } from "@/services/api/media-upscale
 import { findGenerationTaskByOperation, queryGenerationTask, type GenerationTask } from "@/services/api/task-center";
 import { syncLocalCanvasSnapshot } from "@/services/local-workspace-sync";
 import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { canvasPageUiStore } from "@/stores/canvas/use-canvas-page-ui-store";
 
 type Dependencies = {
     projectId: string; nodesRef: { current: CanvasNodeData[] }; connectionsRef: { current: CanvasConnection[] };
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>; setConnections: Dispatch<SetStateAction<CanvasConnection[]>>;
-    setSelectedNodeIds: Dispatch<SetStateAction<Set<string>>>;
     prepareResource: (node: CanvasNodeData) => Promise<string>;
     observeTask: (task: GenerationTask, nodeId: string, scope: CapturedUserScope) => void;
     bindTask?: (task: GenerationTask, nodeId: string) => void;
 };
 
-export function useCanvasUpscaleBatch({ projectId, nodesRef, connectionsRef, setNodes, setConnections, setSelectedNodeIds, prepareResource, observeTask, bindTask }: Dependencies) {
+export function useCanvasUpscaleBatch({ projectId, nodesRef, connectionsRef, setNodes, setConnections, prepareResource, observeTask, bindTask }: Dependencies) {
     const { modal } = App.useApp();
     const locks = useRef(new Set<string>());
     const mounted = useRef(true);
@@ -170,7 +170,7 @@ export function useCanvasUpscaleBatch({ projectId, nodesRef, connectionsRef, set
                 patch(nodes => [...nodes.filter(n => !outputs.some(o => o.id === n.id)).map(n => n.id === current.id ? { ...n, metadata: { ...n.metadata, upscaleBatch: frozen } } : n), ...outputs]);
                 expectedBatchId = frozen.id;
                 await save();
-                setSelectedNodeIds(new Set(items.map(i => i.outputNodeId)));
+                canvasPageUiStore(projectId).getState().setSelectedNodeIds(new Set(items.map(i => i.outputNodeId)));
             }
             // Retry a failed initial save only after verifying that no operation
             // has been admitted. Once any receipt exists, task.bind owns results.
@@ -246,6 +246,6 @@ export function useCanvasUpscaleBatch({ projectId, nodesRef, connectionsRef, set
             }
             if (rejectedRetryBlocked) throw new Error("等待其他项完成后重试未提交项");
         } finally { locks.current.delete(processor.id); }
-    }, [projectId, nodesRef, connectionsRef, setNodes, setConnections, setSelectedNodeIds, prepareResource, observeTask, bindTask, modal]);
+    }, [projectId, nodesRef, connectionsRef, setNodes, setConnections, prepareResource, observeTask, bindTask, modal]);
     return { startUpscaleBatch, resumeUpscaleBatch: startUpscaleBatch };
 }

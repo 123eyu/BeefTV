@@ -1,33 +1,28 @@
 import { useCallback, useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 
-import type { CanvasNodeData, ContextMenuState } from "@/types/canvas";
+import type { CanvasNodeData } from "@/types/canvas";
 
 import { canvasNodeDragEndChrome, canvasNodeInteractionStartChrome } from "./canvas-pointer-chrome";
+import { canvasPageUiStore } from "@/stores/canvas/use-canvas-page-ui-store";
 
 type UseCanvasPointerSelectionChromeOptions = {
+    projectId: string;
     nodesRef: { current: CanvasNodeData[] };
     segmentRunningMode?: string | null;
-    setContextMenu: Dispatch<SetStateAction<ContextMenuState | null>>;
-    setHoveredNodeId: Dispatch<SetStateAction<string | null>>;
-    setToolbarNodeId: Dispatch<SetStateAction<string | null>>;
-    setDialogNodeId: Dispatch<SetStateAction<string | null>>;
 };
 
 export function useCanvasPointerSelectionChrome({
+    projectId,
     nodesRef,
     segmentRunningMode,
-    setContextMenu,
-    setHoveredNodeId,
-    setToolbarNodeId,
-    setDialogNodeId,
 }: UseCanvasPointerSelectionChromeOptions) {
     const handleCanvasSelectionStart = useCallback(() => {
-        setContextMenu(null);
-    }, [setContextMenu]);
+        canvasPageUiStore(projectId).getState().setContextMenu(null);
+    }, [projectId]);
 
     const handleNodeInteractionStart = useCallback((selectionModifier: boolean) => {
-        setContextMenu(null);
-        setHoveredNodeId(null);
+        canvasPageUiStore(projectId).getState().setContextMenu(null);
+        canvasPageUiStore(projectId).getState().setHoveredNodeId(null);
         // Keep the source node's extraction state visible while FFmpeg is
         // producing the independent video/audio outputs.
         const chrome = canvasNodeInteractionStartChrome({
@@ -35,25 +30,25 @@ export function useCanvasPointerSelectionChrome({
             selectionModifier,
         });
         if (chrome.ignore) return;
-        setToolbarNodeId(null);
-        if (chrome.closeDialog) setDialogNodeId(null);
-    }, [segmentRunningMode, setContextMenu, setDialogNodeId, setHoveredNodeId, setToolbarNodeId]);
+        canvasPageUiStore(projectId).getState().setToolbarNodeId(null);
+        if (chrome.closeDialog) canvasPageUiStore(projectId).getState().setDialogNodeId(null);
+    }, [projectId, segmentRunningMode]);
 
     const handleNodeDragEnd = useCallback(
         (nodeId: string) => {
             const chrome = canvasNodeDragEndChrome(nodesRef.current.find((item) => item.id === nodeId));
-            setDialogNodeId(chrome.dialogNodeId);
-            if (chrome.toolbarNodeId) setToolbarNodeId(chrome.toolbarNodeId);
+            canvasPageUiStore(projectId).getState().setDialogNodeId(chrome.dialogNodeId);
+            if (chrome.toolbarNodeId) canvasPageUiStore(projectId).getState().setToolbarNodeId(chrome.toolbarNodeId);
         },
-        [nodesRef, setDialogNodeId, setToolbarNodeId],
+        [nodesRef, projectId],
     );
 
     const handleCanvasDeselect = useCallback(() => {
-        setContextMenu(null);
-        setHoveredNodeId(null);
-        setToolbarNodeId(null);
-        setDialogNodeId(null);
-    }, [setContextMenu, setDialogNodeId, setHoveredNodeId, setToolbarNodeId]);
+        canvasPageUiStore(projectId).getState().setContextMenu(null);
+        canvasPageUiStore(projectId).getState().setHoveredNodeId(null);
+        canvasPageUiStore(projectId).getState().setToolbarNodeId(null);
+        canvasPageUiStore(projectId).getState().setDialogNodeId(null);
+    }, [projectId]);
 
     return {
         handleCanvasSelectionStart,
@@ -64,17 +59,15 @@ export function useCanvasPointerSelectionChrome({
 }
 
 type UseCanvasNodeToolbarHoverOptions = {
+    projectId: string;
     nodeDraggingRef: { current: boolean };
     nodeImageSettingsOpen: boolean;
-    setHoveredNodeId: Dispatch<SetStateAction<string | null>>;
-    setToolbarNodeId: Dispatch<SetStateAction<string | null>>;
 };
 
 export function useCanvasNodeToolbarHover({
+    projectId,
     nodeDraggingRef,
     nodeImageSettingsOpen,
-    setHoveredNodeId,
-    setToolbarNodeId,
 }: UseCanvasNodeToolbarHoverOptions) {
     const toolbarHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -85,18 +78,18 @@ export function useCanvasNodeToolbarHover({
                 clearTimeout(toolbarHideTimerRef.current);
                 toolbarHideTimerRef.current = null;
             }
-            setToolbarNodeId(nodeId);
+            canvasPageUiStore(projectId).getState().setToolbarNodeId(nodeId);
         },
-        [nodeDraggingRef, nodeImageSettingsOpen, setToolbarNodeId],
+        [nodeDraggingRef, nodeImageSettingsOpen, projectId],
     );
 
     const hideNodeToolbar = useCallback(() => {
         if (toolbarHideTimerRef.current) clearTimeout(toolbarHideTimerRef.current);
         toolbarHideTimerRef.current = setTimeout(() => {
-            setToolbarNodeId(null);
+            canvasPageUiStore(projectId).getState().setToolbarNodeId(null);
             toolbarHideTimerRef.current = null;
         }, 120);
-    }, [setToolbarNodeId]);
+    }, [projectId]);
 
     useEffect(() => () => {
         if (toolbarHideTimerRef.current) clearTimeout(toolbarHideTimerRef.current);
@@ -105,18 +98,18 @@ export function useCanvasNodeToolbarHover({
     const handleCanvasNodeHoverStart = useCallback(
         (nodeId: string) => {
             if (nodeDraggingRef.current) return;
-            setHoveredNodeId(nodeId);
+            canvasPageUiStore(projectId).getState().setHoveredNodeId(nodeId);
             keepNodeToolbar(nodeId);
         },
-        [keepNodeToolbar, nodeDraggingRef, setHoveredNodeId],
+        [keepNodeToolbar, nodeDraggingRef],
     );
 
     const handleCanvasNodeHoverEnd = useCallback(
         (nodeId: string) => {
-            setHoveredNodeId((current) => (current === nodeId ? null : current));
+            canvasPageUiStore(projectId).getState().setHoveredNodeId((current) => (current === nodeId ? null : current));
             hideNodeToolbar();
         },
-        [hideNodeToolbar, setHoveredNodeId],
+        [hideNodeToolbar, projectId],
     );
 
     return {

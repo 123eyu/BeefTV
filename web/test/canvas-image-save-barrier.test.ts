@@ -260,7 +260,6 @@ test("in-place media generation preserves the existing shot name before submissi
             generationContext: { referenceImages: [], referenceVideos: [], referenceAudios: [], resolvedCharacterVersions: [], resolvedCharacterVoices: [] },
             controller: new AbortController(),
             setNodes: () => undefined, setConnections: () => undefined, registerPendingNodeIds: () => undefined,
-            setSelectedNodeIds: () => undefined, setSelectedConnectionId: () => undefined, setDialogNodeId: () => undefined,
             startGenerationRequest: () => { throw stopBeforeSubmission; },
         } as unknown as CanvasGenerationExecution)).rejects.toBe(stopBeforeSubmission);
         const saved = useCanvasStore.getState().projects[0]!.nodes;
@@ -281,7 +280,6 @@ test("executor retains original batch outputs after layout deletion, cancellatio
             prompt: "两个镜头", effectivePrompt: "两个镜头", projectId: project.id, clientOperationId: "proposal:p1:source",
             generationConfig: { model: "test-model", count, channels: [] }, generationContext: { referenceImages: [] }, controller: new AbortController(),
             setNodes: () => undefined, setConnections: () => undefined, registerPendingNodeIds: () => undefined,
-            setSelectedNodeIds: () => undefined, setSelectedConnectionId: () => undefined, setDialogNodeId: () => undefined,
             startGenerationRequest: () => { throw stopBeforeSubmission; },
         } as unknown as CanvasGenerationExecution)).rejects.toBe(stopBeforeSubmission);
         return useCanvasStore.getState().projects[0]!.nodes;

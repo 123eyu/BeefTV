@@ -3,8 +3,10 @@ import { App } from "antd";
 
 import { createShortDramaPipeline, deriveShortDramaProgress, persistShortDramaGuideDismissed, readShortDramaGuideDismissed, type CanvasShortDramaStepId } from "@/lib/canvas/canvas-short-drama";
 import type { CanvasConnection, CanvasNodeData, Position } from "@/types/canvas";
+import { canvasPageUiStore } from "@/stores/canvas/use-canvas-page-ui-store";
 
 type UseCanvasShortDramaOptions = {
+    projectId: string;
     nodes: CanvasNodeData[];
     connections: CanvasConnection[];
     nodesRef: { current: CanvasNodeData[] };
@@ -13,15 +15,13 @@ type UseCanvasShortDramaOptions = {
     getCanvasCenter: () => Position;
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
     setConnections: Dispatch<SetStateAction<CanvasConnection[]>>;
-    setSelectedNodeIds: Dispatch<SetStateAction<Set<string>>>;
-    setSelectedConnectionId: Dispatch<SetStateAction<string | null>>;
     setStylePickerOpen: Dispatch<SetStateAction<boolean>>;
     fitCanvasSelection: () => boolean;
     focusCanvasNode: (nodeId: string) => void;
     openTextEditor: (node: CanvasNodeData) => void;
 };
 
-export function useCanvasShortDrama({ nodes, connections, nodesRef, connectionsRef, selectedNodeIdsRef, getCanvasCenter, setNodes, setConnections, setSelectedNodeIds, setSelectedConnectionId, setStylePickerOpen, fitCanvasSelection, focusCanvasNode, openTextEditor }: UseCanvasShortDramaOptions) {
+export function useCanvasShortDrama({ projectId, nodes, connections, nodesRef, connectionsRef, selectedNodeIdsRef, getCanvasCenter, setNodes, setConnections, setStylePickerOpen, fitCanvasSelection, focusCanvasNode, openTextEditor }: UseCanvasShortDramaOptions) {
     const { message } = App.useApp();
     const dismissedRef = useRef(readShortDramaGuideDismissed());
     const [guideCollapsed, setGuideCollapsed] = useState(dismissedRef.current);
@@ -30,9 +30,9 @@ export function useCanvasShortDrama({ nodes, connections, nodesRef, connectionsR
     const selectNodes = useCallback((ids: string[]) => {
         const selection = new Set(ids);
         selectedNodeIdsRef.current = selection;
-        setSelectedNodeIds(selection);
-        setSelectedConnectionId(null);
-    }, [selectedNodeIdsRef, setSelectedConnectionId, setSelectedNodeIds]);
+        canvasPageUiStore(projectId).getState().setSelectedNodeIds(selection);
+        canvasPageUiStore(projectId).getState().setSelectedConnectionId(null);
+    }, [projectId, selectedNodeIdsRef]);
 
     const createPipeline = useCallback(() => {
         if (nodesRef.current.length) return message.info("当前画布已有内容，请在新画布创建短剧流水线");

@@ -50,11 +50,6 @@ function mountEditor(canvasId = "canvas-a") {
                 writes.push("setNodes");
                 nodesRef.current = typeof value === "function" ? value(nodesRef.current) : value;
             },
-            setSelectedNodeIds: () => {},
-            setSelectedConnectionId: () => {},
-            setDialogNodeId: () => {},
-            setToolbarNodeId: () => {},
-            setHoveredNodeId: () => {},
             openProjectAssets: () => {},
         });
         return null;

@@ -48,9 +48,6 @@ type UseCanvasGenerationExecutorOptions = {
     connectionsRef: { current: CanvasConnection[] };
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
     setConnections: Dispatch<SetStateAction<CanvasConnection[]>>;
-    setSelectedNodeIds: Dispatch<SetStateAction<Set<string>>>;
-    setSelectedConnectionId: Dispatch<SetStateAction<string | null>>;
-    setDialogNodeId: Dispatch<SetStateAction<string | null>>;
     setRunningNodeId: Dispatch<SetStateAction<string | null>>;
     startGenerationRequest: (targetNodeId: string, originNodeId: string, runningId?: string, controller?: AbortController) => AbortController;
     finishGenerationRequest: (targetNodeId: string, controller: AbortController) => void;
@@ -86,9 +83,6 @@ export function useCanvasGenerationExecutor({
     connectionsRef,
     setNodes,
     setConnections,
-    setSelectedNodeIds,
-    setSelectedConnectionId,
-    setDialogNodeId,
     setRunningNodeId,
     startGenerationRequest,
     finishGenerationRequest,
@@ -496,9 +490,6 @@ export function useCanvasGenerationExecutor({
                                     `canvas:${createClientId()}`,
                             setNodes,
                             setConnections,
-                            setSelectedNodeIds,
-                            setSelectedConnectionId,
-                            setDialogNodeId,
                             startGenerationRequest,
                             finishGenerationRequest,
                             bindGenerationTask: (targetNodeId: string, task: GenerationTask) => {
@@ -602,11 +593,8 @@ export function useCanvasGenerationExecutor({
             connectionsRef,
             projectId,
             setConnections,
-            setDialogNodeId,
             setNodes,
             setRunningNodeId,
-            setSelectedConnectionId,
-            setSelectedNodeIds,
             startGenerationRequest,
         ],
     );

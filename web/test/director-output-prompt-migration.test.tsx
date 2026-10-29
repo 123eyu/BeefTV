@@ -21,7 +21,7 @@ test("实际回写画布后重新迁移，不把编译输出追加进用户场�
     function Harness() {
         director = useCanvasDirector({ projectId, directorNodeId: node.id, directorScenes: [scene], nodesRef, connectionsRef: { current: [] }, getCanvasCenter: () => ({ x: 0, y: 0 }),
             setNodes: (value) => { nodesRef.current = typeof value === "function" ? value(nodesRef.current) : value; },
-            setConnections: () => {}, setSelectedNodeIds: () => {}, setSelectedConnectionId: () => {}, setDirectorNodeId: () => {}, updateProject: useCanvasStore.getState().updateProject,
+            setConnections: () => {}, setDirectorNodeId: () => {}, updateProject: useCanvasStore.getState().updateProject,
         });
         return null;
     }

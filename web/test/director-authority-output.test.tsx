@@ -56,8 +56,6 @@ function mountDirector(projectId: string, node: CanvasNodeData, scene: ReturnTyp
             getCanvasCenter: () => ({ x: 0, y: 0 }),
             setNodes: (value) => { nodesRef.current = typeof value === "function" ? value(nodesRef.current) : value; },
             setConnections: () => {},
-            setSelectedNodeIds: () => {},
-            setSelectedConnectionId: () => {},
             setDirectorNodeId: () => {},
             updateProject: useCanvasStore.getState().updateProject,
         });

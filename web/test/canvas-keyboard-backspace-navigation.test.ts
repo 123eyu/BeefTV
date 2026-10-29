@@ -43,12 +43,10 @@ function mountHook() {
     try {
         const noop = () => undefined;
         useCanvasKeyboard({
+            projectId: "canvas",
             nodesRef: { current: [] },
             selectedNodeIdsRef: { current: new Set(["n1"]) },
             selectedConnectionId: null,
-            setSelectedNodeIds: noop,
-            setSelectedConnectionId: noop,
-            setContextMenu: noop,
             setShortcutRequestNonce: noop,
             setInfoNodeId: noop,
             setCropNodeId: noop,

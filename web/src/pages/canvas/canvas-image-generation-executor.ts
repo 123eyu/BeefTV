@@ -22,6 +22,7 @@ import type { GenerationTask } from "@/services/api/task-center";
 import type { CanvasGenerationExecution } from "./canvas-generation-executor-types";
 import { canvasGenerationFailureMetadata, canvasImagePendingResultMessage } from "./canvas-generation-failure";
 import { canvasNodeHasPendingOutcomeResult, readNodeTaskOutcome } from "@/lib/task-outcome";
+import { canvasPageUiStore } from "@/stores/canvas/use-canvas-page-ui-store";
 
 const NODE_STATUS_LOADING = "loading" as const;
 const NODE_STATUS_SUCCESS = "success" as const;
@@ -43,9 +44,6 @@ export async function executeImageGeneration({
     nodesRef,
     setNodes,
     setConnections,
-    setSelectedNodeIds,
-    setSelectedConnectionId,
-    setDialogNodeId,
     startGenerationRequest,
     finishGenerationRequest,
     bindGenerationTask,
@@ -215,9 +213,9 @@ export async function executeImageGeneration({
     nodesRef.current = nextNodes;
     setNodes(nextNodes);
     setConnections(nextConnections);
-    setSelectedNodeIds(new Set([nodeId]));
-    setSelectedConnectionId(null);
-    setDialogNodeId(nodeId);
+    canvasPageUiStore(projectId).getState().setSelectedNodeIds(new Set([nodeId]));
+    canvasPageUiStore(projectId).getState().setSelectedConnectionId(null);
+    canvasPageUiStore(projectId).getState().setDialogNodeId(nodeId);
 
     targetIds.forEach((targetId) => startGenerationRequest(targetId, nodeId, nodeId, controller));
     if (count > 1) startGenerationRequest(rootId, nodeId, nodeId, controller);

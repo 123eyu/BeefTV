@@ -1,16 +1,15 @@
 import { useEffect, type Dispatch, type SetStateAction } from "react";
 
 import { isTextEditableTarget } from "@/lib/backspace-navigation-guard";
-import type { CanvasNodeData, ContextMenuState } from "@/types/canvas";
+import type { CanvasNodeData } from "@/types/canvas";
+import { canvasPageUiStore } from "@/stores/canvas/use-canvas-page-ui-store";
 
 type UseCanvasKeyboardOptions = {
+    projectId: string;
     enabled?: boolean;
     nodesRef: { current: CanvasNodeData[] };
     selectedNodeIdsRef: { current: Set<string> };
     selectedConnectionId: string | null;
-    setSelectedNodeIds: Dispatch<SetStateAction<Set<string>>>;
-    setSelectedConnectionId: Dispatch<SetStateAction<string | null>>;
-    setContextMenu: Dispatch<SetStateAction<ContextMenuState | null>>;
     setShortcutRequestNonce: Dispatch<SetStateAction<number>>;
     setInfoNodeId: Dispatch<SetStateAction<string | null>>;
     setCropNodeId: Dispatch<SetStateAction<string | null>>;
@@ -53,13 +52,11 @@ export function hasCanvasTextSelection(selection: TextSelectionLike | null | und
 }
 
 export function useCanvasKeyboard({
+    projectId,
     enabled = true,
     nodesRef,
     selectedNodeIdsRef,
     selectedConnectionId,
-    setSelectedNodeIds,
-    setSelectedConnectionId,
-    setContextMenu,
     setShortcutRequestNonce,
     setInfoNodeId,
     setCropNodeId,
@@ -186,9 +183,9 @@ export function useCanvasKeyboard({
             }
             if (isModifierShortcut && !event.altKey && key === "a") {
                 event.preventDefault();
-                setSelectedNodeIds(new Set(nodesRef.current.map((node) => node.id)));
-                setSelectedConnectionId(null);
-                setContextMenu(null);
+                canvasPageUiStore(projectId).getState().setSelectedNodeIds(new Set(nodesRef.current.map((node) => node.id)));
+                canvasPageUiStore(projectId).getState().setSelectedConnectionId(null);
+                canvasPageUiStore(projectId).getState().setContextMenu(null);
                 cancelSelectionBox();
                 return;
             }
@@ -260,5 +257,5 @@ export function useCanvasKeyboard({
             window.removeEventListener("keydown", handleKeyDown, true);
             window.removeEventListener("paste", handlePaste, true);
         };
-    }, [enabled, autoArrangeCanvasNodes, beginBatchConnection, cancelSelectionBox, copySelectedNodes, deleteConnection, deleteNodes, deselectCanvas, exitFocusMode, fitCanvasContent, fitCanvasSelection, focusMode, nodesRef, onOpenSearch, onToggleAssistant, pasteCopiedNodes, pasteSystemClipboard, redoCanvas, restoreCopiedNodesFromText, saveCanvasProject, selectedConnectionId, selectedNodeIdsRef, setAnnotationNodeId, setContextMenu, setCropNodeId, setInfoNodeId, setMaskEditNodeId, setSelectedConnectionId, setSelectedNodeIds, setShortcutRequestNonce, shouldPreferCopiedNodes, toggleFocusMode, undoCanvas, zoomCanvasIn, zoomCanvasOut, zoomToActualSize]);
+    }, [projectId, enabled, autoArrangeCanvasNodes, beginBatchConnection, cancelSelectionBox, copySelectedNodes, deleteConnection, deleteNodes, deselectCanvas, exitFocusMode, fitCanvasContent, fitCanvasSelection, focusMode, nodesRef, onOpenSearch, onToggleAssistant, pasteCopiedNodes, pasteSystemClipboard, redoCanvas, restoreCopiedNodesFromText, saveCanvasProject, selectedConnectionId, selectedNodeIdsRef, setAnnotationNodeId, setCropNodeId, setInfoNodeId, setMaskEditNodeId, setShortcutRequestNonce, shouldPreferCopiedNodes, toggleFocusMode, undoCanvas, zoomCanvasIn, zoomCanvasOut, zoomToActualSize]);
 }

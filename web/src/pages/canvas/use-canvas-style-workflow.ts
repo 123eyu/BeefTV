@@ -8,6 +8,7 @@ import { createStyleProfileSnapshot, serializeStyleProfile } from "@/lib/canvas/
 import { updateProject as updateDomainProject } from "@/services/api/projects";
 import { CanvasNodeType, type CanvasNodeData, type CanvasNodeMetadata, type Position } from "@/types/canvas";
 import { getActiveUserScope } from "@/lib/user-scope";
+import { canvasPageUiStore } from "@/stores/canvas/use-canvas-page-ui-store";
 
 type UseCanvasStyleWorkflowOptions = {
     canvasId: string;
@@ -16,13 +17,10 @@ type UseCanvasStyleWorkflowOptions = {
     selectedNodeIdsRef: { current: Set<string> };
     getCanvasCenter: () => Position;
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
-    setSelectedNodeIds: Dispatch<SetStateAction<Set<string>>>;
-    setSelectedConnectionId: Dispatch<SetStateAction<string | null>>;
-    setDialogNodeId: Dispatch<SetStateAction<string | null>>;
     setStylePickerOpen: Dispatch<SetStateAction<boolean>>;
 };
 
-export function useCanvasStyleWorkflow({ canvasId, domainProjectId, nodesRef, selectedNodeIdsRef, getCanvasCenter, setNodes, setSelectedNodeIds, setSelectedConnectionId, setDialogNodeId, setStylePickerOpen }: UseCanvasStyleWorkflowOptions) {
+export function useCanvasStyleWorkflow({ canvasId, domainProjectId, nodesRef, selectedNodeIdsRef, getCanvasCenter, setNodes, setStylePickerOpen }: UseCanvasStyleWorkflowOptions) {
     const { message } = App.useApp();
     const queryClient = useQueryClient();
     const liveContext = useRef({ canvasId, domainProjectId, mounted: true });
@@ -58,13 +56,13 @@ export function useCanvasStyleWorkflow({ canvasId, domainProjectId, nodesRef, se
             setNodes(nodesRef.current);
             const selection = new Set([styleNode.id]);
             selectedNodeIdsRef.current = selection;
-            setSelectedNodeIds(selection);
-            setSelectedConnectionId(null);
-            setDialogNodeId(null);
+            canvasPageUiStore(canvasId).getState().setSelectedNodeIds(selection);
+            canvasPageUiStore(canvasId).getState().setSelectedConnectionId(null);
+            canvasPageUiStore(canvasId).getState().setDialogNodeId(null);
             setStylePickerOpen(false);
             message.success(`已应用“${preset.title}”画风`);
         },
-        [getCanvasCenter, message, nodesRef, selectedNodeIdsRef, setDialogNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds, setStylePickerOpen],
+        [getCanvasCenter, message, nodesRef, selectedNodeIdsRef, setNodes, setStylePickerOpen],
     );
 
     const persistStyleMutation = useMutation({

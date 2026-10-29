@@ -23,7 +23,7 @@ test("cover write preserves the old node until the canvas setter stamps its revi
                 const next = typeof value === "function" ? value(nodesRef.current) : value;
                 nodesRef.current = stampCanvasNodeChanges(nodesRef.current, next, after);
             },
-            setConnections: () => {}, setSelectedNodeIds: () => {}, setSelectedConnectionId: () => {}, setDirectorNodeId: () => {}, updateProject: () => {},
+            setConnections: () => {}, setDirectorNodeId: () => {}, updateProject: () => {},
         });
         return null;
     }

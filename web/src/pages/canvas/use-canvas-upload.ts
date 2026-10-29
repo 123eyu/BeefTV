@@ -26,11 +26,12 @@ import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { getProjectUnit } from "@/services/api/projects";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import { useAssetStore, type ImageAsset } from "@/stores/use-asset-store";
-import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type ContextMenuState, type Position } from "@/types/canvas";
+import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type Position } from "@/types/canvas";
 import type { TimelineDirectMedia } from "@/types/timeline";
 import type { CanvasUploadStatus } from "./canvas-project-feedback";
 import { runOwnedCanvasCreatedNodes, useCanvasOwnerLifetime } from "./canvas-owner-epoch";
 import { createOwnedCanvasUploadGuard, persistOwnedCanvasUploadNode, shouldSuppressOwnedCanvasCallback } from "./canvas-upload-ownership";
+import { canvasPageUiStore } from "@/stores/canvas/use-canvas-page-ui-store";
 
 type UseCanvasUploadOptions = {
     canvasId: string;
@@ -42,10 +43,6 @@ type UseCanvasUploadOptions = {
     screenToCanvas: (clientX: number, clientY: number) => Position;
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
     setConnections: Dispatch<SetStateAction<CanvasConnection[]>>;
-    setSelectedNodeIds: Dispatch<SetStateAction<Set<string>>>;
-    setSelectedConnectionId: Dispatch<SetStateAction<string | null>>;
-    setContextMenu: Dispatch<SetStateAction<ContextMenuState | null>>;
-    setDialogNodeId: Dispatch<SetStateAction<string | null>>;
 };
 
 export type StartCanvasUploadStatus = (title: string, detail: string, total?: number) => {
@@ -76,10 +73,6 @@ export function useCanvasUpload({
     screenToCanvas,
     setNodes,
     setConnections,
-    setSelectedNodeIds,
-    setSelectedConnectionId,
-    setContextMenu,
-    setDialogNodeId,
 }: UseCanvasUploadOptions) {
     const { message } = App.useApp();
     const queryClient = useQueryClient();
@@ -137,10 +130,10 @@ export function useCanvasUpload({
     }, [canvasId, lifetime, mountedRef]);
 
     const selectInsertedNode = useCallback((nodeId: string, dialog: "open" | "close" | "preserve") => {
-        setSelectedNodeIds(new Set([nodeId]));
-        setSelectedConnectionId(null);
-        if (dialog !== "preserve") setDialogNodeId(dialog === "open" ? nodeId : null);
-    }, [setDialogNodeId, setSelectedConnectionId, setSelectedNodeIds]);
+        canvasPageUiStore(canvasId).getState().setSelectedNodeIds(new Set([nodeId]));
+        canvasPageUiStore(canvasId).getState().setSelectedConnectionId(null);
+        if (dialog !== "preserve") canvasPageUiStore(canvasId).getState().setDialogNodeId(dialog === "open" ? nodeId : null);
+    }, [canvasId, ]);
 
     const persistMediaNode = useCallback(async (node: CanvasNodeData, expectedScope?: CapturedUserScope, signal?: AbortSignal) => {
         const guard = createOwnedCanvasUploadGuard({
@@ -418,9 +411,9 @@ export function useCanvasUpload({
         };
         setNodes((current) => [...current, node]);
         selectInsertedNode(node.id, "open");
-        setContextMenu(null);
+        canvasPageUiStore(canvasId).getState().setContextMenu(null);
         return true;
-    }, [getCanvasCenter, selectInsertedNode, setContextMenu, setNodes]);
+    }, [canvasId, getCanvasCenter, selectInsertedNode, setNodes]);
 
     const handleProjectChapterInsert = useCallback(async (chapter: CanvasProjectChapterPayload, position?: Position) => {
         const guard = createOwnedCanvasUploadGuard({
@@ -457,9 +450,9 @@ export function useCanvasUpload({
         node.height = 280;
         setNodes((current) => [...current, node]);
         selectInsertedNode(node.id, "preserve");
-        setContextMenu(null);
+        canvasPageUiStore(canvasId).getState().setContextMenu(null);
         message.success(`已添加“${chapter.title}”`);
-    }, [canvasId, getCanvasCenter, lifetime, message, mountedRef, selectInsertedNode, setContextMenu, setNodes]);
+    }, [canvasId, getCanvasCenter, lifetime, message, mountedRef, selectInsertedNode, setNodes]);
 
     const handleUploadRequest = useCallback((nodeId?: string, position?: Position) => {
         uploadTargetRef.current = { nodeId, position };
@@ -533,9 +526,9 @@ export function useCanvasUpload({
             }
         }
         if (!current()) return false;
-        setSelectedNodeIds(new Set(createdIds));
-        setSelectedConnectionId(null);
-        setDialogNodeId(null);
+        canvasPageUiStore(canvasId).getState().setSelectedNodeIds(new Set(createdIds));
+        canvasPageUiStore(canvasId).getState().setSelectedConnectionId(null);
+        canvasPageUiStore(canvasId).getState().setDialogNodeId(null);
         const failedCount = supportedFiles.length - createdIds.length;
         if (uploadTarget?.referenceToNodeId) {
             if (linkedReferenceCount) message.success(`已添加并连接 ${linkedReferenceCount} 张参考图`);
@@ -544,7 +537,7 @@ export function useCanvasUpload({
         else if (failedCount) message.warning(`已添加 ${createdIds.length} 个文件，${failedCount} 个上传失败`);
         else message.success(`已添加 ${createdIds.length} 个文件到画布`);
         return true;
-    }, [canvasId, lifetime, connectionsRef, createFileNode, getCanvasCenter, message, mountedRef, nodesRef, setConnections, setDialogNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds]);
+    }, [canvasId, lifetime, connectionsRef, createFileNode, getCanvasCenter, message, mountedRef, nodesRef, setConnections, setNodes]);
 
     const handleImportUrl = useCallback(async (url: string,kind: "image" | "video" | "audio") => {
         if(!isReferenceHTTPSLink(url)) throw new Error("请填写不含账号密码的 HTTPS 素材网址");
@@ -1009,9 +1002,9 @@ export function useCanvasUpload({
                         nodesRef.current = next;
                         return next;
                     });
-                    setSelectedNodeIds(new Set(nodes.map((node) => node.id)));
-                    setSelectedConnectionId(null);
-                    setDialogNodeId(null);
+                    canvasPageUiStore(canvasId).getState().setSelectedNodeIds(new Set(nodes.map((node) => node.id)));
+                    canvasPageUiStore(canvasId).getState().setSelectedConnectionId(null);
+                    canvasPageUiStore(canvasId).getState().setDialogNodeId(null);
                 },
             });
             if (status !== "committed") return [];
@@ -1039,7 +1032,7 @@ export function useCanvasUpload({
             message.error(error instanceof Error ? error.message : failureMessage);
             throw error;
         }
-    }, [canvasId, createAssetPayloadNodes, lifetime, message, nodesRef, persistMediaNode, setDialogNodeId, setNodes, setSelectedNodeIds, setSelectedConnectionId]);
+    }, [canvasId, createAssetPayloadNodes, lifetime, message, nodesRef, persistMediaNode, setNodes]);
 
     const handleAssetsInsert = useCallback(async (payloads: InsertAssetPayload[], expectedScope?: CapturedUserScope): Promise<CanvasNodeData[]> => {
         const origin = assetInsertPositionRef.current || getCanvasCenter();

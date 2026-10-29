@@ -97,11 +97,6 @@ function Harness() {
         domainProjectId: "project-a",
         nodesRef,
         setNodes,
-        setSelectedNodeIds: () => {},
-        setSelectedConnectionId: () => {},
-        setDialogNodeId: () => {},
-        setToolbarNodeId: () => {},
-        setHoveredNodeId: () => {},
     });
 
     harnessWindow.__editorHarness!.switchABA = async () => {

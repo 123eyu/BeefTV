@@ -16,6 +16,7 @@ import type { AssetCategory } from "@/stores/use-asset-store";
 import { CanvasNodeType, type CanvasFolderStyle, type CanvasFolderTheme, type CanvasNodeData, type CanvasNodeMetadata, type Position } from "@/types/canvas";
 import { useCanvasOwnerLifetime } from "./canvas-owner-epoch";
 import { createOwnedCanvasUploadGuard, persistOwnedCanvasUploadNode } from "./canvas-upload-ownership";
+import { canvasPageUiStore } from "@/stores/canvas/use-canvas-page-ui-store";
 
 type UseCanvasNodeEditorOptions = {
     canvasId: string;
@@ -23,11 +24,6 @@ type UseCanvasNodeEditorOptions = {
     domainProjectId?: string;
     nodesRef: { current: CanvasNodeData[] };
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
-    setSelectedNodeIds: Dispatch<SetStateAction<Set<string>>>;
-    setSelectedConnectionId: Dispatch<SetStateAction<string | null>>;
-    setDialogNodeId: Dispatch<SetStateAction<string | null>>;
-    setToolbarNodeId: Dispatch<SetStateAction<string | null>>;
-    setHoveredNodeId: Dispatch<SetStateAction<string | null>>;
     /** 点开已关联项目素材的画框时，在画框右侧打开该文件夹。 */
     openProjectAssets?: (initialCategory: string, position: Position | undefined, scope: "canvas" | "timeline", initialFolderId: string) => void;
 };
@@ -38,11 +34,6 @@ export function useCanvasNodeEditor({
     domainProjectId,
     nodesRef,
     setNodes,
-    setSelectedNodeIds,
-    setSelectedConnectionId,
-    setDialogNodeId,
-    setToolbarNodeId,
-    setHoveredNodeId,
     openProjectAssets,
 }: UseCanvasNodeEditorOptions) {
     const { message } = App.useApp();
@@ -90,12 +81,12 @@ export function useCanvasNodeEditor({
                     : { ...node, width: folder ? FOLDER_COLLAPSED_WIDTH : FRAME_COLLAPSED_WIDTH, height: folder ? FOLDER_COLLAPSED_HEIGHT : FRAME_COLLAPSED_HEIGHT, metadata: { ...node.metadata, frame: { collapsed: true, expandedWidth: node.width, expandedHeight: node.height } } };
             }),
         );
-        setSelectedNodeIds(new Set([nodeId]));
-        setSelectedConnectionId(null);
-        setDialogNodeId((current) => (current && childIds.has(current) ? null : current));
-        setToolbarNodeId(null);
-        setHoveredNodeId(null);
-    }, [nodesRef, setDialogNodeId, setHoveredNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds, setToolbarNodeId]);
+        canvasPageUiStore(canvasId).getState().setSelectedNodeIds(new Set([nodeId]));
+        canvasPageUiStore(canvasId).getState().setSelectedConnectionId(null);
+        canvasPageUiStore(canvasId).getState().setDialogNodeId((current) => (current && childIds.has(current) ? null : current));
+        canvasPageUiStore(canvasId).getState().setToolbarNodeId(null);
+        canvasPageUiStore(canvasId).getState().setHoveredNodeId(null);
+    }, [canvasId, nodesRef, setNodes]);
 
     const handleFrameToggle = useCallback((nodeId: string) => {
         const node = nodesRef.current.find((item) => item.id === nodeId);

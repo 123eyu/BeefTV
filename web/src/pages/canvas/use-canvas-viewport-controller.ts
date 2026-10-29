@@ -7,10 +7,12 @@ import { canOpenCanvasNodePromptPanel, isCanvasMediaResultNode } from "@/lib/can
 import { getCanvasNodesBounds, viewportAtScale, viewportForBounds, type CanvasViewportSize } from "@/lib/canvas/canvas-viewport";
 import { sameCanvasViewport } from "@/lib/canvas/canvas-leafer-viewport";
 import { canvasGestureRenderPadding, CANVAS_VIRTUALIZATION_REFRESH_INTERVAL_MS, shouldCommitCanvasScaleDuringGesture, shouldRefreshCanvasVirtualization, type CanvasVirtualizationViewport } from "@/lib/canvas/canvas-viewport-render-sync";
-import { CanvasNodeType, type CanvasNodeData, type ContextMenuState, type Position, type ViewportTransform } from "@/types/canvas";
+import { CanvasNodeType, type CanvasNodeData, type Position, type ViewportTransform } from "@/types/canvas";
 import { useCanvasViewportTransition } from "./use-canvas-viewport-transition";
+import { canvasPageUiStore } from "@/stores/canvas/use-canvas-page-ui-store";
 
 type UseCanvasViewportControllerOptions = {
+    projectId: string;
     containerRef: { current: HTMLDivElement | null };
     size: CanvasViewportSize;
     viewport: ViewportTransform;
@@ -19,16 +21,12 @@ type UseCanvasViewportControllerOptions = {
     selectedNodeIdsRef: { current: Set<string> };
     setViewport: Dispatch<SetStateAction<ViewportTransform>>;
     setVirtualizationViewport: Dispatch<SetStateAction<ViewportTransform | null>>;
-    setSelectedNodeIds: Dispatch<SetStateAction<Set<string>>>;
-    setSelectedConnectionId: Dispatch<SetStateAction<string | null>>;
-    setContextMenu: Dispatch<SetStateAction<ContextMenuState | null>>;
-    setDialogNodeId: Dispatch<SetStateAction<string | null>>;
-    setToolbarNodeId: Dispatch<SetStateAction<string | null>>;
     /** True while a renderer culls per frame itself (overview LOD); previews then skip React refreshes. */
     virtualizationPausedRef?: { current: boolean };
 };
 
 export function useCanvasViewportController({
+    projectId,
     containerRef,
     size,
     viewport,
@@ -37,11 +35,6 @@ export function useCanvasViewportController({
     selectedNodeIdsRef,
     setViewport,
     setVirtualizationViewport,
-    setSelectedNodeIds,
-    setSelectedConnectionId,
-    setContextMenu,
-    setDialogNodeId,
-    setToolbarNodeId,
     virtualizationPausedRef,
 }: UseCanvasViewportControllerOptions) {
     const commitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -105,9 +98,9 @@ export function useCanvasViewportController({
         const bounds = getCanvasNodesBounds(targetNodes);
         if (!bounds) return false;
         transitionViewportTo(viewportForBounds(bounds, size, { padding: 88, maxScale }));
-        setContextMenu(null);
+        canvasPageUiStore(projectId).getState().setContextMenu(null);
         return true;
-    }, [setContextMenu, size, transitionViewportTo]);
+    }, [projectId,  size, transitionViewportTo]);
 
     const fitCanvasContent = useCallback(() => {
         const nodes = nodesRef.current;
@@ -122,20 +115,20 @@ export function useCanvasViewportController({
     const handleCanvasDoubleClick = useCallback((event: MouseEvent<HTMLDivElement>) => {
         event.preventDefault();
         event.stopPropagation();
-        setSelectedNodeIds(new Set());
-        setSelectedConnectionId(null);
-        setDialogNodeId(null);
-        setToolbarNodeId(null);
-        setContextMenu({ type: "canvas", x: event.clientX, y: event.clientY, position: screenToCanvas(event.clientX, event.clientY), createOpen: true });
-    }, [screenToCanvas, setContextMenu, setDialogNodeId, setSelectedConnectionId, setSelectedNodeIds, setToolbarNodeId]);
+        canvasPageUiStore(projectId).getState().setSelectedNodeIds(new Set());
+        canvasPageUiStore(projectId).getState().setSelectedConnectionId(null);
+        canvasPageUiStore(projectId).getState().setDialogNodeId(null);
+        canvasPageUiStore(projectId).getState().setToolbarNodeId(null);
+        canvasPageUiStore(projectId).getState().setContextMenu({ type: "canvas", x: event.clientX, y: event.clientY, position: screenToCanvas(event.clientX, event.clientY), createOpen: true });
+    }, [projectId, screenToCanvas]);
 
     const selectFocusedNode = useCallback((nodeId: string) => {
         const selection = new Set([nodeId]);
         selectedNodeIdsRef.current = selection;
-        setSelectedNodeIds(selection);
-        setSelectedConnectionId(null);
-        setContextMenu(null);
-    }, [selectedNodeIdsRef, setContextMenu, setSelectedConnectionId, setSelectedNodeIds]);
+        canvasPageUiStore(projectId).getState().setSelectedNodeIds(selection);
+        canvasPageUiStore(projectId).getState().setSelectedConnectionId(null);
+        canvasPageUiStore(projectId).getState().setContextMenu(null);
+    }, [projectId, selectedNodeIdsRef]);
 
     const focusCanvasImageNode = useCallback((nodeId: string) => {
         const node = nodesRef.current.find((item) => item.id === nodeId && item.type === CanvasNodeType.Image);
@@ -143,9 +136,9 @@ export function useCanvasViewportController({
         const scale = Math.min(1.25, Math.max(viewportRef.current.k, 0.78));
         transitionViewportTo({ x: size.width / 2 - (node.position.x + node.width / 2) * scale, y: size.height / 2 - (node.position.y + node.height / 2) * scale, k: scale });
         selectFocusedNode(node.id);
-        setDialogNodeId(null);
-        setToolbarNodeId(node.id);
-    }, [nodesRef, selectFocusedNode, setDialogNodeId, setToolbarNodeId, size.height, size.width, transitionViewportTo, viewportRef]);
+        canvasPageUiStore(projectId).getState().setDialogNodeId(null);
+        canvasPageUiStore(projectId).getState().setToolbarNodeId(node.id);
+    }, [projectId, nodesRef, selectFocusedNode, size.height, size.width, transitionViewportTo, viewportRef]);
 
     const focusCanvasNode = useCallback((nodeId: string) => {
         const node = nodesRef.current.find((item) => item.id === nodeId);
@@ -153,9 +146,9 @@ export function useCanvasViewportController({
         const scale = Math.min(1.18, Math.max(viewportRef.current.k, 0.72));
         transitionViewportTo({ x: size.width / 2 - (node.position.x + node.width / 2) * scale, y: size.height / 2 - (node.position.y + node.height / 2) * scale, k: scale });
         selectFocusedNode(node.id);
-        setDialogNodeId(canOpenCanvasNodePromptPanel(node) ? node.id : null);
-        setToolbarNodeId(isCanvasMediaResultNode(node) ? node.id : null);
-    }, [nodesRef, selectFocusedNode, setDialogNodeId, setToolbarNodeId, size.height, size.width, transitionViewportTo, viewportRef]);
+        canvasPageUiStore(projectId).getState().setDialogNodeId(canOpenCanvasNodePromptPanel(node) ? node.id : null);
+        canvasPageUiStore(projectId).getState().setToolbarNodeId(isCanvasMediaResultNode(node) ? node.id : null);
+    }, [projectId, nodesRef, selectFocusedNode, size.height, size.width, transitionViewportTo, viewportRef]);
 
     const setZoomScale = useCallback((scale: number) => {
         cancelViewportTransition();
@@ -163,8 +156,8 @@ export function useCanvasViewportController({
         previewViewport(next);
         if (commitTimerRef.current) clearTimeout(commitTimerRef.current);
         commitTimerRef.current = setTimeout(() => commitViewport(viewportRef.current), 120);
-        setContextMenu(null);
-    }, [cancelViewportTransition, commitViewport, previewViewport, setContextMenu, size, viewportRef]);
+        canvasPageUiStore(projectId).getState().setContextMenu(null);
+    }, [projectId, cancelViewportTransition, commitViewport, previewViewport, size, viewportRef]);
 
     const zoomCanvasIn = useCallback(() => setZoomScale(viewportRef.current.k + 0.1), [setZoomScale, viewportRef]);
     const zoomCanvasOut = useCallback(() => setZoomScale(viewportRef.current.k - 0.1), [setZoomScale, viewportRef]);
@@ -176,8 +169,8 @@ export function useCanvasViewportController({
     const handleViewportChange = useCallback((next: ViewportTransform) => {
         cancelViewportTransition();
         commitViewport(next);
-        setContextMenu(null);
-    }, [cancelViewportTransition, commitViewport, setContextMenu]);
+        canvasPageUiStore(projectId).getState().setContextMenu(null);
+    }, [projectId, cancelViewportTransition, commitViewport]);
 
     const handleViewportPreviewChange = useCallback((next: ViewportTransform) => {
         cancelViewportTransition();

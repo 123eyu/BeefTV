@@ -93,10 +93,10 @@ function Harness() {
     const [viewport, setViewport] = useState({ x: 0, y: 0, k: 1 });
     const [projectLoaded, setProjectLoaded] = useState(false);
     const connectionsRef = useRef(connections), chatSessionsRef = useRef(chatSessions), activeChatIdRef = useRef(activeChatId), viewportRef = useRef(viewport);
-    const history = useCanvasHistory({ projectLoaded, nodes, connections, chatSessions, activeChatId, canvasAppearance, backgroundMode, showImageInfo, setNodes, setConnections, setChatSessions, setActiveChatId, applyCanvasAppearance: setCanvasAppearance, setBackgroundMode, setShowImageInfo, setSelectedNodeIds: noop, setSelectedConnectionId: noop, setContextMenu: noop });
+    const history = useCanvasHistory({ projectId, projectLoaded, nodes, connections, chatSessions, activeChatId, canvasAppearance, backgroundMode, showImageInfo, setNodes, setConnections, setChatSessions, setActiveChatId, applyCanvasAppearance: setCanvasAppearance, setBackgroundMode, setShowImageInfo });
     useCanvasProjectLifecycle({ projectId, projectLoaded, nodes, connections, chatSessions, activeChatId, canvasAppearance, backgroundMode, showImageInfo, viewport, nodesRef, connectionsRef, chatSessionsRef, activeChatIdRef, viewportRef, historyPausedRef: history.historyPausedRef, setNodes, setConnections, setChatSessions, setActiveChatId, setCanvasAppearance, setBackgroundMode, setShowImageInfo, setViewport, setProjectLoaded, resetHistory: history.resetHistory, adoptExternalSnapshot: history.adoptExternalSnapshot, cleanupAssetImages: noop, cleanupCanvasFiles: noop });
     const generation = useCanvasGeneration({ projectId, projectLoaded: false, nodes, nodesRef, setNodes });
-    const generate = useCanvasGenerationExecutor({ projectId, addedSkills: [], assets: [], nodesRef, connectionsRef, setNodes, setConnections, setSelectedNodeIds: noop, setSelectedConnectionId: noop, setDialogNodeId: noop,
+    const generate = useCanvasGenerationExecutor({ projectId, addedSkills: [], assets: [], nodesRef, connectionsRef, setNodes, setConnections,
         setRunningNodeId: generation.setRunningNodeId, startGenerationRequest: generation.startGenerationRequest, finishGenerationRequest: generation.finishGenerationRequest, bindGenerationTask: generation.bindGenerationTask, applyGenerationTaskResult: generation.applyGenerationTaskResult });
     (harness as any).generateImage = async () => {
         // Hold the first write-back so the editor still has its pre-generation

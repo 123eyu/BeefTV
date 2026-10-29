@@ -29,6 +29,7 @@ import { DEFAULT_DRAWING_ENGINE } from "@/lib/canvas/canvas-drawing-engine";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { usePersonalAssetLibrary } from "@/hooks/use-personal-asset-library";
 import { flushCanvasStorePersistence, useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { canvasPageUiStore } from "@/stores/canvas/use-canvas-page-ui-store";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
 import { useCanvasThemeStore, useCanvasThemeScope } from "@/stores/canvas/use-canvas-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -275,25 +276,31 @@ function InfiniteCanvasPage() {
         setCommittedViewport(next);
     }, []);
     const [size, setSize] = useState({ width: 1200, height: 720 });
-    const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
     const workflowsRef = useRef<CanvasWorkflowsHandle>(null);
-    const [workflowLibraryOpen, setWorkflowLibraryOpen] = useState(false);
-    const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
-    // 选中项保存的是节点 id，切到另一个画布后这些 id 并不属于新画布：
+    // 选中、悬停和面板按「用户 + 画布」分开。切画布时这些 id 不属于新画布，
     // 不清空会同时污染选中高亮和创作助手请求的归属校验（后端按画布校验选中对象）。
-    useEffect(() => {
-        setSelectedNodeIds(new Set());
-        setSelectedConnectionId(null);
-        setWorkflowLibraryOpen(false);
-    }, [projectId, canvasStorageScope]);
-    const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+    const pageUi = canvasPageUiStore(projectId, canvasStorageScope);
+    const selectedNodeIds = pageUi((state) => state.selectedNodeIds);
+    const setSelectedNodeIds = pageUi((state) => state.setSelectedNodeIds);
+    const workflowLibraryOpen = pageUi((state) => state.workflowLibraryOpen);
+    const setWorkflowLibraryOpen = pageUi((state) => state.setWorkflowLibraryOpen);
+    const selectedConnectionId = pageUi((state) => state.selectedConnectionId);
+    const setSelectedConnectionId = pageUi((state) => state.setSelectedConnectionId);
+    const hoveredNodeId = pageUi((state) => state.hoveredNodeId);
+    const setHoveredNodeId = pageUi((state) => state.setHoveredNodeId);
     // Overview LOD: the node under the pointer is promoted to a full DOM card.
-    const [lodHoverNodeId, setLodHoverNodeId] = useState<string | null>(null);
-    const [activeMediaNodeId, setActiveMediaNodeId] = useState<string | null>(null);
+    const lodHoverNodeId = pageUi((state) => state.lodHoverNodeId);
+    const setLodHoverNodeId = pageUi((state) => state.setLodHoverNodeId);
+    const activeMediaNodeId = pageUi((state) => state.activeMediaNodeId);
+    const setActiveMediaNodeId = pageUi((state) => state.setActiveMediaNodeId);
+    useEffect(() => {
+        pageUi.getState().resetForProject();
+    }, [pageUi]);
     // While the overview canvas is active it culls every frame itself, so
     // camera previews need not re-render this page to refresh virtualization.
     const lodActiveRef = useRef(false);
-    const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+    const contextMenu = pageUi((state) => state.contextMenu);
+    const setContextMenu = pageUi((state) => state.setContextMenu);
     const [isMiniMapOpen, setIsMiniMapOpen] = useState(() => scopedLocalStorage.getItem("canvas:minimap") === "1");
     const [canvasAppearance, setCanvasAppearance] = useState<CanvasAppearance>({ mode: "follow" });
     const [backgroundMode, setBackgroundMode] = useState<CanvasBackgroundMode>(DEFAULT_CANVAS_BACKGROUND_MODE);
@@ -345,10 +352,14 @@ function InfiniteCanvasPage() {
         clearDeletedNodeIds,
         resetForClearCanvas,
     } = useCanvasProjectDialogs();
-    const [toolbarNodeId, setToolbarNodeId] = useState<string | null>(null);
-    const [nodeImageSettingsOpen, setNodeImageSettingsOpen] = useState(false);
-    const [dialogNodeId, setDialogNodeId] = useState<string | null>(null);
-    const [scriptScrollTopById, setScriptScrollTopById] = useState<Record<string, number>>({});
+    const toolbarNodeId = pageUi((state) => state.toolbarNodeId);
+    const setToolbarNodeId = pageUi((state) => state.setToolbarNodeId);
+    const nodeImageSettingsOpen = pageUi((state) => state.nodeImageSettingsOpen);
+    const setNodeImageSettingsOpen = pageUi((state) => state.setNodeImageSettingsOpen);
+    const dialogNodeId = pageUi((state) => state.dialogNodeId);
+    const setDialogNodeId = pageUi((state) => state.setDialogNodeId);
+    const scriptScrollTopById = pageUi((state) => state.scriptScrollTopById);
+    const setScriptScrollTopById = pageUi((state) => state.setScriptScrollTopById);
     const [shortcutRequestNonce, setShortcutRequestNonce] = useState(0);
     const [workspaceView, setWorkspaceView] = useState<"workflow" | "storyboard">("workflow");
 
@@ -398,6 +409,7 @@ function InfiniteCanvasPage() {
     );
 
     const { adoptExternalSnapshot, getHistoryCleanupContext, historyPausedRef, historyState, redoCanvas, resetHistory, undoCanvas } = useCanvasHistory({
+        projectId,
         projectLoaded,
         nodes,
         connections,
@@ -413,9 +425,6 @@ function InfiniteCanvasPage() {
         applyCanvasAppearance,
         setBackgroundMode,
         setShowImageInfo,
-        setSelectedNodeIds,
-        setSelectedConnectionId,
-        setContextMenu,
     });
 
     const cleanupCanvasFiles = useCallback(
@@ -469,8 +478,6 @@ function InfiniteCanvasPage() {
         viewportRef,
         setNodes,
         setConnections,
-        setSelectedNodeIds,
-        setDialogNodeId,
         setViewport,
         saveCanvasProject,
     });
@@ -661,6 +668,7 @@ function InfiniteCanvasPage() {
         zoomCanvasOut,
         zoomToActualSize,
     } = useCanvasViewportController({
+        projectId,
         containerRef,
         size,
         viewport,
@@ -669,11 +677,6 @@ function InfiniteCanvasPage() {
         selectedNodeIdsRef,
         setViewport,
         setVirtualizationViewport,
-        setSelectedNodeIds,
-        setSelectedConnectionId,
-        setContextMenu,
-        setDialogNodeId,
-        setToolbarNodeId,
         virtualizationPausedRef: lodActiveRef,
     });
 
@@ -765,9 +768,6 @@ function InfiniteCanvasPage() {
         connectionsRef,
         setNodes,
         setConnections,
-        setSelectedNodeIds,
-        setSelectedConnectionId,
-        setDialogNodeId,
         setGenerationHistoryOpen,
         getCanvasCenter,
     });
@@ -824,10 +824,6 @@ function InfiniteCanvasPage() {
         screenToCanvas,
         setNodes,
         setConnections,
-        setSelectedNodeIds,
-        setSelectedConnectionId,
-        setContextMenu,
-        setDialogNodeId,
     });
     const replaceCanvasNodeMedia = useCallback((node: CanvasNodeData) => handleUploadRequest(node.id), [handleUploadRequest]);
     const { linkedProjectQuery, refetchLinkedProject, archiveNodesToLinkedFolder, reloadCanvasNodeResource } = useCanvasResourceHandoff({
@@ -967,12 +963,6 @@ function InfiniteCanvasPage() {
         selectedNodeIdsRef,
         setNodes,
         setConnections,
-        setSelectedNodeIds,
-        setSelectedConnectionId,
-        setDialogNodeId,
-        setContextMenu,
-        setHoveredNodeId,
-        setToolbarNodeId,
         setRunningNodeId,
         startUploadStatus,
         startGenerationRequest,
@@ -982,7 +972,7 @@ function InfiniteCanvasPage() {
 
     const bindUpscaleTask = useCallback((task: GenerationTask, nodeId: string) => bindGenerationTask(nodeId, task), [bindGenerationTask]);
     const { startUpscaleBatch } = useCanvasUpscaleBatch({
-        projectId, nodesRef, connectionsRef, setNodes, setConnections, setSelectedNodeIds,
+        projectId, nodesRef, connectionsRef, setNodes, setConnections,
         prepareResource: prepareUpscaleResource, observeTask: observeAIUpscale, bindTask: bindUpscaleTask,
     });
     const createUpscaleProcessingNode = useCallback((source: CanvasNodeData) => {
@@ -1075,10 +1065,6 @@ function InfiniteCanvasPage() {
         getCanvasCenter,
         setNodes,
         setConnections,
-        setSelectedNodeIds,
-        setSelectedConnectionId,
-        setContextMenu,
-        setDialogNodeId,
         onNodesDeleted: handleNodesDeleted,
     });
 
@@ -1172,10 +1158,6 @@ function InfiniteCanvasPage() {
         screenToCanvas,
         setNodes,
         setConnections,
-        setSelectedNodeIds,
-        setSelectedConnectionId,
-        setContextMenu,
-        setDialogNodeId,
         setDrawingNodeId,
         onConnectedNodeCreated: keepConnectedNodeVisible,
         onReplaceReference: handleReplaceNodeReference,
@@ -1189,12 +1171,9 @@ function InfiniteCanvasPage() {
         handleNodeDragEnd,
         handleCanvasDeselect,
     } = useCanvasPointerSelectionChrome({
+        projectId,
         nodesRef,
         segmentRunningMode,
-        setContextMenu,
-        setHoveredNodeId,
-        setToolbarNodeId,
-        setDialogNodeId,
     });
 
     const handleSelectedNodeClick = useCallback(
@@ -1257,6 +1236,7 @@ function InfiniteCanvasPage() {
     );
 
     const { alignmentGuides, cancelSelectionBox, deselectCanvas, dragPreview, frameDropTargetId, nodeDropTargetId, handleCanvasMouseDown, handleNodeMouseDown, isNodeDragging, nodeDraggingRef, selectionBoundsElementRef, selectionBox } = useCanvasSelectionController({
+        projectId,
         containerRef,
         nodesRef,
         viewportRef,
@@ -1264,8 +1244,6 @@ function InfiniteCanvasPage() {
         historyPausedRef,
         screenToCanvas,
         setNodes,
-        setSelectedNodeIds,
-        setSelectedConnectionId,
         cancelPendingConnectionCreate,
         onCanvasSelectionStart: handleCanvasSelectionStart,
         onNodeInteractionStart: handleNodeInteractionStart,
@@ -1289,10 +1267,9 @@ function InfiniteCanvasPage() {
         handleCanvasNodeHoverStart,
         handleCanvasNodeHoverEnd,
     } = useCanvasNodeToolbarHover({
+        projectId,
         nodeDraggingRef,
         nodeImageSettingsOpen,
-        setHoveredNodeId,
-        setToolbarNodeId,
     });
 
     const {
@@ -1319,11 +1296,6 @@ function InfiniteCanvasPage() {
         domainProjectId: linkedProjectId,
         nodesRef,
         setNodes,
-        setSelectedNodeIds,
-        setSelectedConnectionId,
-        setDialogNodeId,
-        setToolbarNodeId,
-        setHoveredNodeId,
         openProjectAssets,
     });
 
@@ -1546,9 +1518,6 @@ function InfiniteCanvasPage() {
         selectedNodeIdsRef,
         getCanvasCenter,
         setNodes,
-        setSelectedNodeIds,
-        setSelectedConnectionId,
-        setDialogNodeId,
         setStylePickerOpen,
     });
 
@@ -1562,8 +1531,6 @@ function InfiniteCanvasPage() {
         getCanvasCenter,
         setNodes,
         setConnections,
-        setSelectedNodeIds,
-        setSelectedConnectionId,
         setDirectorNodeId,
         updateProject,
     });
@@ -1603,6 +1570,7 @@ function InfiniteCanvasPage() {
         setGuideCollapsed: setShortDramaGuideCollapsed,
         skipGuide: skipShortDramaGuide,
     } = useCanvasShortDrama({
+        projectId,
         nodes,
         connections,
         nodesRef,
@@ -1611,8 +1579,6 @@ function InfiniteCanvasPage() {
         getCanvasCenter,
         setNodes,
         setConnections,
-        setSelectedNodeIds,
-        setSelectedConnectionId,
         setStylePickerOpen,
         fitCanvasSelection,
         focusCanvasNode,
@@ -1641,14 +1607,12 @@ function InfiniteCanvasPage() {
     }, [clearCanvasFiles, deselectCanvas, message, nodesRef, projectId, resetForClearCanvas, setEmotionNodeId]);
 
     useCanvasKeyboard({
+        projectId,
         enabled: projectLoaded && !versions.preview && !directorNodeId,
         onToggleAssistant: focusMode ? undefined : toggleAssistant,
         nodesRef,
         selectedNodeIdsRef,
         selectedConnectionId,
-        setSelectedNodeIds,
-        setSelectedConnectionId,
-        setContextMenu,
         setShortcutRequestNonce,
         setInfoNodeId,
         setCropNodeId,

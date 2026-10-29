@@ -18,6 +18,7 @@ import { captureUserScope, userScopeMatches, UserScopeAbandonedError } from "@/l
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type Position } from "@/types/canvas";
 import type { DirectorScene, DirectorSceneOutput } from "@/types/director";
+import { canvasPageUiStore } from "@/stores/canvas/use-canvas-page-ui-store";
 
 type UseCanvasDirectorOptions = {
     projectId: string;
@@ -29,8 +30,6 @@ type UseCanvasDirectorOptions = {
     getCanvasCenter: () => Position;
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
     setConnections: Dispatch<SetStateAction<CanvasConnection[]>>;
-    setSelectedNodeIds: Dispatch<SetStateAction<Set<string>>>;
-    setSelectedConnectionId: Dispatch<SetStateAction<string | null>>;
     setDirectorNodeId: Dispatch<SetStateAction<string | null>>;
     updateProject: (projectId: string, patch: { directorScenes: DirectorScene[] }) => void;
 };
@@ -55,8 +54,6 @@ export function useCanvasDirector({
     getCanvasCenter,
     setNodes,
     setConnections,
-    setSelectedNodeIds,
-    setSelectedConnectionId,
     setDirectorNodeId,
     updateProject,
 }: UseCanvasDirectorOptions) {
@@ -91,11 +88,11 @@ export function useCanvasDirector({
         const nextNodes = [...nodesRef.current, node];
         nodesRef.current = nextNodes;
         setNodes(nextNodes);
-        setSelectedNodeIds(new Set([node.id]));
-        setSelectedConnectionId(null);
+        canvasPageUiStore(projectId).getState().setSelectedNodeIds(new Set([node.id]));
+        canvasPageUiStore(projectId).getState().setSelectedConnectionId(null);
         updateProject(projectId, { directorScenes: upsertDirectorSceneById(currentDirectorScenes(projectId, directorScenes), scene) });
         setDirectorNodeId(node.id);
-    }, [directorScenes, getCanvasCenter, nodesRef, projectId, setDirectorNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds, updateProject]);
+    }, [directorScenes, getCanvasCenter, nodesRef, projectId, setDirectorNodeId, setNodes, updateProject]);
 
     const openDirectorWorkbench = useCallback((nodeId: string) => {
         const node = nodesRef.current.find((item) => item.id === nodeId);

@@ -57,7 +57,6 @@ function Harness() {
         connectionsRef,
         setNodes,
         setConnections: noop,
-        setSelectedNodeIds: noop,
         enqueueGenerationBatch: () => undefined,
         startGenerationRequest: generation.startGenerationRequest,
         finishGenerationRequest: generation.finishGenerationRequest,
