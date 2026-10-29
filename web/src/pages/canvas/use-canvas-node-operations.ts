@@ -204,9 +204,9 @@ export function useCanvasNodeOperations({
         if (workflowTitle) node.title = workflowTitle;
         commitNodes([...nodesRef.current, node]);
         selectNodes(new Set([node.id]));
-        const ui = canvasPageUiStore(projectId).getState();
-        if (type === CanvasNodeType.Script) ui.setDialogNodeId(null);
-        if (canOpenCanvasNodePromptPanel(node) && type !== CanvasNodeType.Text) ui.setDialogNodeId(node.id);
+        const { setDialogNodeId } = canvasPageUiStore(projectId).getState();
+        if (type === CanvasNodeType.Script) setDialogNodeId(null);
+        if (canOpenCanvasNodePromptPanel(node) && type !== CanvasNodeType.Text) setDialogNodeId(node.id);
     }, [commitNodes, defaultDrawingEngine, effectiveConfig, getCanvasCenter, message, nodesRef, projectId, runtimeStatuses, selectNodes, viewportScale]);
 
     const createFolder = useCallback((position?: Position, linked?: { id: string; projectId: string; title: string; style: CanvasFolderStyle; theme: CanvasFolderTheme; createdAt: string }) => {
