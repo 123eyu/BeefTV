@@ -8,6 +8,7 @@ import (
 
 	"infinite-canvas/backend/internal/app"
 	"infinite-canvas/backend/internal/beefapi"
+	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/workspace"
 
 	"github.com/gin-gonic/gin"
@@ -133,6 +134,34 @@ func RegisterWorkspaceRoutes(r *gin.RouterGroup, svc *app.Service) {
 			return
 		}
 		ok(c, gin.H{"saved": true})
+	})
+	r.POST("/workspace/model-config/capability", func(c *gin.Context) {
+		if _, err := workspaceForLocalRequest(c, svc); err != nil {
+			fail(c, http.StatusUnauthorized, err)
+			return
+		}
+		body, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, 512<<10))
+		if err != nil {
+			fail(c, http.StatusBadRequest, errors.New("模型能力草稿读取失败"))
+			return
+		}
+		var draft modelcatalog.ModelCapabilityDraft
+		if err := json.Unmarshal(body, &draft); err != nil {
+			fail(c, http.StatusBadRequest, errors.New("模型能力草稿格式错误"))
+			return
+		}
+		normalized, err := requestModelCapability(c).NormalizeModelCapabilityDraft(draft)
+		if err != nil {
+			fail(c, http.StatusBadRequest, err)
+			return
+		}
+		ok(c, gin.H{
+			"version":          normalized.Version,
+			"text":             normalized.Text,
+			"image":            normalized.Image,
+			"video":            normalized.Video,
+			"capabilityConfig": normalized,
+		})
 	})
 }
 

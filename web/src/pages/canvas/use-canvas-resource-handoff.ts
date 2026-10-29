@@ -11,7 +11,8 @@ import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
 import { isUserScopeAbandonedError } from "@/lib/user-scope-guard";
 import { createStyleProfileSnapshot, resolveStyleProfile, serializeStyleProfile } from "@/lib/canvas/style-profile";
 import { getProject } from "@/services/api/projects";
-import { queryGenerationTask, retryGenerationTask, type GenerationTask } from "@/services/api/task-center";
+import { canReloadCanvasNodeResource, readTaskOutcome } from "@/lib/task-outcome";
+import { queryGenerationTask, recoverTask, type GenerationTask } from "@/services/api/task-center";
 import { loadAssetsForUse } from "@/services/local-workspace-sync";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
@@ -296,7 +297,7 @@ export function useCanvasResourceHandoff({
     const reloadCanvasNodeResource = useCallback(
         async (node: CanvasNodeData) => {
             const taskId = node.metadata?.taskId;
-            if (!taskId || !node.metadata?.resourceReloadAvailable) return;
+            if (!taskId || !canReloadCanvasNodeResource(node)) return;
             const owner = lifetime.capture(projectId);
             const targetNodeId = node.id;
             // 继续取回登记为画布上的进行中请求：切换画布、同一节点上发起新请求时随之取消。
@@ -305,23 +306,38 @@ export function useCanvasResourceHandoff({
             // 继续取回只等待并绑定原任务已生成的结果，不会重新提交生成。
             // 等待期间节点显示取回进度；失败后仍保留「继续取回」。
             setNodes((current) =>
-                current.map((item) => (item.id === targetNodeId ? { ...item, metadata: { ...item.metadata, status: "loading", errorDetails: undefined, generationErrorCode: undefined, resourceReloadAvailable: undefined } } : item)),
+                current.map((item) => (item.id === targetNodeId ? { ...item, metadata: { ...item.metadata, status: "loading", errorDetails: undefined, generationErrorCode: undefined, taskOutcome: undefined } } : item)),
             );
             try {
                 let task = await queryGenerationTask(taskId, { signal: controller.signal });
                 if (!isCurrent()) return;
-                if (task.status !== "succeeded") throw new Error("原生成任务尚未成功，暂时无法取回结果");
-                if (task.stage === "delivery_paused" || task.stage === "delivery_timed_out") {
-                    task = await retryGenerationTask(taskId);
+                if (task.status !== "succeeded" || task.stage === "delivery_paused" || task.stage === "delivery_timed_out" || readTaskOutcome(task)?.phase === "retrievable") {
+                    task = await recoverTask(taskId, { signal: controller.signal });
                     if (!isCurrent()) return;
                 }
+                if (task.status !== "succeeded") throw new Error("原生成任务尚未成功，暂时无法取回结果");
                 await applyGenerationTaskResult(targetNodeId, task, () => !controller.signal.aborted);
             } catch (error) {
                 if (!isCurrent()) return;
                 if (isUserScopeAbandonedError(error) || (error instanceof Error && error.name === "AbortError")) return;
                 const failure = canvasGenerationFailureMetadata(error, { prompt: node.metadata?.prompt || "" });
                 setNodes((current) =>
-                    current.map((item) => (item.id === targetNodeId ? { ...item, metadata: { ...item.metadata, status: "error", ...failure, resourceReloadAvailable: failure.generationErrorCode !== "result_target_unavailable" } } : item)),
+                    current.map((item) =>
+                        item.id === targetNodeId
+                            ? {
+                                  ...item,
+                                  metadata: {
+                                      ...item.metadata,
+                                      status: "error",
+                                      ...failure,
+                                      taskOutcome:
+                                          failure.generationErrorCode === "result_target_unavailable"
+                                              ? ({ phase: "failed", regenerate: "blocked", reason: "result_target_unavailable" } as const)
+                                              : ({ phase: "retrievable", regenerate: "blocked", reason: "delivery_pending" } as const),
+                                  },
+                              }
+                            : item,
+                    ),
                 );
                 message.error(failure.errorDetails || "继续取回失败，请稍后重试");
             } finally {

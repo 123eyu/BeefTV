@@ -7,7 +7,7 @@ import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceDuration, normalize
 import { isVolcengineArkVideoProtocol } from "@/lib/model-protocols";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { formatVideoResolutionLabel, isVideoResolutionMatch, normalizeVideoDuration, sortVideoResolutionOptions, videoDimensionsForRatioAndResolution, VIDEO_DURATION_MIN } from "@/lib/video-generation-options";
-import { isSeedance25Model, modelCapabilityConfigFor, normalizeVideoValue, resolveVideoRatioValue, resolveVideoResolutionValue, videoDurationOptions, type VideoCapabilityConfig } from "@/lib/model-capabilities";
+import { modelCapabilityConfigFor, normalizeVideoValue, resolveVideoRatioValue, resolveVideoResolutionValue, videoDurationOptions, videoSupportsTaskTypeConstraints, type VideoCapabilityConfig } from "@/lib/model-capabilities";
 import { modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
 const sizeOptions = [
@@ -148,7 +148,7 @@ function SeedanceVideoSettingsPanel({ config, profile, onConfigChange, theme, sh
         <ImageSettingsTheme theme={theme}>
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
                 {showTitle ? <div className="text-sm font-semibold">视频设置</div> : null}
-                {isSeedance25Model(model) ? (
+                {videoSupportsTaskTypeConstraints(profile) ? (
                     <p className="text-xs leading-relaxed" style={{ color: theme.node.muted }}>
                         首尾帧和延长模式的比例跟随素材；编辑模式还会跟随原视频时长。需要自由设置时，请选择参考生成。
                     </p>

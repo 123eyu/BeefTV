@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { durableLifecycleState, durableRetryReason, durableStreamEvents } from './durable-session-owner.mjs';
-import { createDurableTurnProjection, durableReasoningSegments } from './durable-turn-projection.mjs';
+import { createDurableTurnProjection, durableReasoningSegments, durableTurnReplyText } from './durable-turn-projection.mjs';
 
 const SECRET = 'sk-synthetic-upstream-secret';
 /** 供应商给的签名与不透明载荷：可以留在官方记录里，但绝不能进展示投影。 */
@@ -112,6 +112,15 @@ describe('Durable visible text projection', () => {
     projection.accept({ type: 'message_end', entry: entry(16, '继续处理完成') });
     expect(projection.text).toBe('工具前说明\n\n当前开头中段尾部\n\n继续处理完成');
     expect(projection.text).not.toContain('previous turn');
+    // 终态与重开历史共用同一纯投影：按条目身份去重，忽略无正文的工具终止步骤与报错条目。
+    expect(durableTurnReplyText([
+      entry(12, '工具前说明'),
+      entry(15, '当前开头中段尾部'),
+      entry(15, '当前开头中段尾部'),
+      entry(16, '继续处理完成'),
+      { id: 17, model: [{ role: 'assistant', content: [{ type: 'toolCall', id: 'p1', name: 'canvas_generation_propose', arguments: {} }] }] },
+      { id: 18, model: [{ role: 'assistant', stopReason: 'error', content: [{ type: 'text', text: '不该显示的报错残片' }] }] },
+    ])).toBe(projection.text);
   });
 });
 

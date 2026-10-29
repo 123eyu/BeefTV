@@ -15,6 +15,7 @@ import (
 	"infinite-canvas/backend/internal/eagle"
 	"infinite-canvas/backend/internal/localapp"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/modelcatalog"
 	localproject "infinite-canvas/backend/internal/project"
 	localtask "infinite-canvas/backend/internal/task"
 	"infinite-canvas/backend/internal/textreplay"
@@ -45,6 +46,7 @@ type VersionedProviderConfig interface {
 type RuntimeDependencies struct {
 	RequestCoordinator RequestCoordinator
 	ProviderConfig     ProviderConfig
+	ModelCapability    localapp.ModelCapabilityPort
 	Assets             localapp.AssetPort
 	Projects           localapp.ProjectPort
 	Tasks              localapp.TaskPort
@@ -77,6 +79,7 @@ type serviceRuntimeAdapter struct {
 	createTimelineRender        func(string, localtask.TimelineRenderCreateRequest) (*model.Task, error)
 	createTimelineTranscription func(string, localtask.TimelineTranscriptionCreateRequest) (*model.Task, error)
 	createDepthCapture          func(string, localtask.DepthCaptureCreateRequest) (*model.Task, error)
+	recoverTask                 func(context.Context, string, string) (*model.Task, error)
 }
 
 func newServiceRuntimeAdapter(value *app.Service) serviceRuntimeAdapter {
@@ -86,7 +89,7 @@ func newServiceRuntimeAdapter(value *app.Service) serviceRuntimeAdapter {
 		resources: value.Resources, uploadLocalResource: value.UploadLocalResource,
 		listProjects: value.ListProjects, tasksWithOptions: value.TasksWithOptions, createTask: value.CreateLocalTask,
 		createTimelineRender: value.CreateTimelineRenderTask, createTimelineTranscription: value.CreateTimelineTranscriptionTask,
-		createDepthCapture: value.CreateDepthCaptureTask,
+		createDepthCapture: value.CreateDepthCaptureTask, recoverTask: value.RecoverTask,
 	}
 }
 
@@ -138,6 +141,10 @@ func (a serviceRuntimeAdapter) CreateDepthCaptureTask(userID string, request loc
 	return a.createDepthCapture(userID, request)
 }
 
+func (a serviceRuntimeAdapter) RecoverTask(ctx context.Context, userID, id string) (*model.Task, error) {
+	return a.recoverTask(ctx, userID, id)
+}
+
 func requestAssetPort(c *gin.Context, fallback *app.Service) localapp.AssetPort {
 	if dependencies, ok := runtimeDependencies(c); ok && dependencies.Assets != nil {
 		return dependencies.Assets
@@ -171,6 +178,13 @@ func requestProviderConfig(c *gin.Context, fallback *app.Service) ProviderConfig
 		return dependencies.ProviderConfig
 	}
 	return newServiceRuntimeAdapter(fallback)
+}
+
+func requestModelCapability(c *gin.Context) localapp.ModelCapabilityPort {
+	if dependencies, ok := runtimeDependencies(c); ok && dependencies.ModelCapability != nil {
+		return dependencies.ModelCapability
+	}
+	return modelcatalog.NewCapabilityNormalizer()
 }
 
 func requestTextReplay(c *gin.Context, fallback *app.Service) textReplayAPI {

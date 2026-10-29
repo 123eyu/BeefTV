@@ -74,7 +74,7 @@ func applySeedanceDocumentedVideoPixelFloor(config TaskConfig, refs *VideoRefere
 	if !isSeedance2Family(config.InterfaceType, config.Model) {
 		return
 	}
-	if model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(config.InterfaceType)) || seedanceMaterialLibraryHost(config.BaseURL) {
+	if model.IsVolcengineArkVideoProtocol(model.ChannelInterfaceType(config.InterfaceType)) || seedanceMaterialLibraryHost(config.BaseURL) || strings.EqualFold(strings.TrimSpace(config.ChannelID), "beefapi") {
 		refs.MinVideoPixels = documentedSeedanceVideoMinPixels
 	}
 }
@@ -151,6 +151,63 @@ func tightenedVideoCapability(config TaskConfig, profile *VideoCapabilityConfig)
 	}
 	value := *profile
 	value.References = profile.References
+	if isSeedance2Family(config.InterfaceType, config.Model) {
+		defaults := overlayOfficialSeedance2References(VideoReferenceConfig{}, isSeedance25Model(config.Model))
+		if value.References.MinImageWidth <= 0 {
+			value.References.MinImageWidth = defaults.MinImageWidth
+		}
+		if value.References.MaxImageWidth <= 0 {
+			value.References.MaxImageWidth = defaults.MaxImageWidth
+		}
+		if value.References.MinImageHeight <= 0 {
+			value.References.MinImageHeight = defaults.MinImageHeight
+		}
+		if value.References.MaxImageHeight <= 0 {
+			value.References.MaxImageHeight = defaults.MaxImageHeight
+		}
+		if value.References.MinImageAspect <= 0 {
+			value.References.MinImageAspect = defaults.MinImageAspect
+		}
+		if value.References.MaxImageAspect <= 0 {
+			value.References.MaxImageAspect = defaults.MaxImageAspect
+		}
+		if value.References.MinVideoWidth <= 0 {
+			value.References.MinVideoWidth = defaults.MinVideoWidth
+		}
+		if value.References.MaxVideoWidth <= 0 {
+			value.References.MaxVideoWidth = defaults.MaxVideoWidth
+		}
+		if value.References.MinVideoHeight <= 0 {
+			value.References.MinVideoHeight = defaults.MinVideoHeight
+		}
+		if value.References.MaxVideoHeight <= 0 {
+			value.References.MaxVideoHeight = defaults.MaxVideoHeight
+		}
+		if value.References.MinVideoAspect <= 0 {
+			value.References.MinVideoAspect = defaults.MinVideoAspect
+		}
+		if value.References.MaxVideoAspect <= 0 {
+			value.References.MaxVideoAspect = defaults.MaxVideoAspect
+		}
+		if value.References.MinVideoPixels <= 0 {
+			value.References.MinVideoPixels = defaults.MinVideoPixels
+		}
+		if value.References.MaxVideoPixels <= 0 {
+			value.References.MaxVideoPixels = defaults.MaxVideoPixels
+		}
+		if value.References.MinVideoDuration <= 0 {
+			value.References.MinVideoDuration = defaults.MinVideoDuration
+		}
+		if value.References.MaxVideoTotalDuration <= 0 {
+			value.References.MaxVideoTotalDuration = defaults.MaxVideoTotalDuration
+		}
+		if value.References.MaxAudioTotalDuration <= 0 {
+			value.References.MaxAudioTotalDuration = defaults.MaxAudioTotalDuration
+		}
+		if isSeedance25Model(config.Model) {
+			value.TaskTypeConstraints = true
+		}
+	}
 	tightenSeedanceDocumentedRouteLimits(config, &value)
 	return &value
 }

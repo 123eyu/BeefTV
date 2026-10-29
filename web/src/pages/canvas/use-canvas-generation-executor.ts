@@ -33,7 +33,8 @@ import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/ty
 import { executeImageGeneration } from "./canvas-image-generation-executor";
 import { executeAudioGeneration, executeVideoGeneration } from "./canvas-media-generation-executors";
 import { executeTextGeneration } from "./canvas-text-generation-executor";
-import { canvasGenerationFailureMetadata, canvasGenerationRetryBlocked, canvasImageGenerationHasPendingResult, canvasImagePendingResultMessage } from "./canvas-generation-failure";
+import { canvasGenerationFailureMetadata, canvasImagePendingResultMessage } from "./canvas-generation-failure";
+import { canvasNodeHasPendingOutcomeResult, isNodeRegenerateBlocked, isNodeRegenerateConfirm, readNodeTaskOutcome, taskOutcomeCopy } from "@/lib/task-outcome";
 import { createReferenceLinkResolver } from "@/components/generation-reference-links";
 import { confirmCanvasGeneration, waitForCanvasPreparation } from "./canvas-generation-preflight";
 import { startOperation } from "@/stores/use-operation-progress";
@@ -178,7 +179,7 @@ export function useCanvasGenerationExecutor({
                             }
                             return;
                         }
-                        if (mode === "image" && canvasImageGenerationHasPendingResult(sourceNode, inputNodes)) {
+                        if (mode === "image" && canvasNodeHasPendingOutcomeResult(sourceNode, inputNodes)) {
                             diagnostic("generation_pending_result", "warning");
                             message.warning(canvasImagePendingResultMessage(sourceNode, inputNodes));
                             return;
@@ -329,10 +330,31 @@ export function useCanvasGenerationExecutor({
                             return;
                         }
                         const generationContext = { ...rawGenerationContext, prompt: effectivePrompt };
-                        if (canvasGenerationRetryBlocked(sourceNode?.metadata, { ...generationContext, mode })) {
+                        if (isNodeRegenerateBlocked(sourceNode?.metadata)) {
                             diagnostic("generation_retry_blocked", "warning");
-                            message.warning(sourceNode?.metadata?.errorDetails || "请先查看失败原因并调整输入，再重新生成");
+                            message.warning(sourceNode?.metadata?.errorDetails || taskOutcomeCopy(readNodeTaskOutcome(sourceNode?.metadata)).message);
                             return;
+                        }
+                        if (isNodeRegenerateConfirm(sourceNode?.metadata) && modal?.confirm) {
+                            const copy = taskOutcomeCopy(readNodeTaskOutcome(sourceNode?.metadata));
+                            stage = "duplicate_confirmation";
+                            diagnostic("generation_confirmation_waiting");
+                            const confirmed = await confirmCanvasGeneration(
+                                (callbacks) =>
+                                    modal.confirm({
+                                        title: copy.confirmTitle || "确认重新生成？",
+                                        content: copy.confirmContent || copy.message,
+                                        okText: "确认重新生成",
+                                        cancelText: "取消",
+                                        centered: true,
+                                        ...callbacks,
+                                    }),
+                                controller.signal,
+                            );
+                            if (!confirmed) {
+                                diagnostic("generation_confirmation_cancelled");
+                                return;
+                            }
                         }
                         if (mode === "audio" && generationContext.characterReferences.length) {
                             if (generationContext.characterReferences.length !== 1) {
@@ -419,7 +441,7 @@ export function useCanvasGenerationExecutor({
                                                   taskCreatedAt: new Date().toISOString(),
                                                   errorDetails: undefined,
                                                   generationErrorCode: undefined,
-                                                  resourceReloadAvailable: undefined,
+                                                  taskOutcome: undefined,
                                                   failedPromptFingerprint: undefined,
                                                   failedInputFingerprint: undefined,
                                               },
@@ -439,7 +461,7 @@ export function useCanvasGenerationExecutor({
                                     node.id === nodeId
                                         ? {
                                               ...node,
-                                              metadata: { ...node.metadata, ...canvasGenerationPromptMetadata(prompt, statusPrompt), status: NODE_STATUS_LOADING, errorDetails: undefined, generationErrorCode: undefined, resourceReloadAvailable: undefined, failedPromptFingerprint: undefined, failedInputFingerprint: undefined },
+                                              metadata: { ...node.metadata, ...canvasGenerationPromptMetadata(prompt, statusPrompt), status: NODE_STATUS_LOADING, errorDetails: undefined, generationErrorCode: undefined, taskOutcome: undefined, failedPromptFingerprint: undefined, failedInputFingerprint: undefined },
                                           }
                                         : node,
                                 ),
@@ -467,7 +489,11 @@ export function useCanvasGenerationExecutor({
                             taskContext: options?.context,
                             retryContext: options?.retryContext,
                             onSubmissionPlan: options?.onSubmissionPlan,
-                                clientOperationId: options?.clientOperationId || options?.retryContext?.clientOperationId || `canvas:${createClientId()}`,
+                                clientOperationId:
+                                    options?.clientOperationId ||
+                                    options?.retryContext?.clientOperationId ||
+                                    (sourceNode?.metadata?.taskClientOperationId && !sourceNode?.metadata?.taskId ? sourceNode.metadata.taskClientOperationId : undefined) ||
+                                    `canvas:${createClientId()}`,
                             setNodes,
                             setConnections,
                             setSelectedNodeIds,

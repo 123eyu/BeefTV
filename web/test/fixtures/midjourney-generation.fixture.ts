@@ -6,6 +6,7 @@ import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-s
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { CanvasGenerationDurableAckError } from "@/services/canvas-generation-errors";
 import { GenerationSubmissionUnknownError } from "@/services/api/generation-submission";
+import { readNodeTaskOutcome } from "@/lib/task-outcome";
 
 const original = { ...await import("@/lib/canvas/canvas-project-generation") };
 const { canvasGenerationTaskNodes } = await import("@/pages/canvas/canvas-generation-failure");
@@ -95,16 +96,16 @@ for (scenario of ["success", "bind-failed", "unknown", "cancel-after-accept", "c
     assert.deepEqual(children.map((node) => node.metadata!.taskOutputIndex), Array.from({ length: total }, (_, index) => index % 4));
     if (!scenario.includes("cancel")) assert.equal(new Set(children.map((node) => node.metadata!.taskClientOperationId)).size, total / 4);
     if (scenario === "unknown" || scenario === "cancel-before-accept") {
-        assert.ok(children.every((node) => node.metadata!.generationSubmissionState === "unknown"));
+        assert.ok(children.every((node) => readNodeTaskOutcome(node.metadata)?.phase === "retrievable"));
         assert.deepEqual(boundIndices, []);
     } else if (scenario.endsWith("after-accept")) {
-        assert.ok(children.slice(0,4).every((node) => node.metadata!.resourceReloadAvailable && String(node.metadata!.taskId).startsWith("paid-task-")));
+        assert.ok(children.slice(0,4).every((node) => readNodeTaskOutcome(node.metadata)?.phase === "retrievable" && String(node.metadata!.taskId).startsWith("paid-task-")));
         assert.deepEqual(boundIndices, []);
     } else {
         assert.deepEqual(boundIndices, Array.from({ length: total }, (_, index) => index % 4));
         assert.ok(children.every((node) => String(node.metadata!.taskId).startsWith("paid-task-")));
         assert.equal(children.filter((node) => node.metadata!.content).length, scenario === "success" ? total : total - total / 4);
-        if (scenario === "bind-failed") assert.equal(children[2]!.metadata!.resourceReloadAvailable, true);
+        if (scenario === "bind-failed") assert.equal(readNodeTaskOutcome(children[2]!.metadata)?.phase, "retrievable");
     }
     if (scenario !== "success") {
         await executeImageGeneration({ ...input, controller: new AbortController(), sourceNode: nodesRef.current.find((node) => node.id === source.id), canvasNodes: nodesRef.current });

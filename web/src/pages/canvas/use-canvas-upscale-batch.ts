@@ -240,7 +240,7 @@ export function useCanvasUpscaleBatch({ projectId, nodesRef, connectionsRef, set
                     bindTask?.(task, item.outputNodeId); observeTask(task, item.outputNodeId, scope);
                 } catch (cause) {
                     assertCurrent(); update(item, { status: "unknown", error: cause instanceof Error ? cause.message : "提交回执待确认" });
-                    patch(nodes => nodes.map(n => n.id === item.outputNodeId ? { ...n, metadata: { ...n.metadata, generationSubmissionState: "unknown", errorDetails: "提交状态待确认，请查询原任务，暂勿重复提交" } } : n));
+                    patch(nodes => nodes.map(n => n.id === item.outputNodeId ? { ...n, metadata: { ...n.metadata, taskOutcome: { phase: "retrievable", regenerate: "blocked", reason: "submission_unknown" }, errorDetails: "提交状态待确认，请查询原任务，暂勿重复提交" } } : n));
                 }
                 await save();
             }

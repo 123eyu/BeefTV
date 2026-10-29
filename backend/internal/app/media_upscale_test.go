@@ -73,7 +73,7 @@ func TestUpscaleConfigRequiresConnectedAccount(t *testing.T) {
 }
 
 func TestUpscaleRecoveryNeverResubmitsUnknownOrAcceptedWithoutReceipt(t *testing.T) {
-	for _, dispatch := range []string{"", "submission_unknown", "accepted"} {
+	for _, dispatch := range []string{"", "submission_unknown", "accepted", "not_sent", "rejected_no_job"} {
 		t.Run(dispatch, func(t *testing.T) {
 			s, db, _, _ := creationTestService(t)
 			task := model.Task{ID: "original", UserID: "user", Type: "canvas_video", Model: "topaz-proteus", Status: model.TaskStatusFailed}

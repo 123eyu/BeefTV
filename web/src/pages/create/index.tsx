@@ -724,7 +724,7 @@ export default function CreatePage() {
             boundTaskIds.add(task.id);
             activeGenerationTaskIdsRef.current.add(task.id);
             boundTasks.set(task.id, task);
-            updateOriginAssistant((item) => ({ ...item, generationStage: task.stage, generationOperation: task.operation, generationErrorCode: task.errorCode, taskIds: Array.from(new Set([...(item.taskIds || []), task.id])), clientOperationId: task.clientOperationId, retryOf: task.retryOf, attemptGroupId: task.attemptGroupId }));
+            updateOriginAssistant((item) => ({ ...item, taskOutcome: task.outcome, generationStage: task.stage, generationOperation: task.operation, generationErrorCode: task.errorCode, taskIds: Array.from(new Set([...(item.taskIds || []), task.id])), clientOperationId: task.clientOperationId, retryOf: task.retryOf, attemptGroupId: task.attemptGroupId }));
             if (abortRef.current === controller) {
                 abortRef.current = null;
                 setBusy(false);
@@ -879,8 +879,10 @@ export default function CreatePage() {
                 updateOriginAssistant((item) => ({ ...item, status: "cancelled", content: "已停止" }));
                 return;
             }
-            const message = generationErrorMessage(error);
-            updateOriginAssistant((item) => ({ ...item, status: "error", error: message, generationErrorCode: item.generationErrorCode || generationErrorCode(error), generationOperation: item.generationOperation || (mode === "video" ? videoOperation : mode), createdAt: assistantMessage.createdAt, content: "生成失败" }));
+            const taskErrorCode = Array.from(boundTasks.values()).find((task) => task.errorCode)?.errorCode;
+            const taskOutcome = Array.from(boundTasks.values()).find((task) => task.outcome)?.outcome;
+            const message = generationErrorMessage(taskErrorCode && error instanceof Error ? { code: taskErrorCode, message: error.message } : error);
+            updateOriginAssistant((item) => ({ ...item, status: "error", error: message, taskOutcome: taskOutcome ?? item.taskOutcome, generationErrorCode: item.generationErrorCode || taskErrorCode || generationErrorCode(error), generationOperation: item.generationOperation || (mode === "video" ? videoOperation : mode), createdAt: assistantMessage.createdAt, content: "生成失败" }));
         } finally {
             for (const taskId of boundTaskIds) activeGenerationTaskIdsRef.current.delete(taskId);
             requestLifecycle.release();

@@ -92,8 +92,8 @@ func (s *Service) CreateMediaUpscale(ctx context.Context, user string, request t
 	return s.CreateTask(user, CreateTaskRequest{ProjectID: request.ProjectID, Type: "canvas_" + input.Mode, Operation: "media.upscale.topaz", Prompt: "AI 超分", Model: input.Config.Model, Provider: "beefapi", Input: payload})
 }
 
-// Recover the accepted original gateway task, or retry only a proven unaccepted
-// command. Neither path creates a different local or provider operation ID.
+// Recover the accepted original gateway task. Never issue a paid retry or
+// create a different local or provider operation ID.
 func (s *Service) RecoverMediaUpscale(ctx context.Context, user, id string) (*model.Task, error) {
 	task, err := s.repo.TaskForUser(user, id)
 	if err != nil {
@@ -114,13 +114,12 @@ func (s *Service) RecoverMediaUpscale(ctx context.Context, user, id string) (*mo
 	if task.Status != model.TaskStatusFailed {
 		return taskForOutput(*task), nil
 	}
+	s.hydrateTaskProviderRequestID(task)
 	if task.ProviderRequestID == "" {
-		attempt, err := s.repo.LatestRouteAttempt(task.ID)
-		if err != nil || (attempt.DispatchState != "not_sent" && attempt.DispatchState != "rejected_no_job") {
-			return nil, BadAuthRequest("原超分提交状态尚未确认，请保留任务记录并联系支持查询，暂勿重复提交")
-		}
-		return s.RetryTask(user, id)
+		s.recordMissingVideoReceiptOutcome(task, user)
+		return nil, BadAuthRequest("原超分任务没有可恢复的上游回执，请根据任务结论重新生成")
 	}
+	_ = s.repo.ResetTaskRecoveryBackoff(user, id)
 	result, err := s.QueryFailedVideoTask(ctx, user, id)
 	if err != nil {
 		return nil, err

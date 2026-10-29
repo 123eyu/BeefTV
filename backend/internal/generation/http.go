@@ -415,6 +415,7 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 		return nil, "", err
 	}
 	defer resp.Body.Close()
+	observation.Headers = resp.Header.Clone()
 	observation.HTTPStatus = resp.StatusCode
 	observation.StatusCode = resp.StatusCode
 	observation.DeclaredResponseBytes = resp.ContentLength

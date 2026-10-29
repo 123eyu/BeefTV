@@ -205,6 +205,12 @@ func recordProviderRequest(service *Service, req *http.Request, startedAt time.T
 	if status == model.ApiCallStatusSucceeded && (requestKind == "create" || requestKind == "poll") && (call.Capability == "image" || call.Capability == "video") {
 		service.syncProviderTaskProgress(call.TaskID, responseBody)
 	}
+	if call.TaskID != "" && call.Capability == "video" && (requestKind == "create" || requestKind == "poll") && service.repo != nil {
+		settlement := generation.ExtractBeefAPIVideoSettlementBytes(responseBody)
+		if settlement.UsageState != nil || settlement.ReconcileDeadline != nil {
+			_ = service.repo.UpdateTaskBeefVideoSettlement(call.TaskID, settlement.UsageState, settlement.ReconcileDeadline)
+		}
+	}
 	apiFormat := "openai"
 	if req.Header.Get("x-goog-api-key") != "" {
 		apiFormat = "gemini"

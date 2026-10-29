@@ -1,7 +1,5 @@
 import { isLocalRuntimeMode } from "@/lib/runtime-mode";
-import { moderationErrorCopy, persistedModerationCopy } from "./moderation-error";
-import { vodImageErrorCopy } from "./vod-image-error";
-import { taskConstraintCopy, persistedTaskConstraintCopy } from "./task-constraint-error";
+import { moderationErrorCopy } from "./moderation-error";
 import { supportDiagnosticIdentity, type SupportDiagnosticContext } from "./support-diagnostics";
 
 export const CONTENT_MODERATION_ERROR_CODE = "sensitive_words_detected";
@@ -345,11 +343,20 @@ export function generationFailureMetadata(error: unknown, prompt: string, refere
 
 export function isContentModerationError(value: unknown) {
     if (!value) return false;
-    if (typeof value === "object" && value && "category" in value && isModerationCategory(String((value as { category?: unknown }).category || ""))) return true;
-    const explained = explainGenerationError(value);
-    if (explained.moderation) return true;
-    const text = value instanceof Error ? value.message : String(value);
-    return text.toLowerCase().includes(CONTENT_MODERATION_ERROR_CODE) || text.includes("内容审核未通过") || text.includes("内容安全审核");
+    if (typeof value === "object" && value) {
+        const record = value as { code?: unknown; category?: unknown };
+        if (typeof record.code === "string" && record.code.trim()) {
+            const code = record.code.trim();
+            if (isModerationCategory(code)) return true;
+            if (BACKEND_FAILURE_CATEGORIES.has(code)) return false;
+        }
+        if (typeof record.category === "string" && record.category.trim()) {
+            const category = record.category.trim();
+            if (isModerationCategory(category)) return true;
+            if (BACKEND_FAILURE_CATEGORIES.has(category)) return false;
+        }
+    }
+    return explainGenerationError(value).moderation;
 }
 
 export function shouldBlockAutomaticRetry(error: unknown, stage?: string) {
@@ -357,16 +364,14 @@ export function shouldBlockAutomaticRetry(error: unknown, stage?: string) {
     return explainGenerationError(error, { stage }).blockAutomaticRetry;
 }
 
-export function shouldBlockManualRetry(error: unknown, stage?: string) {
-    return explainGenerationError(error, { stage }).blockManualRetry;
-}
-
 export function unchangedModeratedPrompt(
     metadata: { errorDetails?: string; generationErrorCode?: string; failedPromptFingerprint?: string; failedInputFingerprint?: string } | undefined,
     prompt: string,
     references: Array<string | { id?: string; storageKey?: string; url?: string }> = [],
 ) {
-    const moderationFailure = isModerationCategory(metadata?.generationErrorCode || "") || isContentModerationError(metadata?.errorDetails);
+    const moderationFailure =
+        isModerationCategory(metadata?.generationErrorCode || "") ||
+        isContentModerationError(metadata?.generationErrorCode ? { code: metadata.generationErrorCode, message: metadata.errorDetails } : metadata?.errorDetails);
     if (!moderationFailure) return false;
     if (metadata?.failedInputFingerprint) return metadata.failedInputFingerprint === generationInputFingerprint(prompt, references);
     if (references.length) return false;
@@ -384,9 +389,14 @@ export function generationPromptFingerprint(value: string) {
     return `${normalized.length}:${(hash >>> 0).toString(36)}`;
 }
 
-export function generationInputFingerprint(prompt: string, references: Array<string | { id?: string; storageKey?: string; url?: string }> = []) {
+export function generationInputFingerprint(prompt: string, references: Array<string | { id?: string; storageKey?: string; url?: string; dataUrl?: string }> = []) {
     const referenceKeys = references
-        .map((item) => (typeof item === "string" ? item : [item.id, item.storageKey, item.url].filter(Boolean).join("|")))
+        .map((item) => {
+            if (typeof item === "string") return item;
+            if (item.storageKey) return item.storageKey;
+            if (item.url || item.dataUrl) return item.url || item.dataUrl || "";
+            return item.id || "";
+        })
         .map((item) => item.trim())
         .filter(Boolean)
         .sort();
@@ -495,10 +505,8 @@ function classifyUnknown(error: unknown, context: GenerationFailureContext): Cla
         if (["node_task_mismatch", "node_mismatch", "canvas_mismatch", "node_deleted"].includes(String(record.reason || ""))) {
             return { category: "result_target_unavailable", status: numericStatus(record.status), fromCode: true, retryable: false };
         }
-        if (typeof record.code === "string" && typeof record.message === "string") {
-            const vodCopy = vodImageErrorCopy(record.code, record.message);
-            if (vodCopy) return vodCopy;
-        }
+        const backendFailure = backendTaskFailure(record);
+        if (backendFailure) return backendFailure;
         if (record.code === "download_failed" || record.code === "result_apply_failed" || record.code === "result_target_unavailable") {
             return { category: record.code, fromCode: true, retryable: false };
         }
@@ -512,10 +520,6 @@ function classifyUnknown(error: unknown, context: GenerationFailureContext): Cla
             const classified = classifyHttp(status, data ?? record);
             if (classified.category !== "unknown" || status) return classified;
         }
-        if (record.code === "provider_unavailable" && typeof record.message === "string") {
-            const preparation = persistedReferencePreparation(record.message);
-            if (preparation) return preparation;
-        }
         const structured = classifyText(stringifyAllowlisted(record));
         if (structured.fromCode || structured.category !== "unknown") return structured;
         if (typeof record.reason === "string" && record.reason) {
@@ -527,6 +531,39 @@ function classifyUnknown(error: unknown, context: GenerationFailureContext): Cla
     if (error instanceof Error) return classifyText(error.message);
     if (typeof error === "string") return classifyText(error);
     return classifyText(providerPayloadMessage(error));
+}
+
+// 后端任务失败：code 是后端给出的失败类别（task.errorCode / 节点 taskErrorCode），
+// message 是后端按「原因。下一步。排查编号：…」拼好的文案。类别直接取 code，
+// 文案只按这个固定格式拆开，不再用文字猜类别。
+const BACKEND_FAILURE_CATEGORIES: ReadonlySet<string> = new Set(
+    GENERATION_ERROR_CATEGORIES.filter((category) => !["unknown", "canvas_conflict", "result_apply_failed", "result_target_unavailable"].includes(category)),
+);
+
+// 后端把这几类标为「结果未确认」；任务接口没有单独的字段，按类别判断。
+const BACKEND_UNCERTAIN_CATEGORIES: ReadonlySet<string> = new Set(["submission_uncertain", "download_failed", "timeout", "partial_success", "results_missing"]);
+
+function backendTaskFailure(record: Record<string, unknown>): Classified | undefined {
+    const category = record.code;
+    if (typeof category !== "string" || !BACKEND_FAILURE_CATEGORIES.has(category) || typeof record.message !== "string") return undefined;
+    const text = record.message.trim();
+    if (!text) return undefined;
+    // 回传给后端的排查编号会被 explainGenerationError 重新拼上，这里先拆下来。
+    const preparation = category === "provider_unavailable" ? persistedReferencePreparation(text) : undefined;
+    if (preparation) return preparation;
+    const debugMatch = text.match(/。排查编号：([^。]+)。?$/);
+    const debug = debugMatch?.[1] || "";
+    const [reason = "", ...action] = (debugMatch ? text.slice(0, debugMatch.index) : text).split("。").map((part) => part.trim()).filter(Boolean);
+    return {
+        category: category as GenerationErrorCategory,
+        reason: sanitizeProviderText(reason) || undefined,
+        action: sanitizeProviderText(action.join("。")) || undefined,
+        requestId: sanitizeDebugId(allowlistedString(record.request_id) || allowlistedString(record.requestId)) || sanitizeDebugId(debug.match(/(?:^| · )请求 ([A-Za-z0-9._:-]{6,127})$/)?.[1]),
+        taskId: sanitizeDebugId(allowlistedString(record.task_id) || allowlistedString(record.taskId)) || sanitizeDebugId(debug.match(/^任务 ([A-Za-z0-9._:-]{6,127})(?: · |$)/)?.[1]),
+        fromCode: true,
+        uncertain: BACKEND_UNCERTAIN_CATEGORIES.has(category),
+        retryable: retryableCategory(category as GenerationErrorCategory) && !BACKEND_UNCERTAIN_CATEGORIES.has(category),
+    };
 }
 
 function classifyHttp(status: number | undefined, body: unknown): Classified {
@@ -573,19 +610,11 @@ function classifyHttp(status: number | undefined, body: unknown): Classified {
 function classifyText(raw: string): Classified {
     const text = raw.trim();
     if (!text) return { category: "unknown", retryable: false };
-    const preparation = persistedReferencePreparation(text);
-    if (preparation) return preparation;
     if (text === LOCAL_TASK_ADMISSION_FAILURE.reason || text.startsWith(`${LOCAL_TASK_ADMISSION_FAILURE.reason}。`)) {
         return { category: "local_storage", ...LOCAL_TASK_ADMISSION_FAILURE, fromCode: true, retryable: false };
     }
     if (isCanvasSaveConflictText(text)) {
         return { category: "canvas_conflict", fromCode: true, retryable: false };
-    }
-    const taskCopy = persistedTaskConstraintCopy(text);
-    if (taskCopy) return { category: "invalid_params", ...taskCopy, requestId: sanitizeDebugId(text.match(/请求 ([A-Za-z0-9._:-]{6,127})/)?.[1]), taskId: sanitizeDebugId(text.match(/任务 ([A-Za-z0-9._:-]{6,127})/)?.[1]), retryable: false };
-    const moderationCopy = persistedModerationCopy(text);
-    if (moderationCopy) {
-        return { ...moderationCopy, requestId: sanitizeDebugId(text.match(/请求 ([A-Za-z0-9._:-]{6,127})/)?.[1]), taskId: sanitizeDebugId(text.match(/任务 ([A-Za-z0-9._:-]{6,127})/)?.[1]), retryable: false };
     }
     const durationCopy = referenceDurationCopy(text);
     if (durationCopy) {
@@ -617,8 +646,6 @@ function classifyText(raw: string): Classified {
     const storage = resourceStorageFailureMessage(text);
     if (storage) return { category: "input_inaccessible", reason: storage.replace(/。$/, ""), action: "", retryable: false };
     const fields = extractProviderFields(text);
-    const vodCopy = vodImageErrorCopy(fields.code, /^[{[]/.test(text) ? fields.message : text);
-    if (vodCopy) return { ...vodCopy, requestId: sanitizeDebugId(fields.requestId), taskId: sanitizeDebugId(fields.taskId) };
     // Inspect only the error message, never JSON request echoes or debug fields.
     const databaseMessage = fields.code || fields.type || fields.message || fields.status || /^[{[]/.test(text) ? fields.message : text;
     if (/(write local resource|生成内容写入资源存储失败|database or disk is full|本地磁盘空间不足)/i.test(databaseMessage) && /(no space left on device|not enough space on the disk|disk full|database or disk is full|本地磁盘空间不足)/i.test(databaseMessage)) return { category: "local_disk_full", fromCode: true, retryable: false };
@@ -630,8 +657,6 @@ function classifyText(raw: string): Classified {
         if (fromMessage) return specialize({ category: fromMessage, providerCode: sanitizeProviderCode(fields.code), requestId: sanitizeDebugId(fields.requestId), taskId: sanitizeDebugId(fields.taskId) }, fields);
     }
     if (/^[{[]/.test(text)) return { category: "unknown", providerCode: sanitizeProviderCode(fields.code), requestId: sanitizeDebugId(fields.requestId), taskId: sanitizeDebugId(fields.taskId), retryable: false };
-    const persisted = matchPersistedCategory(text);
-    if (persisted) return { category: persisted, uncertain: ["timeout", "download_failed", "submission_uncertain"].includes(persisted), retryable: false };
     if (isMalformedText(text)) return { category: "malformed_response", retryable: false };
     const fromFull = categoryFromProviderMessage(text);
     if (fromFull) return specialize({ category: fromFull }, { ...emptyFields(), message: text });
@@ -648,25 +673,10 @@ function classifyText(raw: string): Classified {
 function specialize(classified: Classified, fields: ExtractedFields): Classified {
     fields = { ...fields, message: sanitizeProviderText(fields.message) };
     classified.requestId ||= sanitizeDebugId(fields.message.match(/\brequest\s*id:\s*([A-Za-z0-9_-]{6,127})\b/i)?.[1]);
-    const taskConstraint = persistedTaskConstraintCopy(fields.message) || taskConstraintCopy(`${fields.code} ${fields.message}`);
-    if (taskConstraint && ["unknown", "invalid_params"].includes(classified.category))
-        return {
-            ...classified,
-            category: "invalid_params",
-            ...taskConstraint,
-            requestId: classified.requestId || sanitizeDebugId(fields.message.match(/请求 ([A-Za-z0-9._:-]{6,127})/)?.[1]),
-            taskId: classified.taskId || sanitizeDebugId(fields.message.match(/任务 ([A-Za-z0-9._:-]{6,127})/)?.[1]),
-            retryable: false,
-        };
     // Only broad wrappers may be refined by a more specific provider message.
     const genericCode =
         ["", "unknown", "failed", "badrequest", "api_error", "upstream_error", "upstream_rejected", "invalid_request", "invalid_request_error", "invalid_parameter", "invalidparameter", "invalid_argument"].includes(normalizeCode(fields.code)) ||
         /^\d{3}$/.test(fields.code);
-    const persistedCopy = persistedModerationCopy(fields.message);
-    if (persistedCopy && (classified.category === persistedCopy.category || (genericCode && ["unknown", "invalid_params"].includes(classified.category)))) {
-        const persisted = classifyText(fields.message);
-        return { ...classified, ...persisted, providerCode: classified.providerCode, requestId: classified.requestId || persisted.requestId, taskId: classified.taskId || persisted.taskId };
-    }
     if (genericCode && ["unknown", "invalid_params"].includes(classified.category)) {
         const refined = categoryFromProviderMessage(fields.message);
         if (refined) classified.category = refined;
@@ -716,7 +726,6 @@ function specialize(classified: Classified, fields: ExtractedFields): Classified
     if (classified.category === "input_too_large") {
         if (
             normalizeCode(fields.code) === "video_request_body_too_large" ||
-            fields.message.startsWith("整次请求的数据量超过接口上限") ||
             /(?:request\s+(?:body|entity|payload)|payload)\s+(?:is\s+)?too\s+large|(?:request|payload).{0,24}(?:exceeds?|larger than)/i.test(fields.message)
         ) {
             classified.reason = "整次请求的数据量超过接口上限";
@@ -749,8 +758,6 @@ function referenceDurationCopy(text: string): CategoryCopy | undefined {
     if (output) return { reason: `输出时长为 ${output[1]} 秒`, action: `当前模型只支持 ${output[2]}；${output[3]}` };
     const missing = text.match(/^第 (\d+) 段参考(音频|视频)的时长无法读取/);
     if (missing) return { reason: `第 ${missing[1]} 段参考${missing[2]}的时长无法读取`, action: "请重新导入素材后再提交" };
-    const persisted = text.match(/^参考素材时长不符合模型要求。请检查每段参考音频和视频，将不符合要求的素材调整为 (\d+(?:\.\d+)?)–(\d+(?:\.\d+)?) 秒/);
-    if (persisted) return { reason: "参考素材时长不符合模型要求", action: `请检查每段参考音频和视频，将不符合要求的素材调整为 ${persisted[1]}–${persisted[2]} 秒后重新提交` };
 }
 
 function referenceAudioCopy(text: string, invalidAudio = false): CategoryCopy | undefined {
@@ -761,10 +768,8 @@ function referenceAudioCopy(text: string, invalidAudio = false): CategoryCopy | 
     if (total) return { reason: `参考音频总时长为 ${total[1]} 秒`, action: `该模型最多支持 ${total[2]} 秒参考音频；请裁剪或减少参考音频后再提交` };
     const numbered = text.match(/^reference audio (\d+)(?::| requires| exceeds)/i);
     const label = numbered ? `第 ${numbered[1]} 段参考音频` : "参考音频";
-    const persisted = text.match(/^(第 \d+ 段参考音频|参考音频)(无法下载|的格式或时长无法读取|文件过大|不符合模型要求)。/);
     const issue =
-        persisted?.[2] ||
-        (invalidAudio || numbered
+        invalidAudio || numbered
             ? /15 MiB|byte limit|at most.*MiB/i.test(text)
                 ? "文件过大"
                 : /duration could not be measured|invalid.*audio|unsupported|readable audio track/i.test(text)
@@ -772,7 +777,7 @@ function referenceAudioCopy(text: string, invalidAudio = false): CategoryCopy | 
                   : /download|HTTPS URL|URL.*(?:policy|allowed)|redirect|readable within/i.test(text)
                     ? "无法下载"
                     : "不符合模型要求"
-            : "");
+            : "";
     if (!issue) return;
     const actions: Record<string, string> = {
         无法下载: "请重新上传音频，确认素材链接可公开访问后再提交",
@@ -780,7 +785,7 @@ function referenceAudioCopy(text: string, invalidAudio = false): CategoryCopy | 
         文件过大: "请压缩或更换音频，确保文件不超过模型的大小限制后再提交",
         不符合模型要求: "请检查参考音频的时长、格式和大小，调整后再提交",
     };
-    return { reason: `${persisted?.[1] || label}${issue}`, action: actions[issue] };
+    return { reason: `${label}${issue}`, action: actions[issue] };
 }
 
 function extractProviderFields(raw: string): ExtractedFields {
@@ -880,17 +885,9 @@ function referenceMediaConstraintCopy(text: string): CategoryCopy | undefined {
     if (measuredFps) return { reason: measuredFps[1], action: `请将参考视频重新导出为 ${measuredFps[2]}–${measuredFps[3]} FPS 后再提交` };
     const fps = text.match(/^(?:素材转换失败:\s*)?(?:frame rate|framerate|fps) must be between (\d+(?:\.\d+)?)\s*(?:fps)? and (\d+(?:\.\d+)?)[.\s]*$/i);
     if (fps) return { reason: "参考视频帧率不符合要求", action: `请将参考视频重新导出为 ${fps[1]}–${fps[2]} FPS 后再提交` };
-    if (text.startsWith("参考视频帧率不符合要求。请将参考视频重新导出为 ")) return { reason: text.split("。")[0], action: text.slice(text.indexOf("。") + 1) };
-    if (/^(?:(?:素材转换失败:\s*)?(?:unsupported (?:video |audio )?codec|(?:video |audio )?codec (?:is )?not supported)[.\s]*$|参考素材编码不受当前模型支持。)/i.test(text)) return { reason: "参考素材编码不受当前模型支持", action: "请将视频重新导出为常见的 H.264 MP4，音频重新导出为 MP3 或 WAV 后替换素材；只修改文件后缀无效" };
-    if (/^(?:asset (?:is )?(?:not ready|still processing)[.\s]*$|参考素材仍在处理中。)/i.test(text)) return { reason: "参考素材仍在处理中", action: "请在素材库确认处理完成后再生成，不要重复上传或反复提交" };
-    if (/^(?:asset (?:access denied|permission denied|forbidden)[.\s]*$|无权访问参考素材。)/i.test(text)) return { reason: "无权访问参考素材", action: "请使用上传该素材的账号与渠道，或重新上传原文件；检查素材权限，无需修改提示词" };
-    const pixelPersisted = text.match(/^(参考素材像素总量不符合模型要求)。((?:请将参考素材的宽×高调整到) \d+–\d+ 像素[^{}]*)$/);
-    if (pixelPersisted) return { reason: pixelPersisted[1], action: pixelPersisted[2] };
-    const videoPersisted = text.match(/^(第 \d+ 个参考视频(?:无法读取|格式或地址不支持|文件过大|尺寸为 \d+×\d+|时长为 \d+(?:\.\d+)? 秒|像素总量为 \d+（\d+×\d+）))[。]([^{}]+)$/);
-    if (videoPersisted) return { reason: videoPersisted[1], action: videoPersisted[2] };
-
-    const persisted = text.match(/^参考素材(宽度|高度|宽高比)不符合模型要求。请将(?:宽度|高度|宽高比)调整为 (\d+(?:\.\d+)?)–(\d+(?:\.\d+)?)( 像素| )后重新提交/);
-    if (persisted) return { reason: `参考素材${persisted[1]}不符合模型要求`, action: `请将${persisted[1]}调整为 ${persisted[2]}–${persisted[3]}${persisted[4]}后重新提交` };
+    if (/^(?:素材转换失败:\s*)?(?:unsupported (?:video |audio )?codec|(?:video |audio )?codec (?:is )?not supported)[.\s]*$/i.test(text)) return { reason: "参考素材编码不受当前模型支持", action: "请将视频重新导出为常见的 H.264 MP4，音频重新导出为 MP3 或 WAV 后替换素材；只修改文件后缀无效" };
+    if (/^asset (?:is )?(?:not ready|still processing)[.\s]*$/i.test(text)) return { reason: "参考素材仍在处理中", action: "请在素材库确认处理完成后再生成，不要重复上传或反复提交" };
+    if (/^asset (?:access denied|permission denied|forbidden)[.\s]*$/i.test(text)) return { reason: "无权访问参考素材", action: "请使用上传该素材的账号与渠道，或重新上传原文件；检查素材权限，无需修改提示词" };
     const single = text.match(/^(第 \d+ (?:张|个|段)参考(?:图|视频|音频)(?:宽度|高度|宽高比|时长)为 \d+(?:\.\d+)?(?: 像素| 秒)?)[，。]需要 ((?:至少|不超过) \d+(?:\.\d+)?(?: 像素| 秒)?)/);
     if (single) return { reason: single[1], action: `需要 ${single[2]}；${single[1].includes("时长") ? "请裁剪或更换这段素材后再提交" : "请调整尺寸或更换后再提交"}` };
     const size = text.match(/^第 (\d+) (张|个|段)参考(图|视频|音频)(宽度|高度)为 (\d+) 像素[，。]需要 (\d+)–(\d+) 像素/);
@@ -907,7 +904,7 @@ function referenceMediaConstraintCopy(text: string): CategoryCopy | undefined {
     if (videoBytes) return { reason: `第 ${videoBytes[1]} 个参考视频文件过大`, action: `请压缩至 ${videoBytes[2]}MB 以内或更换素材` };
     const videoSize = text.match(/^(第 \d+ 个参考视频尺寸为 \d+×\d+)，需要宽高均在 (\d+)–(\d+) 像素之间/);
     if (videoSize) return { reason: videoSize[1], action: `请将这段参考视频的宽和高均调整到 ${videoSize[2]}–${videoSize[3]} 像素` };
-    const pixelDetail = text.match(/^(第 \d+ (?:张|个|段)参考(?:图|视频|音频)像素总量为 \d+（\d+×\d+）)，需要 ([^；]+) 像素/);
+    const pixelDetail = text.match(/^(第 \d+ (?:张|个|段)参考(?:图|视频|音频)像素总量为 \d+（\d+×\d+）)[，。]需要 ([^；]+) 像素/);
     if (pixelDetail) return { reason: pixelDetail[1], action: `需要 ${pixelDetail[2]} 像素；请调整这份素材的尺寸或更换原文件，修改生成分辨率不会改变参考素材` };
     const unknownSize = text.match(/^(第 \d+ 个参考视频尺寸无法读取)/);
     if (unknownSize) return { reason: unknownSize[1], action: "请重新导出 MP4/MOV 后导入" };
@@ -933,17 +930,18 @@ function categoryFromProviderMessage(raw: string): GenerationErrorCategory | "" 
     const moderationCopy = moderationErrorCopy("", normalized);
     if (moderationCopy) return moderationCopy.category;
     if (containsContentSafety(normalized)) return moderationCategoryFromMessage(normalized);
+    if (normalized.startsWith("当前账号额度不足")) return "quota_user";
     if (normalized.includes("insufficient_quota") || ((normalized.includes("quota") || normalized.includes("balance") || normalized.includes("额度") || normalized.includes("余额") || normalized.includes("欠费")) && !normalized.includes("rate")))
         return normalized.includes("arrearage") || normalized.includes("billing_hard_limit") ? "quota_upstream" : "quota_unknown";
     if (normalized.includes("rate limit") || normalized.includes("too many requests") || normalized.includes("throttl") || normalized.includes("频繁")) return "throttled";
     if (normalized.includes("context length") || normalized.includes("too many tokens") || normalized.includes("max_tokens") || (normalized.includes("长度") && (normalized.includes("最大") || normalized.includes("超出")))) return "context_too_long";
-    if (normalized.includes("model_not_found") || normalized.includes("model not found") || normalized.includes("模型不存在") || normalized.includes("当前模型或接口不可用")) return "model_missing";
+    if (normalized.includes("model_not_found") || normalized.includes("model not found") || normalized.includes("模型不存在")) return "model_missing";
     if (normalized.includes("invalid api key") || normalized.includes("incorrect api key") || normalized.includes("authentication") || normalized.includes("unauthorized") || normalized.includes("鉴权失败")) return "auth";
     if (normalized.includes("permission") && (normalized.includes("denied") || normalized.includes("model") || normalized.includes("access"))) return "permission";
     if (normalized.includes("url error") || normalized.includes("failed to download") || normalized.includes("cannot fetch") || normalized.includes("invalid image url") || normalized.includes("无法读取")) return "input_inaccessible";
-    if (normalized.includes("too large") || normalized.includes("payload too large") || normalized.includes("过大") || normalized.startsWith("整次请求的数据量超过接口上限") || /(?:request|payload).{0,24}(?:exceeds?|larger than)/i.test(normalized))
+    if (normalized.includes("too large") || normalized.includes("payload too large") || normalized.includes("过大") || /(?:request|payload).{0,24}(?:exceeds?|larger than)/i.test(normalized))
         return "input_too_large";
-    if (normalized.includes("invalid") || normalized.includes("parameter") || normalized.includes("argument") || normalized.includes("请检查模型")) return "invalid_params";
+    if (normalized.includes("invalid") || normalized.includes("parameter") || normalized.includes("argument")) return "invalid_params";
     return "";
 }
 
@@ -953,23 +951,20 @@ function containsContentSafety(normalized: string) {
         normalized.includes("contentmoderationfailed") ||
         normalized.includes("invalidparameter.voilationcontent") ||
         normalized.includes("invalidparameter.violationcontent") ||
-        normalized.includes("上游内容安全策略") ||
         normalized.includes("sensitive_words_detected") ||
         normalized.includes("content policy") ||
         normalized.includes("content safety") ||
         normalized.includes("safety policy") ||
         normalized.includes("data inspection") ||
         normalized.includes("prohibited_content") ||
-        normalized.includes("内容安全审核") ||
-        normalized.includes("内容审核未通过") ||
         (normalized.includes("blocked by") && (normalized.includes("safety") || normalized.includes("policy") || normalized.includes("content"))) ||
         (normalized.includes("safety") && (normalized.includes("blocked") || normalized.includes("violat") || normalized.includes("filter")))
     );
 }
 
 function moderationCategoryFromMessage(normalized: string): GenerationErrorCategory {
-    if (/prompt\s+(?:or|and)\s+(?:reference|input)|提示词或参考/.test(normalized)) return "moderation_input";
-    if (normalized.includes("reference image") || normalized.includes("input image") || normalized.includes("参考图")) return "moderation_reference";
+    if (/prompt\s+(?:or|and)\s+(?:reference|input)/.test(normalized)) return "moderation_input";
+    if (normalized.includes("reference image") || normalized.includes("input image")) return "moderation_reference";
     if (normalized.includes("output") && (normalized.includes("image") || normalized.includes("video") || normalized.includes("result"))) return "moderation_output";
     return "moderation_input";
 }
@@ -1109,19 +1104,6 @@ function isCanvasSaveConflictText(text: string) {
         text.includes("画布有未处理的外部改动") ||
         text.startsWith(CATEGORY_COPY.canvas_conflict.reason)
     );
-}
-
-function matchPersistedCategory(text: string): GenerationErrorCategory | "" {
-    if (text.startsWith("当前账号额度不足")) return "quota_user";
-    for (const [category, copy] of Object.entries(CATEGORY_COPY) as Array<[GenerationErrorCategory, CategoryCopy]>) {
-        if (category === "unknown") continue;
-        if (text.startsWith(copy.reason)) return category;
-    }
-    if (text.includes("真人形象")) return "moderation_reference";
-    if (text.includes("不支持强制工具调用")) return "invalid_params";
-    if (text.startsWith("视频时长不符合模型要求")) return "invalid_params";
-    if (text.includes("可能仍在服务端执行") || text.includes("请勿立即重试")) return "timeout";
-    return "";
 }
 
 function containsInfrastructureDetails(value: string) {

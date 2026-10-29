@@ -12,6 +12,7 @@ import (
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/provider/workflow"
 	"infinite-canvas/backend/internal/repository"
+	localtask "infinite-canvas/backend/internal/task"
 )
 
 const providerTaskRecoveryLeaseDuration = 10 * time.Minute
@@ -79,6 +80,7 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	s.hydrateTaskProviderRequestID(task)
 	providerRequestID := strings.TrimSpace(task.ProviderRequestID)
 	if providerRequestID == "" {
+		s.recordMissingVideoReceiptOutcome(task, claimUserID)
 		return nil, BadAuthRequest("该任务没有可恢复的上游任务 ID")
 	}
 	decryptedInput, err := s.decryptTaskInputJSON(task.InputJSON)
@@ -87,6 +89,7 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	}
 	var input canvasGenerationInput
 	if err := json.Unmarshal([]byte(decryptedInput), &input); err != nil {
+		s.recordUnrecoverableVideoOutcome(task, claimUserID)
 		return nil, fmt.Errorf("任务输入解析失败：%w", err)
 	}
 	config, err := s.resolveProviderConfig(input.Config)
@@ -100,6 +103,7 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	_, officialVideo := generation.OfficialDeclarativeVideoInterface(config.InterfaceType)
 	legacyVideo := !officialVideo && (strings.TrimSpace(config.InterfaceType) == "" || isArkPlanVideoConfig(config))
 	if !declarative && !beefVideo && !workflowVideo && !legacyVideo && !upscale {
+		s.recordUnrecoverableVideoOutcome(task, claimUserID)
 		return nil, BadAuthRequest("该任务的请求协议不支持安全查询上游状态")
 	}
 	input.Config = config
@@ -131,10 +135,28 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	queryCtx := withProviderAnalytics(recoveryCtx, s, *task)
 	var result map[string]interface{}
 	var providerStatus string
+	var settlement generation.BeefAPIVideoSettlement
 	if upscale {
 		result, providerStatus, err = generation.RecoverUpscaleResult(queryCtx, input, providerRequestID)
 	} else if beefVideo {
-		result, providerStatus, err = queryBeefAPIVideoResult(queryCtx, input, providerRequestID)
+		result, providerStatus, settlement, err = queryBeefAPIVideoResultWithSettlement(queryCtx, input, providerRequestID)
+		if settlement.UsageState != nil {
+			normalized := strings.ToLower(strings.TrimSpace(*settlement.UsageState))
+			task.BeefUsageState = &normalized
+		}
+		if settlement.ReconcileDeadline != nil {
+			trimmed := strings.TrimSpace(*settlement.ReconcileDeadline)
+			if trimmed == "" {
+				task.BeefReconcileDeadline = nil
+			} else {
+				task.BeefReconcileDeadline = &trimmed
+			}
+		} else if settlement.UsageState != nil && !strings.EqualFold(strings.TrimSpace(*settlement.UsageState), "pending") {
+			task.BeefReconcileDeadline = nil
+		}
+		if settlement.UsageState != nil || settlement.ReconcileDeadline != nil {
+			_ = s.repo.UpdateTaskBeefVideoSettlement(task.ID, task.BeefUsageState, task.BeefReconcileDeadline)
+		}
 	} else if workflowVideo {
 		result, providerStatus, err = s.workflowClient(nil).QueryVideo(queryCtx, workflowConfigFromProvider(config), workflow.RootURL(config.BaseURL), providerRequestID)
 	} else if !declarative && legacyVideo {
@@ -143,12 +165,38 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 		result, providerStatus, err = queryProtocolAdapterVideoTask(queryCtx, input, adapter, providerRequestID)
 	}
 	if err != nil {
+		if outcome := classifyFailedVideoQueryOutcome(*task, providerStatus, err); outcome != "" {
+			var next *time.Time
+			if videoSettlementNeedsPolling(*task) {
+				at := time.Now().Add(videoRecoveryPollBackoff(*task))
+				next = &at
+			}
+			_ = s.repo.FinishFailedVideoRecovery(*task, &outcome, next)
+			task.RecoveryOutcome = &outcome
+			task.NextPollAt = next
+		}
 		_ = s.log(task.UserID, task.ID, "error", "人工查询上游视频任务失败", err.Error())
 		return nil, err
 	}
 	if result == nil {
+		var next *time.Time
+		if videoSettlementNeedsPolling(*task) {
+			at := time.Now().Add(videoRecoveryPollBackoff(*task))
+			next = &at
+		}
+		if videoTaskPastRetentionWindow(*task, time.Now()) {
+			outcome := localtask.RecoveryUnrecoverable
+			_ = s.repo.FinishFailedVideoRecovery(*task, &outcome, next)
+			task.RecoveryOutcome = &outcome
+			task.NextPollAt = next
+		} else if settlement.UsageState != nil || settlement.ReconcileDeadline != nil {
+			_ = s.repo.FinishFailedVideoRecovery(*task, task.RecoveryOutcome, next)
+			task.NextPollAt = next
+		}
+		projected := taskForOutput(*task)
+		s.attachTaskDelivery(projected)
 		_ = s.log(task.UserID, task.ID, "info", "人工查询完成，上游任务仍在处理", providerStatus)
-		return &ProviderTaskQueryResult{Task: taskForOutput(*task), ProviderStatus: providerStatus, Recovered: false}, nil
+		return &ProviderTaskQueryResult{Task: projected, ProviderStatus: providerStatus, Recovered: false}, nil
 	}
 
 	result, err = s.persistTaskGeneratedMediaResult(*task, result)
@@ -179,30 +227,45 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 // Query-only: never route recovery through create, even when the original
 // persisted channel metadata names the legacy generations protocol.
 func queryBeefAPIVideoResult(ctx context.Context, input canvasGenerationInput, id string) (map[string]interface{}, string, error) {
+	result, status, _, err := queryBeefAPIVideoResultWithSettlement(ctx, input, id)
+	return result, status, err
+}
+
+func queryBeefAPIVideoResultWithSettlement(ctx context.Context, input canvasGenerationInput, id string) (map[string]interface{}, string, generation.BeefAPIVideoSettlement, error) {
 	var state map[string]interface{}
-	if err := getJSON(ctx, input.Config, "/videos/"+id, &state); err != nil {
-		return nil, "", err
+	err := getJSON(ctx, input.Config, "/video/generations/"+id, &state)
+	var httpErr providerHTTPError
+	if err != nil && errors.As(err, &httpErr) && httpErr.StatusCode == 404 {
+		state = nil
+		err = getJSON(ctx, input.Config, "/videos/"+id, &state)
 	}
-	var err error
-	state, err = generation.ValidateVideoTaskState(id, state)
-	if err != nil {
-		return nil, "", err
+	var payloadErr generation.PayloadError
+	if err != nil && (!errors.As(err, &payloadErr) || len(state) == 0) {
+		return nil, "", generation.BeefAPIVideoSettlement{}, err
+	}
+	rawSettlement := generation.ExtractBeefAPIVideoSettlement(state)
+	state, validateErr := generation.ValidateVideoTaskState(id, state)
+	if validateErr != nil {
+		return nil, "", generation.BeefAPIVideoSettlement{}, validateErr
 	}
 	status, videoURL := seedancePollStatusAndURL(state)
-	if status == "failed" || status == "cancelled" || status == "expired" {
-		return nil, status, errors.New(defaultString(seedanceErrorMessage(state), "视频生成失败"))
+	if status == "failed" || status == "failure" || status == "cancelled" || status == "expired" {
+		return nil, status, rawSettlement, errors.New(defaultString(seedanceErrorMessage(state), "视频生成失败"))
+	}
+	if err != nil {
+		return nil, status, rawSettlement, err
 	}
 	if !generation.VideoTaskSucceeded(status) {
-		return nil, status, nil
+		return nil, status, rawSettlement, nil
 	}
 	if videoURL == "" {
 		videoURL = generation.APIURL(input.Config.BaseURL, "/videos/"+id+"/content")
 	}
 	data, mimeType, err := generation.DownloadVideoResult(ctx, input.Config, videoURL, id)
 	if err != nil {
-		return nil, status, err
+		return nil, status, rawSettlement, err
 	}
-	return map[string]interface{}{"mode": "video", "video": map[string]interface{}{"dataUrl": dataURL(mimeType, data), "mimeType": mimeType}}, status, nil
+	return map[string]interface{}{"mode": "video", "video": map[string]interface{}{"dataUrl": dataURL(mimeType, data), "mimeType": mimeType}}, status, rawSettlement, nil
 }
 
 func providerTaskRecoveryContext(parent context.Context) (context.Context, context.CancelFunc) {

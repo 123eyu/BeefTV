@@ -62,7 +62,7 @@ MiniMax speech 的 OpenAI 音频兼容目录通过 `audioOptions` 提供官方�
 
 | 路由组 | 用途 |
 | --- | --- |
-| `/workspace/*` | 本地工作区启动和模型配置 |
+| `/workspace/*` | 本地工作区启动、模型配置与 `POST /workspace/model-config/capability` 模型能力草稿规范化（含未保存自定义配置、Seedance 文档化时长/音频/像素下限收紧与 `thinking` 开关） |
 | `/beefapi/connection*` | 内置 BeefAPI 企业连接：开始、状态、取消、断开；`POST /beefapi/connection/models` 使用已保存凭据刷新并持久化模型目录与报价，成功后移除当前账号目录中已不存在的模型（其他自定义渠道不受影响）；不接受客户端报价，页面收不到密钥 |
 | `/canvas-projects/*`, `/projects/*` | 画布、项目、章节、分镜与快照 |
 | `/resources/*` | 本地素材、分片上传和媒体读取 |
@@ -105,7 +105,7 @@ MiniMax speech 的 OpenAI 音频兼容目录通过 `audioOptions` 提供官方�
 {"outcome":{"phase":"retrievable","regenerate":"blocked","reason":"image_recovery_pending"}}
 ```
 
-`phase` 为 `running`（排队或执行中）、`fetching`（结果正在入库）、`ready`（已保存）、`retrievable`（等待自动取回）或 `failed`。`regenerate` 为 `allowed`、`confirm` 或 `blocked`，分别表达可再次生成、可能重复付费需确认、不能原样重跑。`reason` 是机器原因，如 `task_running`、`result_ready`、`result_fetching`、`delivery_pending`、`image_recovery_pending`、`provider_result_pending`、`result_unrecoverable`、`no_result`、`input_rejected`、`evidence_unavailable`、`task_failed`。
+`phase` 为 `running`（排队或执行中）、`fetching`（结果正在入库）、`ready`（已保存）、`retrievable`（等待自动取回）或 `failed`。`regenerate` 为 `allowed`、`confirm` 或 `blocked`，分别表达可再次生成、可能重复付费需确认、任务仍在运行或正在等待取回结果暂不能重新生成。审核失败（`input_rejected`）不代表没扣钱，归为 `confirm`。`reason` 是机器原因，如 `task_running`、`result_ready`、`result_fetching`、`delivery_pending`、`image_recovery_pending`、`provider_result_pending`、`result_unrecoverable`、`no_result`、`input_rejected`、`evidence_unavailable`、`task_failed`。
 
 这些字段由已持久化的任务、派发、提交与交付事实计算，不解析错误文案；读证据失败不会当成没有结果。`running` 任务在进程重启、租约过期后仍显示 `running`，不改成 `cancelled`。任务的 `status`、`stage`、`resultState`、`outputs` 与旧客户端消费字段继续返回。图片订阅使用现有任务读取轮询，不新增独立推送协议；文本 SSE 的事件格式不变。
 
@@ -295,6 +295,8 @@ Windows 的运行地址描述文件位于用户目录的 `.beeftv/runtime/`，�
 `GET /tasks/by-operation/:operationId?projectId=<画布 ID>` 只读查询当前用户在指定画布的原任务，未找到返回 404，不触发任务创建。画布在提交前保存操作编号和目标节点；刷新后使用此接口恢复，不额外保存带密钥的请求正文。查询失败或暂未找到时保留“提交结果待确认”，禁止自动换编号重提；再次点击生成会先查询原任务。409 内容冲突必须停止处理。
 
 旧任务若没有请求摘要，不能凭编号推断内容相同，因此拒绝重放，应先查询已有任务。此编号仅保证本地任务不重复创建，不代表上游扣费或取消结算已经确认。
+
+`POST /tasks/:id/recover` 是免费的通用结果取回接口（经由 `localapp.TaskPort` 路由）：对已生成但尚未入库的任务继续下载并落盘，对失败的图片任务按已接受回执或同键重放取回结果，对失败的视频与 AI 超分任务按原 `provider_request_id` 查询上游状态并重置轮询退避（`next_poll_at = nil`）。该接口结构上绝不调用 `RetryTask`、不创建新任务、不递增 `routeRun`。后台恢复循环同样会自动扫描处于 `retrievable` 的图片、视频与超分任务，并在确认上游无结果或超过保留期/回执冲突时记录 `recovery_outcome`（`no_result` 或 `unrecoverable`），使公开 `outcome.phase` 收敛为 `failed`。`POST /media/upscale/tasks/:id/recover` 亦仅查询与取回已接受的原任务结果，不再对未发出任务隐式触发付费重试。
 
 标准 OpenAI Images 配置中的 `gpt-image-2` 默认质量为 `low`，设置面板保留低、中、高三个选项；旧内置配置中的自动质量迁移为低质量。任务提交时，image2 的空值、`auto` 和 `any` 明确发送为 `low`，用户选择的中、高质量及 1K/2K/4K 尺寸保持原值。GPT Image 2.5 的默认质量与完整质量选项不变，工作流参数不受此规则影响。
 

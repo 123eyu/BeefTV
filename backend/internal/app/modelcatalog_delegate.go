@@ -83,26 +83,6 @@ func validateWorkflowProviderPromptLength(input canvasGenerationInput) error {
 	return modelcatalog.ValidateWorkflowProviderPromptLength(taskInputFromCanvas(input))
 }
 
-func isSeedance2Family(protocol, modelName string) bool {
-	return modelcatalog.IsSeedance2Family(protocol, modelName)
-}
-
-func isSeedance25Model(modelName string) bool {
-	return modelcatalog.IsSeedance25Model(modelName)
-}
-
-func overlayOfficialSeedance2References(base VideoReferenceConfig, is25 bool) VideoReferenceConfig {
-	return modelcatalog.OverlayOfficialSeedance2References(base, is25)
-}
-
-func applySeedanceDocumentedVideoPixelFloor(config providerConfig, refs *VideoReferenceConfig) {
-	modelcatalog.ApplySeedanceDocumentedVideoPixelFloor(modelcatalog.TaskConfig{
-		InterfaceType: config.InterfaceType,
-		Model:         config.Model,
-		BaseURL:       config.BaseURL,
-	}, refs)
-}
-
 func ModelRequestIntentFromTaskInput(input map[string]any, taskType string, operation string) ModelRequestIntent {
 	return modelcatalog.ModelRequestIntentFromTaskInput(input, taskType, operation)
 }

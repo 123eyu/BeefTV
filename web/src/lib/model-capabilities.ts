@@ -111,6 +111,7 @@ export type VideoCapabilityConfig = {
         default: number;
     };
     durationSupported?: boolean;
+    taskTypeConstraints?: boolean;
     ratios: string[];
     defaultRatio: string;
     resolutions: string[];
@@ -339,7 +340,17 @@ export function sanitizeServerVideoCapability(value: unknown): VideoCapabilityCo
         if (typeof object.durationSupported !== "boolean") return null;
         video.durationSupported = object.durationSupported;
     }
+    if ("taskTypeConstraints" in object) {
+        if (typeof object.taskTypeConstraints !== "boolean") return null;
+        video.taskTypeConstraints = object.taskTypeConstraints;
+    }
     return video;
+}
+
+export function videoSupportsTaskTypeConstraints(video?: VideoCapabilityConfig | null): boolean {
+    if (!video) return false;
+    if (typeof video.taskTypeConstraints === "boolean") return video.taskTypeConstraints;
+    return Boolean(video.operations?.includes("inpaint") || video.operations?.includes("extend"));
 }
 
 // Keep explicit pixel presets for each resolution tier so the settings panel can

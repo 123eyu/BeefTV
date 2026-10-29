@@ -16,12 +16,11 @@ import { uploadMediaFile } from "@/services/file-storage";
 import { getActiveUserScope, scopedLocalStorage } from "@/lib/user-scope";
 import { assertUserScope, captureUserScope, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { findWorkspaceAssetIdByStorageKey } from "@/lib/canvas/director/director-library-persist";
-import { resourceFileUrl, resourceIdFromStorageKey, syncResourceToArkPrivateAsset } from "@/services/api/resources";
+import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
 import { uploadImage } from "@/services/image-storage";
 import { imageMetadata } from "@/lib/canvas/canvas-generation-task-sync";
 import { isCanvasImageSourceNode } from "@/lib/canvas/canvas-image-source";
 import { canOpenCanvasNodePromptPanel, isCanvasMediaResultNode } from "@/lib/canvas/canvas-node-semantics";
-import copyToClipboard from "copy-to-clipboard";
 import { nanoid } from "nanoid";
 import { DEFAULT_CANVAS_BACKGROUND_MODE, normalizeCanvasAppearance, resolveCanvasAppearance, writeCanvasAppearanceDefault, type CanvasAppearance } from "@/lib/canvas/canvas-appearance";
 import { parseCanvasWheelBehavior, type CanvasWheelBehavior } from "@/lib/canvas/canvas-wheel";
@@ -87,8 +86,6 @@ import { createCanvasNode, getInputSummary } from "@/lib/canvas/canvas-project-d
 import { connectDirectorReferenceNodes } from "@/lib/canvas/director/director-reference-assets";
 import { canvasWorkspaceProjectId, listCanvasWorkspaceProjectCanvases } from "@/lib/canvas/canvas-workspace-project";
 import { deleteWorkspaceCanvasProjects } from "@/services/workspace-project-repository";
-import { createLibTvAudioFixture, createLibTvEmptyTextFixture, createLibTvGeneratingFixture, createLibTvReadonlyDenseFixture, createLibTvStoryboardFixture, createLibTvTextFixture, createLibTvVideoConversionFixture, createLibTvVideoFixture, createLibTvVideoMergeFixture, createLibTvVideoSubtitleFixture } from "@/lib/canvas/canvas-libtv-fixture";
-import { libtvOriginalEdgeEndpoints } from "@/lib/canvas/libtv-original-edges";
 import { stampCanvasNodeChanges } from "@/lib/canvas/canvas-node-timestamps";
 import { batchSourceRestriction } from "@/lib/canvas/canvas-batch-connection";
 import { deriveStoryboardPipelineProgress } from "@/lib/canvas/canvas-storyboard-progress";
@@ -132,7 +129,8 @@ import { useCanvasShortDrama } from "./use-canvas-short-drama";
 import { useCanvasUpload } from "./use-canvas-upload";
 import { useCanvasTimelineAssetInsert } from "./use-canvas-timeline-asset-insert";
 import { useCanvasViewportController } from "./use-canvas-viewport-controller";
-import { copyImageToSystemClipboard } from "./canvas-project-clipboard";
+import { useCanvasLibTvVisualFixtures } from "./use-canvas-libtv-visual-fixtures";
+import { useCanvasNodeMediaShareActions } from "./use-canvas-node-media-share-actions";
 import { canvasNodeRetryPlan } from "./canvas-generation-orchestration";
 import { linkedFolderPresentation } from "./canvas-resource-handoff-plan";
 import { useCanvasAssistantProposal } from "./use-canvas-assistant-proposal";
@@ -351,7 +349,6 @@ function InfiniteCanvasPage() {
         resetForClearCanvas,
     } = useCanvasProjectDialogs();
     const [toolbarNodeId, setToolbarNodeId] = useState<string | null>(null);
-    const [arkPrivateAssetUploadNodeId, setArkPrivateAssetUploadNodeId] = useState<string | null>(null);
     const [nodeImageSettingsOpen, setNodeImageSettingsOpen] = useState(false);
     const [dialogNodeId, setDialogNodeId] = useState<string | null>(null);
     const [scriptScrollTopById, setScriptScrollTopById] = useState<Record<string, number>>({});
@@ -465,198 +462,23 @@ function InfiniteCanvasPage() {
         cleanupCanvasFiles,
     });
 
-    const fixtureAppliedRef = useRef<string | null>(null);
-    const focusFixtureOnNarrowViewport = useCallback((fixtureNodes: CanvasNodeData[]) => {
-        if (typeof window === "undefined" || window.innerWidth >= 768) return;
-        const target = fixtureNodes.find((node) => node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Audio || node.type === CanvasNodeType.Text);
-        if (!target) return;
-        // Keep the fixture's world coordinates intact, but place its visual
-        // bounds inside a narrow viewport so the first actionable control is
-        // reachable without requiring a hidden desktop-sized pan.
-        const width = Math.max(320, window.innerWidth);
-        const height = Math.max(420, window.innerHeight - 56);
-        const scale = Math.min(1, Math.max(0.35, Math.min((width - 24) / Math.max(1, target.width), (height - 120) / Math.max(1, target.height))));
-        const next = {
-            x: (width - target.width * scale) / 2 - target.position.x * scale,
-            y: (height - target.height * scale) / 2 - target.position.y * scale,
-            k: scale,
-        };
-        viewportRef.current = next;
-        setViewport(next);
-    }, [setViewport, viewportRef]);
-    useEffect(() => {
-        if (!projectLoaded || readOnly || searchParams.get("fixture") !== "libtv-storyboard") return;
-        if (fixtureAppliedRef.current === projectId || nodes.some((node) => node.metadata?.fixture === "libtv-storyboard")) return;
-        fixtureAppliedRef.current = projectId;
-        const fixtureNodes = createLibTvStoryboardFixture();
-        const nextNodes = [...nodesRef.current, ...fixtureNodes];
-        nodesRef.current = nextNodes;
-        setNodes(nextNodes);
-        // A saved LibTV storyboard opens in browse mode. Do not carry a stale
-        // dialog/selection from the canvas that was used to load the fixture;
-        // otherwise the first screenshot is polluted by a text composer.
-        setSelectedNodeIds(new Set());
-        selectedNodeIdsRef.current = new Set();
-        setDialogNodeId(null);
-  // Read-only reference mode is intentionally side-effect free: saving here
-  // would surface a local-save toast that the public LibTV viewer does not show.
-    }, [nodes, projectId, projectLoaded, readOnly, saveCanvasProject, searchParams, setDialogNodeId, setNodes, setSelectedNodeIds, selectedNodeIdsRef]);
-
-    useEffect(() => {
-        if (!projectLoaded || readOnly || searchParams.get("fixture") !== "libtv-readonly-dense") return;
-        if (fixtureAppliedRef.current === projectId || nodes.some((node) => node.metadata?.fixture === "libtv-readonly-dense")) return;
-        fixtureAppliedRef.current = projectId;
-        const fixtureNodes = createLibTvReadonlyDenseFixture();
-        const nextNodes = [...nodesRef.current, ...fixtureNodes];
-        nodesRef.current = nextNodes;
-        setNodes(nextNodes);
-        const denseChildren = fixtureNodes;
-        const nearestChild = (screenX: number, screenY: number) => denseChildren.reduce<{ node: CanvasNodeData | null; distance: number }>((best, node) => {
-            const left = 189.2 + node.position.x * 0.1;
-            const top = -179.4 + node.position.y * 0.1;
-            const right = left + node.width * 0.1;
-            const bottom = top + node.height * 0.1;
-            const dx = screenX < left ? left - screenX : screenX > right ? screenX - right : 0;
-            const dy = screenY < top ? top - screenY : screenY > bottom ? screenY - bottom : 0;
-            const distance = Math.hypot(dx, dy);
-            return distance < best.distance ? { node, distance } : best;
-        }, { node: null, distance: Number.POSITIVE_INFINITY });
-        const denseConnections = libtvOriginalEdgeEndpoints.flatMap((edge, index) => {
-            const fromMatch = nearestChild(edge.sx, edge.sy);
-            const toMatch = nearestChild(edge.ex, edge.ey);
-            const fromNode = fromMatch.node;
-            const toNode = toMatch.node;
-            // Endpoints far outside the captured node rectangles belong to
-            // off-screen/private nodes. Do not attach them to an unrelated
-            // visible thumbnail merely because it is the nearest one.
-            if (!fromNode || !toNode || fromMatch.distance > 1 || toMatch.distance > 1) return [];
-            // Preserve parallel edges. The captured LibTV graph contains
-            // repeated source/target pairs, and collapsing them changes the
-            // visible wire density in the overview.
-            return [{ id: `libtv-dense-edge-${index}`, fromNodeId: fromNode.id, toNodeId: toNode.id }];
-        });
-        connectionsRef.current = denseConnections;
-        setConnections(denseConnections);
-        selectedNodeIdsRef.current = new Set();
-        setSelectedNodeIds(new Set());
-        setDialogNodeId(null);
-        // Match the public read-only overview captured from LibTV: 10% scale,
-        // two-column groups and a small top-left camera offset.
-        const denseViewport = { x: 189.2, y: -179.4, k: 0.1 };
-        viewportRef.current = denseViewport;
-        setViewport(denseViewport);
-        // Do not save in the read-only fixture: LibTV's public viewer has no
-        // local-save toast or persistence side effect while it is being read.
-    }, [nodes, projectId, projectLoaded, readOnly, saveCanvasProject, searchParams, setDialogNodeId, setNodes, setSelectedNodeIds, setViewport, selectedNodeIdsRef, nodesRef, viewportRef]);
-
-    useEffect(() => {
-        if (!projectLoaded || readOnly || searchParams.get("fixture") !== "libtv-video-merge") return;
-        if (fixtureAppliedRef.current === projectId || nodes.some((node) => node.metadata?.fixture === "libtv-video-merge")) return;
-        fixtureAppliedRef.current = projectId;
-        const fixtureNodes = createLibTvVideoMergeFixture(searchParams.get("fixtureMedia") || undefined);
-        const nextNodes = [...nodesRef.current, ...fixtureNodes];
-        nodesRef.current = nextNodes;
-        setNodes(nextNodes);
-        const selectedFixtureNodes = new Set(fixtureNodes.map((node) => node.id));
-        selectedNodeIdsRef.current = selectedFixtureNodes;
-        setSelectedNodeIds(selectedFixtureNodes);
-        focusFixtureOnNarrowViewport(fixtureNodes);
-        void saveCanvasProject({ requireRemote: false });
-    }, [focusFixtureOnNarrowViewport, nodes, projectId, projectLoaded, readOnly, saveCanvasProject, searchParams, setNodes, setSelectedNodeIds, selectedNodeIdsRef]);
-
-    useEffect(() => {
-        if (!projectLoaded || readOnly || !["libtv-video", "libtv-video-subtitle"].includes(searchParams.get("fixture") || "")) return;
-        if (fixtureAppliedRef.current === projectId || nodes.some((node) => node.metadata?.fixture === "libtv-video" || node.metadata?.fixture === "libtv-video-subtitle")) return;
-        fixtureAppliedRef.current = projectId;
-        const fixtureNodes = searchParams.get("fixture") === "libtv-video-subtitle" ? createLibTvVideoSubtitleFixture(searchParams.get("fixtureMedia") || undefined) : createLibTvVideoFixture(searchParams.get("fixtureMedia") || undefined);
-        const nextNodes = [...nodesRef.current, ...fixtureNodes];
-        nodesRef.current = nextNodes;
-        setNodes(nextNodes);
-        focusFixtureOnNarrowViewport(fixtureNodes);
-        void saveCanvasProject({ requireRemote: false });
-    }, [focusFixtureOnNarrowViewport, nodes, projectId, projectLoaded, readOnly, saveCanvasProject, searchParams, setNodes]);
-
-    useEffect(() => {
-        if (!projectLoaded || readOnly || searchParams.get("fixture") !== "libtv-video-conversion") return;
-        if (fixtureAppliedRef.current === projectId || nodes.some((node) => node.metadata?.fixture === "libtv-video-conversion")) return;
-        fixtureAppliedRef.current = projectId;
-        const fixture = createLibTvVideoConversionFixture(searchParams.get("fixtureMedia") || undefined);
-        const nextNodes = [...nodesRef.current, ...fixture.nodes];
-        nodesRef.current = nextNodes;
-        setNodes(nextNodes);
-        setConnections((current) => [...current, fixture.connection]);
-        focusFixtureOnNarrowViewport(fixture.nodes);
-        void saveCanvasProject({ requireRemote: false });
-    }, [connectionsRef, focusFixtureOnNarrowViewport, nodes, nodesRef, projectId, projectLoaded, readOnly, saveCanvasProject, searchParams, setConnections, setNodes]);
-
-    useEffect(() => {
-        if (!projectLoaded || readOnly || searchParams.get("fixture") !== "libtv-audio") return;
-        if (fixtureAppliedRef.current === projectId || nodes.some((node) => node.metadata?.fixture === "libtv-audio")) return;
-        fixtureAppliedRef.current = projectId;
-        const fixtureNodes = createLibTvAudioFixture();
-        const nextNodes = [...nodesRef.current, ...fixtureNodes];
-        nodesRef.current = nextNodes;
-        setNodes(nextNodes);
-        focusFixtureOnNarrowViewport(fixtureNodes);
-        void saveCanvasProject({ requireRemote: false });
-    }, [focusFixtureOnNarrowViewport, nodes, projectId, projectLoaded, readOnly, saveCanvasProject, searchParams, setNodes]);
-
-    useEffect(() => {
-        if (!projectLoaded || readOnly || searchParams.get("fixture") !== "libtv-text") return;
-        if (fixtureAppliedRef.current === projectId || nodes.some((node) => node.metadata?.fixture === "libtv-text")) return;
-        fixtureAppliedRef.current = projectId;
-        const fixtureNodes = createLibTvTextFixture();
-        const nextNodes = [...nodesRef.current, ...fixtureNodes];
-        nodesRef.current = nextNodes;
-        setNodes(nextNodes);
-        focusFixtureOnNarrowViewport(fixtureNodes);
-        void saveCanvasProject({ requireRemote: false });
-    }, [focusFixtureOnNarrowViewport, nodes, projectId, projectLoaded, readOnly, saveCanvasProject, searchParams, setNodes]);
-
-    useEffect(() => {
-        if (!projectLoaded || readOnly || searchParams.get("fixture") !== "libtv-text-empty") return;
-        if (fixtureAppliedRef.current === projectId || nodes.some((node) => node.metadata?.fixture === "libtv-text-empty")) return;
-        fixtureAppliedRef.current = projectId;
-        const fixtureNodes = createLibTvEmptyTextFixture();
-        const nextNodes = [...nodesRef.current, ...fixtureNodes];
-        nodesRef.current = nextNodes;
-        setNodes(nextNodes);
-        focusFixtureOnNarrowViewport(fixtureNodes);
-        // Visual audit fixtures are ephemeral; avoid showing the local-save
-        // toast over the LibTV reference screenshot when chrome mode is on.
-        if (searchParams.get("libtvChrome") !== "1") void saveCanvasProject({ requireRemote: false });
-    }, [focusFixtureOnNarrowViewport, nodes, projectId, projectLoaded, readOnly, saveCanvasProject, searchParams, setNodes]);
-
-    useEffect(() => {
-        if (!projectLoaded || readOnly || searchParams.get("fixture") !== "libtv-generating") return;
-        if (fixtureAppliedRef.current === projectId || nodes.some((node) => node.metadata?.fixture === "libtv-generating")) return;
-        fixtureAppliedRef.current = projectId;
-        const fixtureNodes = createLibTvGeneratingFixture();
-        const nextNodes = [...nodesRef.current, ...fixtureNodes];
-        nodesRef.current = nextNodes;
-        setNodes(nextNodes);
-        focusFixtureOnNarrowViewport(fixtureNodes);
-        void saveCanvasProject({ requireRemote: false });
-        // Local runtime normally converts stale loading snapshots to an error
-        // immediately after a refresh. The fixture intentionally re-enters the
-        // running state after that guard so the visual contract can be audited
-        // without pretending a real backend task exists.
-        window.setTimeout(() => {
-            setNodes((current) => current.map((node) => node.metadata?.fixture === "libtv-generating" ? {
-                ...node,
-                metadata: {
-                    ...node.metadata,
-                    status: "loading",
-                    taskId: node.metadata.taskId || "libtv-fixture-task-42",
-                    taskCreatedAt: node.metadata.taskCreatedAt || new Date(0).toISOString(),
-                    taskStatus: "running",
-                    taskProgress: 42,
-                    taskStage: "正在生成画面",
-                    errorDetails: undefined,
-                },
-            } : node));
-        }, 260);
-    }, [focusFixtureOnNarrowViewport, nodes, projectId, projectLoaded, readOnly, saveCanvasProject, searchParams, setNodes]);
+    useCanvasLibTvVisualFixtures({
+        projectId,
+        projectLoaded,
+        readOnly,
+        searchParams,
+        nodes,
+        nodesRef,
+        connectionsRef,
+        selectedNodeIdsRef,
+        viewportRef,
+        setNodes,
+        setConnections,
+        setSelectedNodeIds,
+        setDialogNodeId,
+        setViewport,
+        saveCanvasProject,
+    });
 
     const duplicateCurrentProject = useCallback(async () => {
         if (!currentProject) return;
@@ -1014,7 +836,7 @@ function InfiniteCanvasPage() {
         getCanvasCenter,
     });
 
-    const assistantContinuation = useCanvasAssistantContinuation(assistant, nodes, !readOnly);
+    const assistantContinuation = useCanvasAssistantContinuation(assistant, !readOnly);
     const { runAssistantProposal, assistantProposalFeedback, runningProposalIds } = useCanvasAssistantProposal({
         projectId,
         addedSkills,
@@ -2052,119 +1874,18 @@ function InfiniteCanvasPage() {
         [message, pasteCopiedNodes, pasteSystemClipboard, shouldPreferCopiedNodes],
     );
 
-    const copyingNodeContentRef = useRef(false);
-    const copyNodeContentToClipboard = useCallback(
-        async (node: CanvasNodeData | null) => {
-            if (copyingNodeContentRef.current) return;
-            copyingNodeContentRef.current = true;
-            releaseCopiedNodesPastePriority();
-            const content = node?.metadata?.content?.trim();
-            const resourceId = resourceIdFromStorageKey(node?.metadata?.storageKey);
-            const copySource = content || (node?.type === CanvasNodeType.Image && resourceId ? resourceFileUrl(resourceId) : "");
-            if (!node || !copySource) {
-                copyingNodeContentRef.current = false;
-                message.warning("没有可复制的内容");
-                return;
-            }
-
-            try {
-                if (node.type === CanvasNodeType.Image) {
-                    try {
-                        await copyImageToSystemClipboard(copySource, node.metadata?.storageKey);
-                        message.success("图片已复制到剪贴板");
-                        return;
-                    } catch (imageErr) {
-                        const fallbackUrl = new URL(copySource, window.location.href).toString();
-                        if (navigator.clipboard?.writeText) {
-                            await navigator.clipboard.writeText(fallbackUrl).catch(() => undefined);
-                            message.info("由于浏览器未获得焦点，已为您复制图片地址");
-                            return;
-                        }
-                        if (await copyToClipboard(fallbackUrl)) {
-                            message.info("由于浏览器未获得焦点，已为您复制图片地址");
-                            return;
-                        }
-                        throw imageErr;
-                    }
-                }
-
-                if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(copySource);
-                else if (!copyToClipboard(copySource)) throw new Error("当前浏览器不支持写入剪贴板");
-                message.success(node.type === CanvasNodeType.Text ? "文本已复制" : "内容链接已复制");
-            } catch (error) {
-                message.error(error instanceof Error ? error.message : "复制失败，请检查浏览器剪贴板权限");
-            } finally {
-                copyingNodeContentRef.current = false;
-            }
-        },
-        [message, releaseCopiedNodesPastePriority],
-    );
-
-    const copyNodeMediaUrlToClipboard = useCallback(
-        async (node: CanvasNodeData | null) => {
-            releaseCopiedNodesPastePriority();
-            try {
-                const storageKey = node?.metadata?.storageKey;
-                const content = node?.metadata?.content?.trim();
-                const resourceId = resourceIdFromStorageKey(storageKey);
-                const mediaPath = content && !content.startsWith("data:") && !content.startsWith("blob:") ? content : resourceId ? resourceFileUrl(resourceId) : "";
-                const mediaURL = mediaPath ? new URL(mediaPath, window.location.href).toString() : "";
-                if (!mediaURL) throw new Error("当前媒体只有本地内容，没有可复制的地址");
-                if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(mediaURL);
-                else if (!(await copyToClipboard(mediaURL))) throw new Error("当前浏览器不支持写入剪贴板");
-                message.success(node?.type === CanvasNodeType.Video ? "视频地址已复制" : "图片地址已复制");
-            } catch (error) {
-                message.error(error instanceof Error ? error.message : "媒体地址复制失败");
-            }
-        },
-        [message, releaseCopiedNodesPastePriority],
-    );
-
-    const uploadNodeImageToArkPrivateAsset = useCallback(
-        async (node: CanvasNodeData) => {
-            if (node.type !== CanvasNodeType.Image || !node.metadata?.content) {
-                message.warning("请选择一张可用图片后再上传");
-                return;
-            }
-            if (arkPrivateAssetUploadNodeId === node.id) return;
-            const feedbackKey = `ark-private-asset-${node.id}`;
-            setArkPrivateAssetUploadNodeId(node.id);
-            message.loading({ key: feedbackKey, content: "正在保存并上传到方舟素材库...", duration: 0 });
-            try {
-                let resourceID = resourceIdFromStorageKey(node.metadata.storageKey);
-                let persistedNode = node;
-                if (!resourceID) {
-                    const uploaded = await uploadImage(node.metadata.content);
-                    resourceID = resourceIdFromStorageKey(uploaded.storageKey);
-                    if (!resourceID) throw new Error(localOnly ? "图片未能保存到本地素材库，请重试" : "图片未能保存到系统素材库，请检查对象存储配置后重试");
-                    handleConfigNodeChange(node.id, imageMetadata(uploaded));
-                    persistedNode = { ...node, metadata: { ...node.metadata, ...imageMetadata(uploaded) } };
-                }
-                const asset = await ensureCanvasNodeAsset({ canvasId: projectId, domainProjectId: currentProject?.projectId, node: persistedNode, source: "canvas-manual" });
-                handleConfigNodeChange(node.id, { assetId: asset.assetId });
-                await syncResourceToArkPrivateAsset(resourceID);
-                message.success({ key: feedbackKey, content: "已同步到方舟素材库，Seedance 将自动复用该素材", duration: 4 });
-            } catch (error) {
-                message.error({ key: feedbackKey, content: error instanceof Error ? error.message : "上传到方舟素材库失败", duration: 5 });
-            } finally {
-                setArkPrivateAssetUploadNodeId((current) => (current === node.id ? null : current));
-            }
-        },
-        [arkPrivateAssetUploadNodeId, currentProject?.projectId, handleConfigNodeChange, localOnly, message, projectId],
-    );
-
-    const confirmUploadNodeImageToArkPrivateAsset = useCallback(
-        (node: CanvasNodeData) => {
-            modal.confirm({
-                title: "上传到方舟素材库",
-                content: "仅可上传你拥有肖像、版权或其他合法使用权的图片。方舟审核通过后，Seedance 会使用受控素材标识生成视频。",
-                okText: "确认拥有使用权并上传",
-                cancelText: "取消",
-                onOk: () => uploadNodeImageToArkPrivateAsset(node),
-            });
-        },
-        [modal, uploadNodeImageToArkPrivateAsset],
-    );
+    const {
+        arkPrivateAssetUploadNodeId,
+        copyNodeContentToClipboard,
+        copyNodeMediaUrlToClipboard,
+        confirmUploadNodeImageToArkPrivateAsset,
+    } = useCanvasNodeMediaShareActions({
+        projectId,
+        domainProjectId: currentProject?.projectId,
+        localOnly,
+        releaseCopiedNodesPastePriority,
+        handleConfigNodeChange,
+    });
 
     const handleCanvasContextMenu = useCallback(
         (event: ReactMouseEvent) => {

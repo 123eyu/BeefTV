@@ -215,8 +215,18 @@ func (s *operationSession) admitProductionTargets(userID, canvasID string, plan 
 			}
 			// Preserve successful material bindings. Missing receipts use the
 			// normal delivery recovery path with the same task identity.
-			if id, _ := meta["taskId"].(string); id != "" && id != existing.ID {
+			id, _ := meta["taskId"].(string)
+			id = strings.TrimSpace(id)
+			opID, _ := meta["taskClientOperationId"].(string)
+			opID = strings.TrimSpace(opID)
+			storage, _ := meta["storageKey"].(string)
+			content, _ := meta["content"].(string)
+			if (id != "" && id != existing.ID) || (id == "" && ((opID != "" && opID != key) || meta["generationSubmissionState"] == "submitting" || strings.TrimSpace(storage) != "" || strings.TrimSpace(content) != "")) {
 				return nil, operations.Conflict("production_node_changed", "素材节点已使用其他任务，请先检查当前结果", nil)
+			}
+			proj, _, _, err := assistantturns.ProjectTaskInTx(s.tx, userID, *existing)
+			if err != nil {
+				return nil, err
 			}
 			for field, value := range map[string]any{"taskId": existing.ID, "taskStatus": string(existing.Status), "taskClientOperationId": key, "generationSubmissionState": "accepted"} {
 				if meta[field] != value {
@@ -224,7 +234,7 @@ func (s *operationSession) admitProductionTargets(userID, canvasID string, plan 
 					changed = true
 				}
 			}
-			if existing.Status == model.TaskStatusFailed || existing.Status == model.TaskStatusCancelled {
+			if existing.Status == model.TaskStatusCancelled || (existing.Status == model.TaskStatusFailed && proj.Outcome.Phase == "failed") {
 				if meta["status"] != "error" {
 					meta["status"] = "error"
 					changed = true
@@ -241,6 +251,14 @@ func (s *operationSession) admitProductionTargets(userID, canvasID string, plan 
 			nodeIDs = append(nodeIDs, target.NodeID)
 			continue
 		}
+		meta, _ := nodes[target.NodeID]["metadata"].(map[string]any)
+		if meta == nil {
+			meta = map[string]any{}
+			nodes[target.NodeID]["metadata"] = meta
+		}
+		if meta["status"] == "loading" || meta["taskStatus"] == "queued" || meta["taskStatus"] == "running" || meta["generationSubmissionState"] == "submitting" {
+			return nil, operations.Conflict("production_node_changed", "素材节点已使用其他任务，请先检查当前结果", nil)
+		}
 		input, err := s.productionTaskInput(userID, target, nodes)
 		if err != nil {
 			return nil, err
@@ -250,11 +268,6 @@ func (s *operationSession) admitProductionTargets(userID, canvasID string, plan 
 		task, err := domain.CreateTask(userID, localtask.CreateRequest{ProjectID: canvasID, Type: "canvas_" + target.Kind, Prompt: target.Prompt, Input: input})
 		if err != nil {
 			return nil, err
-		}
-		meta, _ := nodes[target.NodeID]["metadata"].(map[string]any)
-		if meta == nil {
-			meta = map[string]any{}
-			nodes[target.NodeID]["metadata"] = meta
 		}
 		meta["taskId"], meta["taskStatus"], meta["status"] = task.ID, string(task.Status), "loading"
 		meta["taskClientOperationId"], meta["generationSubmissionState"] = key, "accepted"

@@ -68,6 +68,9 @@ func (s *Service) attachTaskDelivery(task *model.Task) {
 	if task == nil {
 		return
 	}
+	if task.Status == model.TaskStatusFailed && task.ProviderRequestID == "" {
+		s.hydrateTaskProviderRequestID(task)
+	}
 	stored, loadErr := s.generationDeliverer().LoadedOutputs(task.ID)
 	facts := s.taskOutcomeFacts([]model.Task{*task})
 	proj := taskdelivery.ProjectWithFacts(*task, stored, loadErr, persistedFailureBlocksRetry(task.Error, task.Stage), facts[task.ID])
@@ -129,6 +132,7 @@ func (s *Service) startGenerationDeliveryRecovery(context.Context) {
 				return
 			}
 			s.startImageRecoveryPass(ctx)
+			s.startVideoRecoveryPass(ctx)
 			if err := s.RecoverIncompleteGenerationDeliveries(0); err != nil {
 				log.Printf("generation delivery recovery paused: worker_id=%s error=%v", s.workerID, err)
 			}

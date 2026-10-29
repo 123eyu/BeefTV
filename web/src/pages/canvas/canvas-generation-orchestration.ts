@@ -8,7 +8,7 @@ import { failedImageBatchChildren, markImageBatchRetrying, reconcileImageBatchRo
 import { bindMissingCanvasResourceAssets, canvasNodesMissingResourceAssetBinding } from "@/lib/canvas/canvas-node-asset";
 import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
 import { getGenerationCount } from "@/lib/canvas/canvas-project-generation";
-import { shouldBlockManualRetry } from "@/lib/generation-error";
+import { isNodeRegenerateBlocked, isNodeRegenerateConfirm, readNodeTaskOutcome } from "@/lib/task-outcome";
 import { canvasNodeFailureExplanation, isDepthCaptureResultNode } from "@/lib/canvas/canvas-depth-capture";
 import type { GenerationTask } from "@/services/api/task-center";
 import type { Asset } from "@/stores/use-asset-store";
@@ -29,7 +29,7 @@ export type CanvasNodeRetryPlan =
     | { kind: "single" };
 
 export function canvasNodeRetryPlan(node: CanvasNodeData, nodes: CanvasNodeData[]): CanvasNodeRetryPlan {
-    if (canvasNodeFailureExplanation(node).category === "result_target_unavailable") return { kind: "history" };
+    if (readNodeTaskOutcome(node.metadata)?.reason === "result_target_unavailable" || canvasNodeFailureExplanation(node).category === "result_target_unavailable") return { kind: "history" };
     if (isDepthCaptureResultNode(node)) return { kind: "depth" };
     if (node.type === CanvasNodeType.Script) {
         const prompt = (node.metadata?.composerContent || node.metadata?.prompt || "").trim();
@@ -46,7 +46,8 @@ export function canvasNodeRetryPlan(node: CanvasNodeData, nodes: CanvasNodeData[
 }
 
 export function selectRetryableImageBatchChildren(children: CanvasNodeData[]) {
-    const retryable = children.filter((child) => !shouldBlockManualRetry({ code: child.metadata?.generationErrorCode || child.metadata?.taskErrorCode, message: child.metadata?.errorDetails }, child.metadata?.taskStage));
+    // 批量重试没有逐个确认：需要确认（可能再次扣费）的子节点只能单独重新生成。
+    const retryable = children.filter((child) => !isNodeRegenerateBlocked(child.metadata) && !isNodeRegenerateConfirm(child.metadata));
     return { retryable, blocked: retryable.length < children.length };
 }
 

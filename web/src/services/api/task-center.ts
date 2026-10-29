@@ -32,6 +32,7 @@ export type GenerationTaskDeliveryProgress = {
 
 export type GenerationTask = {
     failureDiagnostics?: import("@/lib/generation-error").GenerationFailureDiagnostics;
+    outcome?: import("@/lib/task-outcome").TaskOutcome;
     id: string;
     traceId?: string;
     clientOperationId?: string;
@@ -89,12 +90,6 @@ export type GenerationTask = {
 	};
     created_at?: string;
     updated_at?: string;
-};
-
-export type ProviderTaskQueryResult = {
-    task: GenerationTask;
-    providerStatus: string;
-    recovered: boolean;
 };
 
 export type TaskTextDelta = {
@@ -340,19 +335,15 @@ export function retryGenerationTask(id: string, options?: { signal?: AbortSignal
     return http.post<GenerationTask>(`/tasks/${encodeURIComponent(id)}/retry`, undefined, options);
 }
 
+export function recoverTask(id: string, options?: { signal?: AbortSignal; expectedScope?: CapturedUserScope }) {
+    return http.post<GenerationTask>(`/tasks/${encodeURIComponent(id)}/recover`, undefined, options);
+}
+
 export function cancelGenerationTask(id: string, expectedScope = captureUserScope()) {
     return http.post<GenerationTask>(`/tasks/${encodeURIComponent(id)}/cancel`, undefined, { expectedScope }).then((task) => {
         window.dispatchEvent(new CustomEvent("canvas:task-cancelled", { detail: { task } }));
         return task;
     });
-}
-
-export function queryFailedVideoProviderTask(id: string) {
-    return http.post<ProviderTaskQueryResult>(`/tasks/${encodeURIComponent(id)}/query-provider`);
-}
-
-export function canRetrieveVideoResult(task: GenerationTask) {
-    return task.status === "failed" && (task.type.startsWith("canvas_video") || task.type.startsWith("video_")) && Boolean(task.providerRequestId);
 }
 
 export function refreshGenerationTaskStatus(id: string, options?: { signal?: AbortSignal }) {
@@ -469,7 +460,11 @@ export async function waitForGenerationTask(id: string, options?: WaitForGenerat
                 return task;
             }
             if (task.status === "failed" || task.status === "cancelled") {
-                throw new Error(task.error ? generationErrorMessage(task.error) : `任务${task.status === "cancelled" ? "已取消" : "失败"}`);
+                const message = task.error ? generationErrorMessage(task.errorCode ? { code: task.errorCode, message: task.error } : task.error) : `任务${task.status === "cancelled" ? "已取消" : "失败"}`;
+                const error = new Error(message) as Error & { code?: string; taskOutcome?: import("@/lib/task-outcome").TaskOutcome };
+                if (task.errorCode) error.code = task.errorCode;
+                if (task.outcome) error.taskOutcome = task.outcome;
+                throw error;
             }
             const retrieving = Boolean(task.delivery) || task.stage === GENERATION_RESULT_FETCH_STAGE;
             await delay(retrieving ? Math.min(intervalMs, 500) : intervalMs, options?.signal);
@@ -577,7 +572,8 @@ async function waitForGenerationTaskTextEvents(id: string, options: WaitForGener
                 options.onTaskUpdate?.(completed);
                 if (completed.status === "succeeded") return completed;
                 if (completed.status === "failed" || completed.status === "cancelled") {
-                    throw new TaskTextStreamFatalError(completed.error ? generationErrorMessage(completed.error) : `任务${completed.status === "cancelled" ? "已取消" : "失败"}`);
+                    const message = completed.error ? generationErrorMessage(completed.errorCode ? { code: completed.errorCode, message: completed.error } : completed.error) : `任务${completed.status === "cancelled" ? "已取消" : "失败"}`;
+                    throw new TaskTextStreamFatalError(message, completed.errorCode);
                 }
             }
             lastStreamError = new Error("任务文本流连接提前结束");
@@ -605,9 +601,11 @@ function isTaskStatus(value: unknown): value is TaskStatus {
 }
 
 class TaskTextStreamFatalError extends Error {
-    constructor(message: string) {
+    code?: string;
+    constructor(message: string, code?: string) {
         super(message);
         this.name = "TaskTextStreamFatalError";
+        if (code) this.code = code;
     }
 }
 

@@ -24,6 +24,7 @@ import (
 	"infinite-canvas/backend/internal/eagle"
 	canvasHandler "infinite-canvas/backend/internal/handler"
 	"infinite-canvas/backend/internal/localapp"
+	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/repository"
 	"infinite-canvas/backend/internal/runtimeinfo"
 	httptransport "infinite-canvas/backend/internal/transport/http"
@@ -166,7 +167,7 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 	taskService := svc.TaskService()
 	localRoot, err := localapp.New(localapp.Options{
 		Workspace: workspace.NewService(repo), Projects: projectService, Assets: assetService, Tasks: taskService,
-		Generation: taskService, ProviderConfig: providerConfig, Lifecycle: localKernel,
+		Generation: taskService, ProviderConfig: providerConfig, ModelCapability: modelcatalog.NewCapabilityNormalizer(), Lifecycle: localKernel,
 	})
 	if err != nil {
 		cleanupService()
@@ -222,6 +223,7 @@ func Open(_ context.Context, raw Config) (result *Runtime, openErr error) {
 	canvasHandler.RegisterDesktopCanvasAPIWithDependencies(api, svc, canvasHandler.RuntimeDependencies{
 		RequestCoordinator: localKernel,
 		ProviderConfig:     localRoot.ProviderConfig,
+		ModelCapability:    localRoot.ModelCapability,
 		Assets:             localRoot.Assets,
 		Projects:           localRoot.Projects,
 		Tasks:              localRoot.Tasks,

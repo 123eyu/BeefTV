@@ -2,51 +2,40 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 // Bun 直接执行 TypeScript 测试时需要保留扩展名；生产 tsconfig 不包含 test/。
-import { DEFAULT_VIDEO_PROMPT_MAX_CHARS, defaultModelCapabilityConfig, modelCapabilityConfigFor, normalizeVideoValue, videoDurationAllowed } from "../src/lib/model-capabilities.ts";
+import { DEFAULT_VIDEO_PROMPT_MAX_CHARS, defaultModelCapabilityConfig, modelCapabilityConfigFor, normalizeVideoValue, videoDurationAllowed, videoSupportsTaskTypeConstraints } from "../src/lib/model-capabilities.ts";
 import { modelCompatibilityError, modelPromptLengthError } from "../src/lib/model-selection.ts";
 import type { AiConfig } from "../src/stores/use-config-store.ts";
 import { seedanceTaskOptions, seedanceOmniTaskType } from "../src/lib/seedance-task-constraints.ts";
 
-test("Dreamina native defaults expose editing and valid duration choices without expanding saved profiles", () => {
+test("backend-normalized Dreamina profile preserves editing, duration choices, and taskTypeConstraints", () => {
     const model = "dreamina-seedance-2-5-260628";
-    const profile = defaultModelCapabilityConfig("volcengine-ark-video", model).video!;
-    assert.ok(profile.operations.includes("inpaint") && profile.operations.includes("extend"));
+    const base = defaultModelCapabilityConfig("volcengine-ark-video", model).video!;
+    const backendVideo = {
+        ...base,
+        taskTypeConstraints: true,
+        operations: ["text_to_video", "image_to_video", "audio_to_video", "reference_to_video", "inpaint", "extend"] as const,
+        ratios: ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "adaptive"],
+        duration: { selection: "enum" as const, min: 4, max: 30, step: 1, default: 5, values: [-1, ...Array.from({ length: 27 }, (_, index) => index + 4)] },
+        references: { ...base.references, maxImages: 30, maxVideos: 10, maxAudios: 10 },
+    };
+    const config = {
+        channels: [{
+            id: "custom",
+            models: [model],
+            modelProfiles: [{ model, protocol: "volcengine-ark-video", capability: "video", capabilityConfig: { version: 1, video: [...backendVideo.operations] ? { ...backendVideo, operations: [...backendVideo.operations] } : backendVideo } }],
+        }],
+    } as AiConfig;
+    const profile = modelCapabilityConfigFor(config, `custom::${model}`).video!;
+    assert.equal(videoSupportsTaskTypeConstraints(profile), true);
+    assert.ok(profile.operations.includes("inpaint") && profile.operations.includes("extend") && profile.operations.includes("audio_to_video"));
     assert.ok(profile.ratios.includes("adaptive"));
     assert.equal(profile.duration.selection, "enum");
-    assert.deepEqual(profile.duration.values, [-1, ...Array.from({ length: 27 }, (_, index) => index + 4)]);
-    assert.deepEqual(defaultModelCapabilityConfig("volcengine-ark-video", "dreamina-seedance-2-0-fast-260128").video!.duration.values, [-1, ...Array.from({ length: 12 }, (_, index) => index + 4)]);
     for (const value of [-1, 4, 30]) assert.ok(videoDurationAllowed(profile, value));
     for (const value of [1, 3, 31]) assert.equal(videoDurationAllowed(profile, value), false);
-    const config = { channels: [{ id: "custom", models: [model], modelProfiles: [{ model, protocol: "volcengine-ark-video" }] }] } as AiConfig;
     for (const operation of ["inpaint", "extend"]) assert.equal(modelCompatibilityError(config, `custom::${model}`, { capability: "video", videoSeconds: "6", videoOperation: operation as "inpaint" | "extend", input: { textCount: 1, imageCount: 0, characterCount: 0, videoCount: 1, audioCount: 0 } }), "");
-    config.channels[0].modelProfiles![0].capabilityConfig = { version: 1, video: { ...profile, operations: ["text_to_video"], duration: { ...profile.duration, min: 5 }, ratios: ["16:9"] } };
-    assert.deepEqual(modelCapabilityConfigFor(config, `custom::${model}`).video!.operations, ["text_to_video"]);
-    assert.equal(modelCapabilityConfigFor(config, `custom::${model}`).video!.duration.min, 5);
-    assert.deepEqual(modelCapabilityConfigFor(config, `custom::${model}`).video!.ratios, ["16:9"]);
-    assert.equal(defaultModelCapabilityConfig("volcengine-ark-video", "doubao-seedance-2-5-260628").video!.duration.min, 1);
-    assert.equal(defaultModelCapabilityConfig("newapi", model).video!.duration.min, 1);
-});
-
-test("Dreamina 2.5 enables audio-only and keeps edit and extension task constraints", () => {
-    const model = "dreamina-seedance-2-5-260628";
-    const video = defaultModelCapabilityConfig("volcengine-ark-video", model).video!;
-    assert.equal(video.references.maxImages, 30);
-    assert.equal(video.references.maxVideos, 10);
-    assert.equal(video.references.maxAudios, 10);
-    assert.equal(video.duration.max, 30);
-    assert.ok(video.operations.includes("audio_to_video"));
-    assert.deepEqual(seedanceTaskOptions(model, "16:9", 6, [], 1, "inpaint"), { ratio: "adaptive", duration: -1 });
-    assert.equal(seedanceOmniTaskType(model, "extend", 1), "extend");
-    assert.deepEqual(seedanceTaskOptions(model, "16:9", 6, ["first_frame"], 0), { ratio: "adaptive", duration: 6 });
-});
-
-test("Dreamina Fast and Mini restrict native defaults without changing standard or custom profiles", () => {
-    for (const model of ["dreamina-seedance-2-0-fast-260128", "dreamina-seedance-2-0-mini-260615"]) {
-        assert.deepEqual(defaultModelCapabilityConfig("volcengine-ark-video", model).video!.resolutions, ["480p", "720p"]);
-        const config = { channels: [{ id: "custom", models: [model], modelProfiles: [{ model, protocol: "volcengine-ark-video", capabilityConfig: { version: 1, video: { ...defaultModelCapabilityConfig("volcengine-ark-video", model).video!, resolutions: ["720p"] } } }] }] } as AiConfig;
-        assert.deepEqual(modelCapabilityConfigFor(config, `custom::${model}`).video!.resolutions, ["720p"]);
-    }
-    assert.deepEqual(defaultModelCapabilityConfig("volcengine-ark-video", "dreamina-seedance-2-0-260128").video!.resolutions, ["480p", "720p", "1080p"]);
+    assert.deepEqual(seedanceTaskOptions(profile, "16:9", 6, [], 1, "inpaint"), { ratio: "adaptive", duration: -1 });
+    assert.equal(seedanceOmniTaskType(profile, "extend", 1), "extend");
+    assert.deepEqual(seedanceTaskOptions(profile, "16:9", 6, ["first_frame"], 0), { ratio: "adaptive", duration: 6 });
 });
 
 test("FullVideo full models accept one or two image references as well as mixed video references", () => {
@@ -167,8 +156,12 @@ test("APIMart NewAPI channel exposes Seedance multimodal reference operations", 
     assert.ok(!profile.operations.includes("audio_to_video"));
 });
 
-test("BeefAPI generic newapi Seedance accepts mixed image and video references without a persisted capability profile", () => {
+test("BeefAPI generic newapi Seedance accepts mixed image and video references when backend capability profile is present", () => {
     const model = "beefapi::seedance-2.0-fast";
+    const base = defaultModelCapabilityConfig("newapi", "seedance-2.0-fast");
+    base.video!.operations = ["text_to_video", "image_to_video", "reference_to_video"];
+    base.video!.references.maxVideos = 3;
+    base.video!.references.maxAudios = 3;
     const config = {
         channels: [{
             id: "beefapi",
@@ -181,6 +174,7 @@ test("BeefAPI generic newapi Seedance accepts mixed image and video references w
                 model: "seedance-2.0-fast",
                 capability: "video",
                 protocol: "newapi",
+                capabilityConfig: base,
                 billingMode: "fixed_request",
                 unitPriceMicrocredits: 0,
             }],

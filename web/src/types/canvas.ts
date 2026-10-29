@@ -156,6 +156,7 @@ export type CanvasGenerationBatchItem = {
     status: CanvasGenerationBatchItemStatus;
     retryCount: number;
     errorDetails?: string;
+    errorCode?: string;
     submissionUncertain?: boolean;
 };
 
@@ -262,7 +263,6 @@ export type CanvasNodeMetadata = {
     generationErrorCode?: string;
     generationPreflightError?: string;
     outputParameterWarning?: string;
-    resourceReloadAvailable?: boolean;
     failedPromptFingerprint?: string;
     failedInputFingerprint?: string;
     lastGenerationRequestFingerprint?: string;
@@ -366,6 +366,7 @@ export type CanvasNodeMetadata = {
     actionBoardColumns?: number;
     taskId?: string;
     taskType?: string;
+    taskOutcome?: import("@/lib/task-outcome").TaskOutcome;
     taskClientOperationId?: string;
     taskOutputIndex?: number;
     generationSubmissionState?: "submitting" | "unknown" | "accepted" | "rejected";

@@ -113,3 +113,165 @@ test("started production does not ask the user to manually continue the next ste
     expect(html).not.toContain(">检查结果<");
     expect(html).toContain("0/2");
 });
+test("production proposal card collapses per-item target details by default while keeping overview and confirm action visible",()=>{
+    const turn: AssistantTurn = {
+        turnId: "turn-collapsed",
+        userText: "做一支花店短片",
+        selectedNodeIds: [],
+        reply: "已为你准备好花店短片方案。",
+        toolCalls: [],
+        change: null,
+        error: null,
+        cancelled: false,
+        createdAt: "2026-10-28",
+        proposals: [proposal],
+    };
+    const html = renderToStaticMarkup(
+        <CanvasAssistantTurnView
+            turn={turn}
+            handledProposals={new Set()}
+            nodes={[]}
+            onLocate={() => {}}
+            onUndo={() => {}}
+            onRunProposal={() => {}}
+            onDismissProposal={() => {}}
+        />,
+    );
+    expect(html).toContain("已为你准备好花店短片方案。");
+    expect(html).toContain("整片制作方案：1 张图片、0 段视频、1 段配音");
+    expect(html).toContain("<details class=\"canvas-assistant-proposal-details\"><summary>查看 2 项镜头与提示词明细</summary>");
+    expect(html).not.toContain("<details open");
+    expect(html).toContain("确认并制作整片");
+});
+test("legacy proposal without turn reply shows proposal note inside the card without pretending to be a model reply",()=>{
+    const turn: AssistantTurn = {
+        turnId: "turn-legacy-note",
+        userText: "把首帧改成 9:16",
+        selectedNodeIds: [],
+        reply: "",
+        toolCalls: [],
+        change: null,
+        error: null,
+        cancelled: false,
+        createdAt: "2026-10-28",
+        proposals: [{ ...proposal, note: "已将首帧调整为竖屏 9:16。" }],
+    };
+    const html = renderToStaticMarkup(
+        <CanvasAssistantTurnView
+            turn={turn}
+            handledProposals={new Set()}
+            nodes={[]}
+            onLocate={() => {}}
+            onUndo={() => {}}
+            onRunProposal={() => {}}
+            onDismissProposal={() => {}}
+        />,
+    );
+    expect(html).not.toContain("canvas-assistant-reply");
+    expect(html).toContain("canvas-assistant-proposal-note");
+    expect(html).toContain("已将首帧调整为竖屏 9:16。");
+});
+test("assistantProposalProgress treats retrievable failed and fetching tasks as running until ready and bound",()=>{
+    const withOutcome = (meta: Record<string, unknown>) => meta as NonNullable<Parameters<typeof assistantProposalProgress>[1][number]["metadata"]>;
+    const inFlight = assistantProposalProgress(proposal, [
+        {
+            id: "frame",
+            type: "image",
+            title: "首帧",
+            position: { x: 0, y: 0 },
+            width: 320,
+            height: 180,
+            metadata: withOutcome({
+                status: "error",
+                taskStatus: "failed",
+                taskClientOperationId: "proposal:gp-film:frame",
+                taskOutcome: { phase: "retrievable", regenerate: "blocked", reason: "image_recovery_pending" },
+            }),
+        },
+        {
+            id: "speech",
+            type: "audio",
+            title: "中文旁白",
+            position: { x: 0, y: 200 },
+            width: 320,
+            height: 120,
+            metadata: withOutcome({
+                status: "loading",
+                taskStatus: "succeeded",
+                taskClientOperationId: "proposal:gp-film:speech",
+                taskOutcome: { phase: "fetching", regenerate: "blocked", reason: "result_fetching" },
+            }),
+        },
+    ]);
+    expect(inFlight.ready).toBe(false);
+    expect(inFlight.text).toBe("生成中，0/2 个结果已就绪。");
+
+    const allReady = assistantProposalProgress(proposal, [
+        {
+            id: "frame",
+            type: "image",
+            title: "首帧",
+            position: { x: 0, y: 0 },
+            width: 320,
+            height: 180,
+            metadata: withOutcome({
+                status: "success",
+                taskStatus: "succeeded",
+                storageKey: "resource:frame-1",
+                taskClientOperationId: "proposal:gp-film:frame",
+                taskOutcome: { phase: "ready", regenerate: "allowed", reason: "result_ready" },
+            }),
+        },
+        {
+            id: "speech",
+            type: "audio",
+            title: "中文旁白",
+            position: { x: 0, y: 200 },
+            width: 320,
+            height: 120,
+            metadata: withOutcome({
+                status: "success",
+                taskStatus: "succeeded",
+                storageKey: "resource:speech-1",
+                taskClientOperationId: "proposal:gp-film:speech",
+                taskOutcome: { phase: "ready", regenerate: "allowed", reason: "result_ready" },
+            }),
+        },
+    ]);
+    expect(allReady.ready).toBe(true);
+    expect(allReady.text).toContain("2 个素材已保存");
+
+    const settledWithFailure = assistantProposalProgress(proposal, [
+        {
+            id: "frame",
+            type: "image",
+            title: "首帧",
+            position: { x: 0, y: 0 },
+            width: 320,
+            height: 180,
+            metadata: withOutcome({
+                status: "error",
+                taskStatus: "failed",
+                taskClientOperationId: "proposal:gp-film:frame",
+                taskOutcome: { phase: "failed", regenerate: "confirm", reason: "no_result" },
+            }),
+        },
+        {
+            id: "speech",
+            type: "audio",
+            title: "中文旁白",
+            position: { x: 0, y: 200 },
+            width: 320,
+            height: 120,
+            metadata: withOutcome({
+                status: "success",
+                taskStatus: "succeeded",
+                storageKey: "resource:speech-1",
+                taskClientOperationId: "proposal:gp-film:speech",
+                taskOutcome: { phase: "ready", regenerate: "allowed", reason: "result_ready" },
+            }),
+        },
+    ]);
+    expect(settledWithFailure.ready).toBe(true);
+    expect(settledWithFailure.text).toBe("1 个结果已就绪，1 个结果因任务失败或取消而未生成。");
+});

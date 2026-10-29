@@ -3,6 +3,7 @@ package task
 import (
 	"strings"
 
+	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 )
 
@@ -12,17 +13,20 @@ type Outcome = model.TaskOutcome
 const (
 	RecoveryNoResult      = "no_result"
 	RecoveryUnrecoverable = "unrecoverable"
+
+	ReasonSettlementPending          = "settlement_pending"
+	ReasonChargedResultUnrecoverable = "charged_result_unrecoverable"
 )
 
 // OutcomeFacts 来自持久化证据。读失败必须显式标记，不能当成没有证据。
-// 渠道未声明某类失败不收费时，ConfirmedUncharged 保持 false。
+// RequestNotSent 由写入任务阶段的一方给出，投影不读界面显示的阶段文字。
 type OutcomeFacts struct {
 	Unreadable            bool
 	DispatchState         string
 	HasImageReceipt       bool
 	ImageResponseAccepted bool
 	SafeImageReplay       bool
-	ConfirmedUncharged    bool
+	RequestNotSent        bool
 }
 
 func ComputeOutcome(task model.Task, resultState string, facts OutcomeFacts) Outcome {
@@ -47,16 +51,17 @@ func ComputeOutcome(task model.Task, resultState string, facts OutcomeFacts) Out
 	if facts.Unreadable {
 		return out("retrievable", "blocked", "evidence_unavailable")
 	}
+	if outcome, ok := computeBeefAPIOutcome(task); ok {
+		return outcome
+	}
 	regenerate := "confirm"
-	if task.Type == model.TaskTypeDepthCapture || facts.ConfirmedUncharged || (!facts.ImageResponseAccepted && task.ProviderRequestID == "" && (facts.DispatchState == "not_sent" || facts.DispatchState == "rejected_no_job" || ((task.Stage == "request_not_sent" || task.Stage == "请求尚未提交") && facts.DispatchState != "accepted" && facts.DispatchState != "submission_unknown"))) {
+	if task.Type == model.TaskTypeDepthCapture || provablyNotSubmitted(task, facts) {
 		regenerate = "allowed"
 	}
 	// 只读结构化上游错误码；不从 Error 文案重新推断审核或计费。
-	if d := task.FailureDiagnostics; d != nil {
-		code := d.ProviderCode
-		if code == "content_policy_violation" || code == "content_moderation" || strings.HasPrefix(code, "SAFETY.INPUT.") {
-			return out("failed", "blocked", "input_rejected")
-		}
+	// 审核失败不代表没扣钱，改提示词后可以重新生成，但要先确认。
+	if d := task.FailureDiagnostics; d != nil && isInputRejectedCode(d.ProviderCode) {
+		return out("failed", "confirm", "input_rejected")
 	}
 	if task.RecoveryOutcome != nil {
 		switch *task.RecoveryOutcome {
@@ -66,11 +71,82 @@ func ComputeOutcome(task model.Task, resultState string, facts OutcomeFacts) Out
 			return out("failed", regenerate, "no_result")
 		}
 	}
-	if task.Type == "canvas_image" && (facts.HasImageReceipt || facts.ImageResponseAccepted || facts.SafeImageReplay || facts.DispatchState == "accepted" || facts.DispatchState == "submission_unknown" || task.Stage == "submission_unknown") {
+	if task.Type == "canvas_image" && generation.UpscaleMediaType(task.Model) == "" && (facts.HasImageReceipt || facts.ImageResponseAccepted || facts.SafeImageReplay || facts.DispatchState == "accepted" || facts.DispatchState == "submission_unknown" || task.Stage == "submission_unknown") {
 		return out("retrievable", "blocked", "image_recovery_pending")
 	}
-	if task.ProviderRequestID != "" {
+	if task.ProviderRequestID != "" || ((task.Type == "canvas_video" || strings.HasPrefix(task.Type, "video_") || generation.UpscaleMediaType(task.Model) != "") && (facts.DispatchState == "submission_unknown" || task.Stage == "submission_unknown")) {
 		return out("retrievable", "blocked", "provider_result_pending")
 	}
 	return out("failed", regenerate, "task_failed")
+}
+
+// provablyNotSubmitted 只在持久证据能证明上游没有接到请求时成立。
+func provablyNotSubmitted(task model.Task, facts OutcomeFacts) bool {
+	if facts.ImageResponseAccepted || task.ProviderRequestID != "" {
+		return false
+	}
+	switch facts.DispatchState {
+	case "not_sent", "rejected_no_job":
+		return true
+	case "accepted", "submission_unknown":
+		return false
+	}
+	return facts.RequestNotSent
+}
+
+func isInputRejectedCode(code string) bool {
+	return code == "content_policy_violation" || code == "content_moderation" || strings.HasPrefix(code, "SAFETY.INPUT.")
+}
+
+func computeBeefAPIOutcome(task model.Task) (Outcome, bool) {
+	deadline := ""
+	if task.BeefReconcileDeadline != nil {
+		deadline = strings.TrimSpace(*task.BeefReconcileDeadline)
+	}
+	terminalRecovery := task.RecoveryOutcome != nil && (*task.RecoveryOutcome == RecoveryNoResult || *task.RecoveryOutcome == RecoveryUnrecoverable)
+
+	if task.BeefUsageState != nil {
+		switch strings.ToLower(strings.TrimSpace(*task.BeefUsageState)) {
+		case "pending":
+			return Outcome{Phase: "failed", Regenerate: "blocked", Reason: ReasonSettlementPending, ReconcileDeadline: deadline}, true
+		case "completed":
+			if terminalRecovery {
+				return Outcome{Phase: "failed", Regenerate: "confirm", Reason: ReasonChargedResultUnrecoverable}, true
+			}
+			return Outcome{Phase: "retrievable", Regenerate: "blocked", Reason: "provider_result_pending"}, true
+		case "failed":
+			return Outcome{Phase: "failed", Regenerate: "allowed", Reason: beefRefundedFailureReason(task)}, true
+		}
+	}
+
+	if task.BeefBillingState != nil {
+		switch strings.ToLower(strings.TrimSpace(*task.BeefBillingState)) {
+		case "":
+			return Outcome{Phase: "failed", Regenerate: "blocked", Reason: ReasonSettlementPending, ReconcileDeadline: deadline}, true
+		case "settled":
+			if terminalRecovery {
+				return Outcome{Phase: "failed", Regenerate: "confirm", Reason: ReasonChargedResultUnrecoverable}, true
+			}
+			return Outcome{Phase: "retrievable", Regenerate: "blocked", Reason: "image_recovery_pending"}, true
+		case "refunded":
+			return Outcome{Phase: "failed", Regenerate: "allowed", Reason: beefRefundedFailureReason(task)}, true
+		}
+	}
+
+	return Outcome{}, false
+}
+
+func beefRefundedFailureReason(task model.Task) string {
+	if d := task.FailureDiagnostics; d != nil && isInputRejectedCode(d.ProviderCode) {
+		return "input_rejected"
+	}
+	if task.RecoveryOutcome != nil {
+		switch *task.RecoveryOutcome {
+		case RecoveryNoResult:
+			return "no_result"
+		case RecoveryUnrecoverable:
+			return "result_unrecoverable"
+		}
+	}
+	return "task_failed"
 }

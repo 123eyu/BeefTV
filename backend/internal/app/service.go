@@ -105,6 +105,8 @@ type Service struct {
 	workspaceOpsMu           sync.Mutex
 	imageRecoveryActive      atomic.Bool
 	imageRecoveryAfterID     string
+	videoRecoveryActive      atomic.Bool
+	videoRecoveryAfterID     string
 	bindAfterID              string
 	bindCursorMu             sync.Mutex
 }
@@ -278,6 +280,18 @@ func (s *Service) refreshTaskProviderState(task *model.Task) error {
 	if latest.ProviderRequestID != "" {
 		task.ProviderRequestID = latest.ProviderRequestID
 	}
+	if latest.ImageJobID != "" {
+		task.ImageJobID = latest.ImageJobID
+	}
+	if latest.BeefUsageState != nil {
+		task.BeefUsageState = latest.BeefUsageState
+	}
+	if latest.BeefBillingState != nil {
+		task.BeefBillingState = latest.BeefBillingState
+	}
+	if latest.BeefReconcileDeadline != nil {
+		task.BeefReconcileDeadline = latest.BeefReconcileDeadline
+	}
 	task.Stage, task.Progress = latest.Stage, latest.Progress
 	task.PollStage = latest.PollStage
 	task.NextPollAt = latest.NextPollAt
@@ -448,4 +462,8 @@ func defaultString(value string, fallback string) string {
 
 func newID() string {
 	return kernel.NewID()
+}
+
+func (s *Service) RecoverTask(ctx context.Context, userID, id string) (*model.Task, error) {
+	return s.taskDomain().RecoverTask(ctx, userID, id)
 }

@@ -10,27 +10,8 @@ import (
 	"testing"
 )
 
-func TestAssistantContinuationHTTPReusesTrustedTurnAndExcludesComposerInputs(t *testing.T) {
-	var forwarded []map[string]any
-	env := newAssistantTestEnv(t, func(env *assistantTestEnv) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/chat" {
-				w.Write([]byte(`{}`))
-				return
-			}
-			var input map[string]any
-			json.NewDecoder(r.Body).Decode(&input)
-			forwarded = append(forwarded, input)
-			if len(forwarded) == 1 {
-				w.WriteHeader(http.StatusServiceUnavailable)
-				w.Write([]byte(`{"reason":"temporary_database_error"}`))
-				return
-			}
-			// Observer ends without turn_end: a retry must reuse the claimed Go turn.
-			w.Header().Set("Content-Type", "application/x-ndjson")
-			json.NewEncoder(w).Encode(map[string]any{"type": "session", "sessionId": input["sessionId"], "turnId": input["turnId"]})
-		})
-	})
+func TestAssistantContinuationHTTPHasNoBrowserClaimAndKeepsTrustedTurn(t *testing.T) {
+	env := newAssistantTestEnv(t, nil)
 	owner, err := env.service.LocalWorkspaceOwner()
 	if err != nil {
 		t.Fatal(err)
@@ -76,33 +57,17 @@ func TestAssistantContinuationHTTPReusesTrustedTurnAndExcludesComposerInputs(t *
 	if err = env.service.Database().Create(&model.Task{ID: "failed-task", UserID: owner.ID, ProjectID: env.canvasID, ClientOperationID: &operation, Type: "canvas_image", Status: model.TaskStatusFailed, InputJSON: `{"metadata":{"sourceNodeId":"n1","nodeId":"n1"}}`}).Error; err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 2; i++ {
-		request, _ := json.Marshal(map[string]any{"canvasId": env.canvasID, "sessionId": session, "continuationId": id, "message": "do not send draft", "permissionMode": "full-access", "requestId": "client-request", "selectedNodeIds": []string{"foreign"}, "skills": []any{map[string]any{"skillId": "bad"}}, "references": []any{map[string]any{"kind": "asset", "id": "foreign"}}})
-		response := env.call(t, http.MethodPost, "/assistant/chat", string(request))
-		want := 200
-		if i == 0 {
-			want = http.StatusServiceUnavailable
-		}
-		if response.Code != want {
-			t.Fatal(response.Code, response.Body.String())
-		}
+	// The browser has no claim endpoint: only the backend worker claims a receipt.
+	if env.call(t, http.MethodPost, "/assistant/continuations/"+id+"/claim", `{}`).Code != http.StatusNotFound {
+		t.Fatal("frontend claim route still exists")
 	}
-	if len(forwarded) != 2 {
-		t.Fatal("host calls", len(forwarded))
+	claimed, err := env.service.ClaimAssistantContinuation(owner.ID, id)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, input := range forwarded {
-		if input["continuationId"] != id || input["turnId"] != data["turnId"] || input["requestId"] != data["requestId"] || input["message"] != assistantturns.ContinuationMessage || input["permissionMode"] != "canvas" {
-			t.Fatalf("untrusted continuation %+v", input)
-		}
-		ids := input["selectedNodeIds"].([]any)
-		if len(ids) != 1 || ids[0] != "n1" {
-			t.Fatal("wrong actual results", input)
-		}
-		for _, key := range []string{"skills", "attachments", "references"} {
-			if values, ok := input[key].([]any); ok && len(values) > 0 {
-				t.Fatal("composer leaked", key, input)
-			}
-		}
+	if claimed.TurnID != data["turnId"] || claimed.RequestID != data["requestId"] || claimed.Message != assistantturns.ContinuationMessage || claimed.PermissionMode != "canvas" ||
+		len(claimed.SelectedNodeIDs) != 1 || claimed.SelectedNodeIDs[0] != "n1" {
+		t.Fatalf("untrusted continuation %+v", claimed)
 	}
 	var count int64
 	env.service.Database().Model(&model.AssistantTurn{}).Count(&count)
@@ -128,8 +93,7 @@ func TestAssistantContinuationHTTPReusesTrustedTurnAndExcludesComposerInputs(t *
 	if completed.Code != 200 || state["open"] != false || state["continuationRevoked"] != true {
 		t.Fatalf("cancelled host ack %d %s", completed.Code, completed.Body.String())
 	}
-	rejected := env.call(t, http.MethodPost, "/assistant/continuations/"+id+"/claim", `{}`)
-	if rejected.Code == 200 {
+	if _, err = env.service.ClaimAssistantContinuation(owner.ID, id); err == nil {
 		t.Fatal("cancelled claim revived")
 	}
 }
@@ -161,10 +125,12 @@ func TestAssistantContinuationDisplayIdentityCannotBeSuppliedByManualTextOrJSON(
 			t.Fatalf("manual message acquired automatic display identity: %+v", input)
 		}
 	}
-	invalid := fmt.Sprintf(`{"canvasId":%q,"sessionId":"manual","message":%s,"permissionMode":"canvas","continuationId":"not-a-receipt"}`, env.canvasID, message)
-	response := env.call(t, http.MethodPost, "/assistant/chat", invalid)
-	if response.Code == 200 || len(forwarded) != 2 {
-		t.Fatal("unverified continuation reached host", response.Code, len(forwarded))
+	// The chat endpoint no longer reads continuationId at all: a receipt id is
+	// neither claimed nor forwarded, so the browser cannot start a continuation.
+	spoof := fmt.Sprintf(`{"canvasId":%q,"sessionId":"manual","message":%s,"permissionMode":"canvas","continuationId":"not-a-receipt"}`, env.canvasID, message)
+	response := env.call(t, http.MethodPost, "/assistant/chat", spoof)
+	if response.Code != 200 || len(forwarded) != 3 || forwarded[2]["continuationId"] != nil {
+		t.Fatal("client continuationId reached host", response.Code, len(forwarded))
 	}
 }
 
