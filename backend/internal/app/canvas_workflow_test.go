@@ -153,21 +153,21 @@ func TestCanvasWorkflowRunReconcilesReceiptsAndKeepsSnapshot(t *testing.T) {
 		t.Fatal(e)
 	}
 	request := cw.RunRequest{ClientOperationID: "confirmed-1", Inputs: map[string]cw.Value{"person": {ResourceID: "new-person"}}}
-	run, e := svc.StartCanvasWorkflow("owner", template.ID, request)
+	run, e := svc.workflowRuns().Start("owner", template.ID, request)
 	if e != nil {
 		t.Fatal(e)
 	}
-	replay, e := svc.StartCanvasWorkflow("owner", template.ID, request)
+	replay, e := svc.workflowRuns().Start("owner", template.ID, request)
 	if e != nil || replay.ID != run.ID {
 		t.Fatalf("run replay=%+v err=%v", replay, e)
 	}
 	request.Inputs["person"] = cw.Value{ResourceID: "old-person"}
-	if _, e = svc.StartCanvasWorkflow("owner", template.ID, request); e == nil {
+	if _, e = svc.workflowRuns().Start("owner", template.ID, request); e == nil {
 		t.Fatal("different inputs replayed")
 	}
 	// Simulate the process exiting after task admission but before saving taskId.
 	for node, result := range map[string]string{"depth": "new-depth", "gen": "new-output"} {
-		op := workflowOperation(run.ID, node)
+		op := cw.StepOperation(run.ID, node)
 		if e = db.Create(&model.Task{ID: "admitted-" + node, UserID: "owner", Type: "canvas_video", Status: model.TaskStatusSucceeded, ClientOperationID: &op, ResultJSON: `{"resourceId":"` + result + `"}`}).Error; e != nil {
 			t.Fatal(e)
 		}
@@ -175,8 +175,8 @@ func TestCanvasWorkflowRunReconcilesReceiptsAndKeepsSnapshot(t *testing.T) {
 	if e = svc.workflowTemplates().Delete("owner", template.ID); e != nil {
 		t.Fatal(e)
 	}
-	svc.advanceCanvasWorkflows(context.Background())
-	finished, e := svc.CanvasWorkflowRun("owner", run.ID)
+	svc.workflowRuns().AdvanceAll(context.Background())
+	finished, e := svc.workflowRuns().Get("owner", run.ID)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -191,7 +191,7 @@ func TestCanvasWorkflowRunReconcilesReceiptsAndKeepsSnapshot(t *testing.T) {
 	if e = svc.repo.DeleteResource("owner", "new-output"); e == nil {
 		t.Fatal("run output can be deleted")
 	}
-	if _, e = svc.CanvasWorkflowRun("other", run.ID); e == nil {
+	if _, e = svc.workflowRuns().Get("other", run.ID); e == nil {
 		t.Fatal("foreign run visible")
 	}
 }
@@ -202,15 +202,15 @@ func TestCanvasWorkflowCancelPreventsAdmission(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	run, e := svc.StartCanvasWorkflow("owner", template.ID, cw.RunRequest{ClientOperationID: "cancel-me"})
+	run, e := svc.workflowRuns().Start("owner", template.ID, cw.RunRequest{ClientOperationID: "cancel-me"})
 	if e != nil {
 		t.Fatal(e)
 	}
-	run, e = svc.CancelCanvasWorkflow(context.Background(), "owner", run.ID)
+	run, e = svc.workflowRuns().Cancel(context.Background(), "owner", run.ID)
 	if e != nil || run.Status != "cancelled" {
 		t.Fatalf("cancel=%+v %v", run, e)
 	}
-	svc.advanceCanvasWorkflows(context.Background())
+	svc.workflowRuns().AdvanceAll(context.Background())
 	var count int64
 	_ = db.Model(&model.Task{}).Count(&count).Error
 	if count != 1 {
@@ -240,29 +240,29 @@ func TestCanvasWorkflowDepthUsesExistingAdmissionAndReplays(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	run, e := svc.StartCanvasWorkflow("owner", template.ID, cw.RunRequest{ClientOperationID: "depth-admission"})
+	run, e := svc.workflowRuns().Start("owner", template.ID, cw.RunRequest{ClientOperationID: "depth-admission"})
 	if e != nil {
 		t.Fatal(e)
 	}
-	svc.advanceCanvasWorkflows(context.Background())
-	first, e := svc.CanvasWorkflowRun("owner", run.ID)
+	svc.workflowRuns().AdvanceAll(context.Background())
+	first, e := svc.workflowRuns().Get("owner", run.ID)
 	if e != nil {
 		t.Fatal(e)
 	}
 	if first.Status != "running" {
 		t.Fatalf("run=%+v", first)
 	}
-	task, e := svc.repo.TaskByClientOperation("owner", workflowOperation(run.ID, "depth"))
+	task, e := svc.repo.TaskByClientOperation("owner", cw.StepOperation(run.ID, "depth"))
 	if e != nil || task == nil || task.Type != model.TaskTypeDepthCapture || task.Status != model.TaskStatusQueued {
 		t.Fatalf("depth admission task=%+v err=%v", task, e)
 	}
-	svc.advanceCanvasWorkflows(context.Background())
-	second, e := svc.CanvasWorkflowRun("owner", run.ID)
+	svc.workflowRuns().AdvanceAll(context.Background())
+	second, e := svc.workflowRuns().Get("owner", run.ID)
 	if e != nil || len(second.Outputs) != 0 {
 		t.Fatalf("pending outputs=%+v err=%v", second, e)
 	}
 	var count int64
-	_ = db.Model(&model.Task{}).Where("client_operation_id = ?", workflowOperation(run.ID, "depth")).Count(&count).Error
+	_ = db.Model(&model.Task{}).Where("client_operation_id = ?", cw.StepOperation(run.ID, "depth")).Count(&count).Error
 	if count != 1 {
 		t.Fatal("polling admitted duplicate depth task")
 	}
@@ -357,7 +357,7 @@ func TestCanvasWorkflowRetryRefreshesOnlyUnacceptedCredentials(t *testing.T) {
 				}
 				return
 			}
-			run, e := svc.RetryCanvasWorkflow("owner", row.ID)
+			run, e := svc.workflowRuns().Retry("owner", row.ID)
 			stored, loadErr := svc.repo.Task(task.ID)
 			if loadErr != nil {
 				t.Fatal(loadErr)

@@ -35,16 +35,16 @@ func TestCanvasWorkflowImageSelectionRoundTrip(t *testing.T) {
 			if err != nil || len(reopened.Workflow.Definition.Nodes) != 2 {
 				t.Fatalf("reopen: %v", err)
 			}
-			run, err := s.StartCanvasWorkflow("owner", template.ID, cw.RunRequest{ClientOperationID: "image-selection"})
+			run, err := s.workflowRuns().Start("owner", template.ID, cw.RunRequest{ClientOperationID: "image-selection"})
 			if err != nil {
 				t.Fatal(err)
 			}
-			operation := workflowOperation(run.ID, "gen")
+			operation := cw.StepOperation(run.ID, "gen")
 			if err = db.Create(&model.Task{ID: "admitted-images", UserID: "owner", Type: "canvas_image", Status: model.TaskStatusSucceeded, ClientOperationID: &operation, ResultJSON: string(result)}).Error; err != nil {
 				t.Fatal(err)
 			}
-			s.advanceCanvasWorkflows(context.Background())
-			run, err = s.CanvasWorkflowRun("owner", run.ID)
+			s.workflowRuns().AdvanceAll(context.Background())
+			run, err = s.workflowRuns().Get("owner", run.ID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -52,19 +52,19 @@ func TestCanvasWorkflowImageSelectionRoundTrip(t *testing.T) {
 			if selected.Status != "waiting_selection" || len(selected.Candidates) != count || run.Status != "running" {
 				t.Fatalf("selection checkpoint: %+v", run)
 			}
-			if _, err = s.SelectCanvasWorkflowImage("other", run.ID, "select", "candidate-1"); err == nil {
+			if _, err = s.workflowRuns().Select("other", run.ID, "select", "candidate-1"); err == nil {
 				t.Fatal("foreign run selectable")
 			}
-			if _, err = s.SelectCanvasWorkflowImage("owner", run.ID, "select", "fixed-mask"); err == nil {
+			if _, err = s.workflowRuns().Select("owner", run.ID, "select", "fixed-mask"); err == nil {
 				t.Fatal("foreign candidate selectable")
 			}
 			for i := 0; i < 2; i++ {
-				if _, err = s.SelectCanvasWorkflowImage("owner", run.ID, "select", "candidate-1"); err != nil {
+				if _, err = s.workflowRuns().Select("owner", run.ID, "select", "candidate-1"); err != nil {
 					t.Fatal(err)
 				}
 			}
-			s.advanceCanvasWorkflows(context.Background())
-			run, err = s.CanvasWorkflowRun("owner", run.ID)
+			s.workflowRuns().AdvanceAll(context.Background())
+			run, err = s.workflowRuns().Get("owner", run.ID)
 			if err != nil || run.Status != "succeeded" || len(run.Outputs) != 1 || run.Outputs[0].ResourceID != "candidate-1" {
 				t.Fatalf("selected result: %+v %v", run, err)
 			}
