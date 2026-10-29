@@ -67,30 +67,6 @@ func (s *Service) promptDomain() *prompts.Service {
 	return prompts.New(s.repo, newPromptAdminGate(s))
 }
 
-func (s *Service) ListStyleProfiles(userID string) ([]model.StyleProfile, error) {
-	return s.promptDomain().ListStyleProfiles(userID)
-}
-
-func (s *Service) CreateStyleProfile(userID string, req StyleProfileRequest) (model.StyleProfile, error) {
-	return s.promptDomain().CreateStyleProfile(userID, req)
-}
-
-func (s *Service) UpdateStyleProfile(userID string, id string, req StyleProfileRequest) (model.StyleProfile, error) {
-	return s.promptDomain().UpdateStyleProfile(userID, id, req)
-}
-
-func (s *Service) SetStyleProfileFavorite(userID string, id string, favorite bool) error {
-	return s.promptDomain().SetStyleProfileFavorite(userID, id, favorite)
-}
-
-func (s *Service) TouchStyleProfile(userID string, id string) error {
-	return s.promptDomain().TouchStyleProfile(userID, id)
-}
-
-func (s *Service) DeleteStyleProfile(userID string, id string) error {
-	return s.promptDomain().DeleteStyleProfile(userID, id)
-}
-
 func (s *Service) EnsureDefaultPromptTemplates() error {
 	return s.promptDomain().EnsureDefaultPromptTemplates()
 }

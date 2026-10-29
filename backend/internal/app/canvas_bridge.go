@@ -259,10 +259,6 @@ func (s *Service) UpsertUserCanvasProjectWithTx(tx *gorm.DB, userID string, raw 
 	return s.canvasDomainWithTx(tx).UpsertUserCanvasProject(userID, raw)
 }
 
-func (s *Service) UserCanvasFolders(userID string) ([]model.CanvasLibraryFolder, error) {
-	return s.canvasDomain().UserCanvasFolders(userID)
-}
-
 func (s *Service) UpsertUserCanvasFolder(userID, id string, raw json.RawMessage) (model.CanvasLibraryFolder, error) {
 	var folder model.CanvasLibraryFolder
 	err := s.runCanvasLibraryWrite(func(domain *canvas.Service) error {
@@ -277,14 +273,6 @@ func (s *Service) DeleteUserCanvasFolder(userID, id string) error {
 	return s.runCanvasLibraryWrite(func(domain *canvas.Service) error {
 		return domain.DeleteUserCanvasFolder(userID, id)
 	})
-}
-
-func (s *Service) UserCanvasDrawings(userID, canvasID string) ([]canvas.CanvasDrawingDocument, error) {
-	return s.canvasDomain().UserCanvasDrawings(userID, canvasID)
-}
-
-func (s *Service) UserCanvasDrawing(userID, canvasID, drawingID string) (canvas.CanvasDrawingDocument, error) {
-	return s.canvasDomain().UserCanvasDrawing(userID, canvasID, drawingID)
 }
 
 func (s *Service) UpsertUserCanvasDrawing(userID, canvasID, drawingID string, raw json.RawMessage) (canvas.CanvasDrawingDocument, error) {

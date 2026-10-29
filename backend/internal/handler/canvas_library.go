@@ -17,13 +17,14 @@ import (
 const canvasDrawingJSONEnvelopeSlackBytes = 64 << 10
 
 func registerCanvasLibraryRoutes(r *gin.RouterGroup, svc *app.Service) {
+	canvasData := svc.CanvasService()
 	r.GET("/canvas-folders", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
 			failService(c, err)
 			return
 		}
-		folders, err := svc.UserCanvasFolders(user.ID)
+		folders, err := canvasData.UserCanvasFolders(user.ID)
 		if err != nil {
 			failService(c, err)
 			return
@@ -84,7 +85,7 @@ func registerCanvasLibraryRoutes(r *gin.RouterGroup, svc *app.Service) {
 			failService(c, err)
 			return
 		}
-		drawings, err := svc.UserCanvasDrawings(user.ID, c.Param("id"))
+		drawings, err := canvasData.UserCanvasDrawings(user.ID, c.Param("id"))
 		if err != nil {
 			failService(c, err)
 			return
@@ -97,7 +98,7 @@ func registerCanvasLibraryRoutes(r *gin.RouterGroup, svc *app.Service) {
 			failService(c, err)
 			return
 		}
-		drawing, err := svc.UserCanvasDrawing(user.ID, c.Param("id"), c.Param("drawingId"))
+		drawing, err := canvasData.UserCanvasDrawing(user.ID, c.Param("id"), c.Param("drawingId"))
 		if err != nil {
 			failService(c, err)
 			return
