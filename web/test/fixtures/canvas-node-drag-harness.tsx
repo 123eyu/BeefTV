@@ -4,7 +4,6 @@ import { CanvasNode } from '@/components/canvas/canvas-node';
 import { useCanvasSelectionController } from '@/pages/canvas/use-canvas-selection-controller';
 import { CanvasNodeType, type CanvasNodeData } from '@/types/canvas';
 import { createCanvasPageUiStore } from "../../src/stores/canvas/use-canvas-page-ui-store";
-const pageUi = createCanvasPageUiStore();
 
 const noop = () => {};
 // 仅挂载内存中的测试节点，不登录、不读写用户画布或调用模型。
@@ -15,7 +14,9 @@ export function mountNodeDragHarness(host: HTMLElement, options: { locked?: bool
         nodesRef.current = nodes;
         const containerRef = useRef<HTMLDivElement>(null);
         const viewportRef = useRef({ x: 0, y: 0, k: 1 });
-        const [selected, setSelected] = useState(new Set<string>());
+        // 和画布页一样：每次挂载各持一份界面状态，选中从 store 读。
+        const [pageUi] = useState(createCanvasPageUiStore);
+        const selected = pageUi((state) => state.selectedNodeIds);
         const selectedNodeIdsRef = useRef(selected);
         selectedNodeIdsRef.current = selected;
         const historyPausedRef = useRef(false);
