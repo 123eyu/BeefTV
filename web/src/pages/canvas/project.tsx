@@ -2171,23 +2171,6 @@ function InfiniteCanvasPage() {
         },
         [closeConnectionCreateMenu, selectedNodeIdsRef, setContextMenu, setSelectedConnectionId, setSelectedNodeIds],
     );
-    const handleCancelImageCrop = useCallback(() => setCropNodeId(null), [setCropNodeId]);
-    const handleConfirmImageCrop = useCallback((node: CanvasNodeData, crop: Parameters<typeof cropImageNode>[1]) => cropImageNode(node, crop), [cropImageNode]);
-    const handleCancelAnnotation = useCallback(() => setAnnotationNodeId(null), [setAnnotationNodeId]);
-    const handleConfirmAnnotation = useCallback(
-        async (node: CanvasNodeData, dataUrl: string) => {
-            await saveAnnotatedImageNode(node, dataUrl);
-            setAnnotationNodeId(null);
-        },
-        [saveAnnotatedImageNode, setAnnotationNodeId],
-    );
-    const handleCancelMaskEdit = useCallback(() => setMaskEditNodeId(null), [setMaskEditNodeId]);
-    const handleConfirmMaskEdit = useCallback((node: CanvasNodeData, payload: Parameters<typeof maskEditImageNode>[1]) => maskEditImageNode(node, payload), [maskEditImageNode]);
-    const handleCancelVideoCrop = useCallback(() => setVideoCropNodeId(null), [setVideoCropNodeId]);
-    const handleConfirmVideoCrop = useCallback(
-        (node: CanvasNodeData, crop: Parameters<typeof cropVideoNode>[1], sourceDimensions: Parameters<typeof cropVideoNode>[2]) => cropVideoNode(node, crop, sourceDimensions),
-        [cropVideoNode],
-    );
     const openCanvasNodeVersions = useCallback((node: CanvasNodeData) => setVersionCompareRootId(node.metadata?.versionOfNodeId || node.id), []);
     const viewCanvasNodeImage = useCallback((node: CanvasNodeData) => setPreviewNodeId(node.id), []);
     // Overview nodes reuse the DOM card handlers; native events carry the
@@ -2499,18 +2482,18 @@ function InfiniteCanvasPage() {
                                                 onOpenDrawing={openDrawingNode}
                                                 onStartBatchConnection={startBatchConnection}
                                                 imageCropNodeId={cropNodeId}
-                                                onCancelImageCrop={handleCancelImageCrop}
-                                                onConfirmImageCrop={handleConfirmImageCrop}
+                                                onCancelImageCrop={() => setCropNodeId(null)}
+                                                onConfirmImageCrop={cropImageNode}
                                                 annotationNodeId={annotationNodeId}
-                                                onCancelAnnotation={handleCancelAnnotation}
-                                                onConfirmAnnotation={handleConfirmAnnotation}
+                                                onCancelAnnotation={() => setAnnotationNodeId(null)}
+                                                onConfirmAnnotation={saveAnnotatedImageNode}
                                                 maskEditNodeId={maskEditNodeId}
                                                 maskEditConfig={maskEditNode ? { ...effectiveConfig, model: maskEditNode.metadata?.model || effectiveConfig.model, imageModel: maskEditNode.metadata?.model || effectiveConfig.imageModel, size: maskEditNode.metadata?.size || effectiveConfig.size, quality: maskEditNode.metadata?.quality || effectiveConfig.quality, count: String(maskEditNode.metadata?.count || effectiveConfig.count) } : effectiveConfig}
-                                                onCancelMaskEdit={handleCancelMaskEdit}
-                                                onConfirmMaskEdit={handleConfirmMaskEdit}
+                                                onCancelMaskEdit={() => setMaskEditNodeId(null)}
+                                                onConfirmMaskEdit={maskEditImageNode}
                                                 videoCropNodeId={videoCropNodeId}
-                                                onCancelVideoCrop={handleCancelVideoCrop}
-                                                onConfirmVideoCrop={handleConfirmVideoCrop}
+                                                onCancelVideoCrop={() => setVideoCropNodeId(null)}
+                                                onConfirmVideoCrop={cropVideoNode}
                                             />
                                         </CanvasNodeGraphContext.Provider>
                                     </CanvasNodeActionContext.Provider>
