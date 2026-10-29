@@ -37,7 +37,7 @@ memory_review_due: event:step-4-done
 
 # BeefTV 重构方案：同一条规则只留一份
 
-本文替代 `refactor-plan-20261027.md` 的 #84 原稿（`05abab0f`）和 #86 修订稿（`bffc87f5`），两者都没有合进 main。生成任务的详细行为规则仍以[状态方案](generation-task-state.md)为准，助手部分以 [`docs/plans/assistant-refactor.md`](../plans/assistant-refactor.md)（#38）为准；本文只定顺序、每步交付和验收。用户于 2026-10-28 同意本方案。
+本文替代 `refactor-plan-20261027.md` 的 #84 原稿（`05abab0f`）和 #86 修订稿（`bffc87f5`），两者都没有合进 main。生成任务的详细行为规则仍以[状态方案](generation-task-state.md)为准，助手部分以 [`docs/plans/assistant-refactor.md`](../plans/assistant-refactor.md)（#38）为准；本文只定顺序、每步交付和验收。用户于 2026-10-28 同意本方案。2026-10-29 方向调整：BeefAPI 模型的规则不放在 BeefTV 里，见第九节；第九节与前文冲突时以第九节为准。
 
 ## 一、为什么要做，以及上一轮为什么效果不理想
 
@@ -201,3 +201,51 @@ memory_review_due: event:step-4-done
 | 拆大文件 | 部分 | 提示词面板 1161 → 724 行；`project.tsx` 3556 → 3277 行 |
 
 剩余工作按优先级：前端模型能力改读后端（需先让目录导入与配置加载路径拿到后端结果）；删 `task-outcome.ts` 的旧节点推断（旧节点补齐 outcome 后）；第 3 步剩余文字判断；第 7 步并把新增的取回代码移出 `internal/app`；`project.tsx` 按职责继续拆。
+
+## 九、方向调整：BeefAPI 与 BeefTV 职责分离（2026-10-29 用户确认）
+
+### 9.1 原则
+
+**BeefTV 不知道具体模型的规则。** BeefAPI 负责供应商协议、走 URL 还是 Base64、结果转存（CF→COS）与恢复、扣费结论、错误归类和能力目录。BeefTV 按能力目录展示已有控件、提交任务、把结果放到画布上。
+
+- BeefAPI 新增现有能力范围内的模型（例如又一个"文字加参考图出图"的模型），只改 BeefAPI，BeefTV 刷新模型列表即可使用，不发新版。
+- 只有出现 BeefTV 从没支持过的交互或结果类型时，才更新客户端；不能静默降级。
+- "由 BeefAPI 决定"不等于文件经过主 API：参考图按上传票据直传 COS，生成结果由 CF 转存到 COS，主 API 只处理小 JSON。
+
+### 9.2 已确认的决定
+
+1. **自带 Key（BYOK）和第三方直连渠道的各家协议改为协议插件。** BeefTV 主体只保留 BeefAPI 统一协议和通用 OpenAI 兼容协议，不再有按模型名写的代码。
+2. **PR #290 先合**，新方向在其上继续。用户确认此 PR 不再另做交叉 review。
+3. **统一媒体协议**采用 Codex 会话的设计（`SERVER-OWNED-MEDIA-DECISION.md`：先协商协议版本 → 按票据直传素材 → 提交小 JSON 引用 → 拿回结果地址；新请求带协议版本，版本进入请求指纹，同一编号换版本直接冲突；历史任务按原请求恢复），并做以下修改：
+   - **按通用媒体设计，不只做图片。** 先实现图片，视频、超分、音频随后接入同一套上传票据、引用格式、结果地址和能力目录。
+   - **重发和取回只由 BeefAPI 负责。** 协议上线后，BeefAPI 渠道的任务 BeefTV 只按任务号查询结果，不再自己同键重发或自动取回；BeefTV 里对应代码随之删除，仅 BYOK 渠道保留。
+   - **BeefTV 只在一个地方跟 BeefAPI 打交道**：本地后端的 BeefAPI 适配层。`generation/` 下按模型命名的文件中属于 BeefAPI 渠道的部分，跟协议上线同一批删除。
+   - 协议版本除响应头外也写进 `/v1/models` 的返回内容。
+
+### 9.3 对原步骤的影响
+
+| 原步骤 | 调整后 |
+| --- | --- |
+| 第 2 步 模型能力 | 规则来源由 BeefTV 后端改为 BeefAPI 能力目录（沿用现有 `ImageCapabilityConfig` 结构，不另建表单框架）；BYOK 能力随协议插件声明 |
+| 第 3 步 错误分类 | BeefAPI 返回统一错误类别，BeefTV 只按类别选显示文字；`provider_error.go` 只留给协议插件 |
+| 第 4 步 取回 | BeefAPI 渠道由 BeefAPI 负责转存与恢复，BeefTV 只查任务状态；#290 加的视频自动取回仅 BYOK 使用 |
+| 第 4c 步 扣费 | 不变，照读 BeefAPI 结论 |
+| 第 5、6 步 | 不变 |
+| 第 7 步 后端分层 | 不变；BeefAPI 渠道代码移出后 `internal/app` 需要搬的内容减少 |
+
+### 9.4 分工
+
+同一批文件同一时间只有一条线在改。
+
+| 负责方 | 范围 |
+| --- | --- |
+| Codex（会话 `sess_8XgILdwXifvNnQ`） | BeefAPI 仓库（媒体协议服务端、转存、恢复、能力目录、错误类别）；BeefTV 的 BeefAPI 适配层：`backend/internal/beefapi/`、`backend/internal/generation/`、`backend/internal/modelcatalog/`、`backend/internal/app/` 中的 `image_auto_recovery`、`video_auto_recovery`、`provider_task_recovery`、`beefapi_seedance_preupload`、`seedream_outputs`、`generation_runtime`，前端 `lib/model-capabilities.ts`、`stores/use-config-store.ts` 的能力部分、`services/api/image*.ts`；PR #291 在合并 #290 后的 main 上重做，删除按模型选传输的名单 |
+| 本线（Claude） | 第 7 步中与生成无关的 handler（画布、项目、素材、助手等）改用 `localapp` 窄接口；`project.tsx` 按职责拆分；`lib/task-outcome.ts` 旧节点推断的清理；`agent-host/`。BYOK 协议插件化在 Codex 的适配层合入后开始，因为两者都会动 `generation/` |
+
+### 9.5 验收
+
+- 服务端加一个 BeefTV 没见过的模型名，同一份客户端代码能上传参考图、生成、取回结果，不需要按模型名的补丁。
+- 缓存的 Base64 选项、插件默认值都不能改掉协商好的协议；每条选中或重试的路由在调用供应商前拒绝不兼容的传输，原付费任务的供应商创建次数保持 1。
+- 显式的旧 Base64 请求、第三方 multipart 和历史任务按原请求恢复，行为不变。
+- 大图实测：50MB 参考图直传、COS 完整解码与哈希校验、主 API 媒体上传下载次数为 0。
+- BeefTV 主体里不再有按模型名分支的生成代码（BYOK 协议在插件包中）。
