@@ -55,7 +55,7 @@ describe("creation library button", () => {
 
     test("previews prompt reference images without removing them", () => {
         const createSource = readCreateWorkspaceSource();
-        const canvasSource = readFileSync(resolve(import.meta.dir, "../src/components/canvas/canvas-node-prompt-panel.tsx"), "utf8");
+        const canvasSource = readFileSync(resolve(import.meta.dir, "../src/components/canvas/canvas-node-reference-shelf.tsx"), "utf8");
 
         expect(createSource).toContain('className="creation-user-message-attachments"');
         expect(createSource).toContain('setPreviewType(kind === "video" ? "video" : "image")');
