@@ -16,9 +16,10 @@ import type { AssetCategory } from "@/stores/use-asset-store";
 import { CanvasNodeType, type CanvasFolderStyle, type CanvasFolderTheme, type CanvasNodeData, type CanvasNodeMetadata, type Position } from "@/types/canvas";
 import { useCanvasOwnerLifetime } from "./canvas-owner-epoch";
 import { createOwnedCanvasUploadGuard, persistOwnedCanvasUploadNode } from "./canvas-upload-ownership";
-import { canvasPageUiStore } from "@/stores/canvas/use-canvas-page-ui-store";
+import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";
 
 type UseCanvasNodeEditorOptions = {
+    pageUi: CanvasPageUiStoreHook;
     canvasId: string;
     canvasTitle: string;
     domainProjectId?: string;
@@ -29,6 +30,7 @@ type UseCanvasNodeEditorOptions = {
 };
 
 export function useCanvasNodeEditor({
+    pageUi,
     canvasId,
     canvasTitle,
     domainProjectId,
@@ -81,12 +83,12 @@ export function useCanvasNodeEditor({
                     : { ...node, width: folder ? FOLDER_COLLAPSED_WIDTH : FRAME_COLLAPSED_WIDTH, height: folder ? FOLDER_COLLAPSED_HEIGHT : FRAME_COLLAPSED_HEIGHT, metadata: { ...node.metadata, frame: { collapsed: true, expandedWidth: node.width, expandedHeight: node.height } } };
             }),
         );
-        canvasPageUiStore(canvasId).getState().setSelectedNodeIds(new Set([nodeId]));
-        canvasPageUiStore(canvasId).getState().setSelectedConnectionId(null);
-        canvasPageUiStore(canvasId).getState().setDialogNodeId((current) => (current && childIds.has(current) ? null : current));
-        canvasPageUiStore(canvasId).getState().setToolbarNodeId(null);
-        canvasPageUiStore(canvasId).getState().setHoveredNodeId(null);
-    }, [canvasId, nodesRef, setNodes]);
+        pageUi.getState().setSelectedNodeIds(new Set([nodeId]));
+        pageUi.getState().setSelectedConnectionId(null);
+        pageUi.getState().setDialogNodeId((current) => (current && childIds.has(current) ? null : current));
+        pageUi.getState().setToolbarNodeId(null);
+        pageUi.getState().setHoveredNodeId(null);
+    }, [pageUi, canvasId, nodesRef, setNodes]);
 
     const handleFrameToggle = useCallback((nodeId: string) => {
         const node = nodesRef.current.find((item) => item.id === nodeId);

@@ -1,5 +1,7 @@
 import type { Dispatch, SetStateAction } from "react";
 
+import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";
+
 import type { NodeGenerationContext } from "@/components/canvas/canvas-node-generation";
 import type { GenerationTask } from "@/services/api/task-center";
 import type { AiConfig } from "@/stores/use-config-store";
@@ -8,6 +10,7 @@ import type { SkillRuntimeMetadata } from "@/services/skill-runtime";
 import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
 
 export type CanvasGenerationExecutorDependencies = {
+    pageUi: CanvasPageUiStoreHook;
     projectId: string;
     nodesRef: { current: CanvasNodeData[] };
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;

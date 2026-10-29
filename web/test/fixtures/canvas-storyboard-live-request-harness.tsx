@@ -7,6 +7,8 @@ import { useCanvasStoryboard } from "../../src/pages/canvas/use-canvas-storyboar
 import { resetInterruptedGeneration } from "../../src/lib/canvas/canvas-project-generation";
 import { useConfigStore } from "../../src/stores/use-config-store";
 import { CanvasNodeType, type CanvasNodeData } from "../../src/types/canvas";
+import { createCanvasPageUiStore } from "../../src/stores/canvas/use-canvas-page-ui-store";
+const pageUi = createCanvasPageUiStore();
 
 // Drives the real storyboard request next to the real useCanvasGeneration, so a
 // later remote copy goes through the same restore and late recovery path the
@@ -50,7 +52,7 @@ function Harness() {
         setNodesState(value);
     }, []);
     const generation = useCanvasGeneration({ projectId: "canvas-a", projectLoaded: true, nodes, nodesRef, setNodes });
-    const storyboard = useCanvasStoryboard({
+    const storyboard = useCanvasStoryboard({ pageUi,
         projectId: "canvas-a",
         addedSkills: [],
         nodesRef,

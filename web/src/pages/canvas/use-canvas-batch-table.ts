@@ -9,9 +9,10 @@ import { buildGenerationConfig, resetGenerationTaskMetadata } from "@/lib/canvas
 import { navigateToSettings } from "@/lib/settings-navigation";
 import { modelDisplayName, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasBatchRow, type CanvasBatchTableData, type CanvasConnection, type CanvasGenerationBatchMode, type CanvasNodeData } from "@/types/canvas";
-import { canvasPageUiStore } from "@/stores/canvas/use-canvas-page-ui-store";
+import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";
 
 type Options = {
+    pageUi: CanvasPageUiStoreHook;
     projectId: string;
     nodesRef: { current: CanvasNodeData[] };
     connectionsRef: { current: CanvasConnection[] };
@@ -20,7 +21,7 @@ type Options = {
     enqueueGenerationBatch: (sourceNodeId: string, mode: CanvasGenerationBatchMode, targets: Array<{ rowId: string; nodeId: string }>, options?: { concurrency?: number }) => string | undefined;
 };
 
-export function useCanvasBatchTable({ projectId, nodesRef, connectionsRef, setNodes, setConnections, enqueueGenerationBatch }: Options) {
+export function useCanvasBatchTable({pageUi,  projectId, nodesRef, connectionsRef, setNodes, setConnections, enqueueGenerationBatch }: Options) {
     const { message, modal } = App.useApp();
     const effectiveConfig = useEffectiveConfig();
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
@@ -190,9 +191,9 @@ export function useCanvasBatchTable({ projectId, nodesRef, connectionsRef, setNo
         connectionsRef.current = nextConnections;
         setNodes(nextNodes);
         setConnections(nextConnections);
-        canvasPageUiStore(projectId).getState().setSelectedNodeIds(new Set(targets.map((target) => target.nodeId)));
+        pageUi.getState().setSelectedNodeIds(new Set(targets.map((target) => target.nodeId)));
         if (enqueueGenerationBatch(nodeId, "batch_image", targets, { concurrency: table.concurrency })) message.success(`${targets.length} 个任务已加入并发队列`);
-    }, [projectId, connectionsRef, effectiveConfig, enqueueGenerationBatch, isAiConfigReady, message, modal, nodesRef, setConnections, setNodes]);
+    }, [pageUi, projectId, connectionsRef, effectiveConfig, enqueueGenerationBatch, isAiConfigReady, message, modal, nodesRef, setConnections, setNodes]);
 
     return { addReferenceColumn, addRow, fillRowsFromConnections, generateRows, moveReferenceCell, patchTable, removeReferenceColumn, removeRow, reorderReferenceColumns, syncRowsFromConnections, updateRow };
 }

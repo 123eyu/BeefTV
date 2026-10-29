@@ -31,7 +31,7 @@ import { submitStoryboardTask } from "@/services/storyboard-submission";
 import { getActiveUserScope } from "@/lib/user-scope";
 import { modelDisplayName, resolveModelRequestConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { workspaceCapabilities } from "@/services/workspace-mode";
-import { canvasPageUiStore } from "@/stores/canvas/use-canvas-page-ui-store";
+import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";
 import {
     CanvasNodeType,
     type CanvasConnection,
@@ -41,6 +41,7 @@ import {
 } from "@/types/canvas";
 
 type UseCanvasStoryboardOptions = {
+    pageUi: CanvasPageUiStoreHook;
     projectId: string;
     addedSkills: Skill[];
     nodesRef: { current: CanvasNodeData[] };
@@ -58,6 +59,7 @@ const NODE_STATUS_SUCCESS = "success" as const;
 const NODE_STATUS_ERROR = "error" as const;
 
 export function useCanvasStoryboard({
+    pageUi,
     projectId,
     addedSkills,
     nodesRef,
@@ -444,9 +446,9 @@ export function useCanvasStoryboard({
         connectionsRef.current = nextConnections;
         setNodes(nextNodes);
         setConnections(nextConnections);
-        canvasPageUiStore(projectId).getState().setSelectedNodeIds(new Set(targets.map((target) => target.videoNode.id)));
+        pageUi.getState().setSelectedNodeIds(new Set(targets.map((target) => target.videoNode.id)));
         if (enqueueGenerationBatch(nodeId, "storyboard_video", targets.map((target) => ({ rowId: target.row.id, nodeId: target.videoNode.id })))) message.success("镜头视频已加入生成队列");
-    }, [projectId, connectionsRef, confirmGenerationSubmission, createScriptVideoNodes, effectiveConfig, enqueueGenerationBatch, isAiConfigReady, message, nodesRef, setConnections, setNodes]);
+    }, [pageUi, projectId, connectionsRef, confirmGenerationSubmission, createScriptVideoNodes, effectiveConfig, enqueueGenerationBatch, isAiConfigReady, message, nodesRef, setConnections, setNodes]);
 
     const createScriptActionBoards = useCallback(async (nodeId: string) => {
         const scriptNode = nodesRef.current.find((node) => node.id === nodeId && node.type === CanvasNodeType.Script);

@@ -7,6 +7,8 @@ import { useCanvasNodeEditor } from "@/pages/canvas/use-canvas-node-editor";
 import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
 import * as assetSync from "@/services/project-asset-sync";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
+import { createCanvasPageUiStore } from "../src/stores/canvas/use-canvas-page-ui-store";
+const pageUi = createCanvasPageUiStore();
 
 function deferred<T = void>() {
     let resolve!: (value: T | PromiseLike<T>) => void;
@@ -41,7 +43,7 @@ function mountEditor(canvasId = "canvas-a") {
     const writes: string[] = [];
     let editor!: ReturnType<typeof useCanvasNodeEditor>;
     function Harness() {
-        editor = useCanvasNodeEditor({
+        editor = useCanvasNodeEditor({ pageUi,
             canvasId,
             canvasTitle: "画布",
             domainProjectId: "project-a",

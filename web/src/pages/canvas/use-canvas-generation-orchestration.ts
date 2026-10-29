@@ -34,9 +34,10 @@ import { useCanvasGenerationBatches } from "./use-canvas-generation-batches";
 import { useCanvasGenerationExecutor } from "./use-canvas-generation-executor";
 import { useCanvasGenerationRetry } from "./use-canvas-generation-retry";
 import { useCanvasStoryboard } from "./use-canvas-storyboard";
-import { canvasPageUiStore } from "@/stores/canvas/use-canvas-page-ui-store";
+import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";
 
 type UseCanvasGenerationOrchestrationOptions = {
+    pageUi: CanvasPageUiStoreHook;
     projectId: string;
     /** 生成任务查询与 live 绑定：短剧关闭时为空。 */
     linkedProjectId?: string;
@@ -57,6 +58,7 @@ type UseCanvasGenerationOrchestrationOptions = {
 };
 
 export function useCanvasGenerationOrchestration({
+    pageUi,
     projectId,
     linkedProjectId,
     domainProjectId,
@@ -106,6 +108,7 @@ export function useCanvasGenerationOrchestration({
     });
 
     const handleGenerateNode = useCanvasGenerationExecutor({
+        pageUi,
         projectId,
         domainProjectId,
         addedSkills,
@@ -143,6 +146,7 @@ export function useCanvasGenerationOrchestration({
         syncRowsFromConnections,
         updateRow: updateBatchRow,
     } = useCanvasBatchTable({
+        pageUi,
         projectId,
         nodesRef,
         connectionsRef,
@@ -181,6 +185,7 @@ export function useCanvasGenerationOrchestration({
         updateScriptRow,
         updateScriptRows,
     } = useCanvasStoryboard({
+        pageUi,
         projectId,
         addedSkills,
         nodesRef,
@@ -268,7 +273,7 @@ export function useCanvasGenerationOrchestration({
                     ensureAsset: (item) => ensureCanvasNodeAsset({ canvasId: owner.canvasId, domainProjectId, node: item, source: "canvas-generation", taskId: task.id }),
                     onCommit: (node, insertedNodes) => {
                         setNodes((current) => insertedNodes.reduce((nodes, inserted) => rebaseInsertedCanvasNode(nodes, inserted), current));
-                        canvasPageUiStore(projectId).getState().setSelectedNodeIds(new Set([node.id]));
+                        pageUi.getState().setSelectedNodeIds(new Set([node.id]));
                         setGenerationHistoryOpen(false);
                         message.success("已从生成历史插入到画布");
                     },
@@ -279,7 +284,7 @@ export function useCanvasGenerationOrchestration({
                 insertingHistory.current.exit();
             }
         },
-        [domainProjectId, getCanvasCenter, lifetime, message, nodesRef, projectId, setGenerationHistoryOpen, setNodes],
+        [pageUi, domainProjectId, getCanvasCenter, lifetime, message, nodesRef, projectId, setGenerationHistoryOpen, setNodes],
     );
 
     const reconcileImageBatchRootNode = useCallback(
@@ -341,11 +346,11 @@ export function useCanvasGenerationOrchestration({
             connectionsRef.current = created.nextConnections;
             setNodes(created.nextNodes);
             setConnections(created.nextConnections);
-            canvasPageUiStore(projectId).getState().setSelectedNodeIds(new Set([created.imageNode.id]));
-            canvasPageUiStore(projectId).getState().setSelectedConnectionId(null);
-            canvasPageUiStore(projectId).getState().setDialogNodeId(created.imageNode.id);
+            pageUi.getState().setSelectedNodeIds(new Set([created.imageNode.id]));
+            pageUi.getState().setSelectedConnectionId(null);
+            pageUi.getState().setDialogNodeId(created.imageNode.id);
         },
-        [connectionsRef, effectiveConfig, message, nodesRef, projectId, setConnections, setNodes],
+        [pageUi, connectionsRef, effectiveConfig, message, nodesRef, projectId, setConnections, setNodes],
     );
 
     return {

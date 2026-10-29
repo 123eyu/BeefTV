@@ -38,8 +38,10 @@ import { canvasNodeHasPendingOutcomeResult, isNodeRegenerateBlocked, isNodeRegen
 import { createReferenceLinkResolver } from "@/components/generation-reference-links";
 import { confirmCanvasGeneration, waitForCanvasPreparation } from "./canvas-generation-preflight";
 import { startOperation } from "@/stores/use-operation-progress";
+import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";
 
 type UseCanvasGenerationExecutorOptions = {
+    pageUi: CanvasPageUiStoreHook;
     projectId: string;
     domainProjectId?: string;
     addedSkills: Skill[];
@@ -75,6 +77,7 @@ export type CanvasNodeGenerationOptions = {
 };
 
 export function useCanvasGenerationExecutor({
+    pageUi,
     projectId,
     domainProjectId,
     addedSkills,
@@ -464,6 +467,7 @@ export function useCanvasGenerationExecutor({
                         let pendingNodeIds: string[] = [];
                         const boundTaskIds = new Set<string>();
                         const execution = {
+                            pageUi,
                             projectId,
                             nodesRef,
                             nodeId,

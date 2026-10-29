@@ -3,10 +3,11 @@ import { useCallback, type Dispatch, type SetStateAction } from "react";
 import { ART_CRITIQUE_NODE_TYPE } from "@/lib/art-critique/contracts";
 import { isFrameNode } from "@/lib/canvas/canvas-frame";
 import { canOpenCanvasNodePromptPanel } from "@/lib/canvas/canvas-node-semantics";
-import { canvasPageUiStore } from "@/stores/canvas/use-canvas-page-ui-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
+import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";
 
 type UseCanvasNodeClickOptions = {
+    pageUi: CanvasPageUiStoreHook;
     projectId: string;
     nodesRef: { current: CanvasNodeData[] };
     segmentRunningMode?: string | null;
@@ -20,6 +21,7 @@ type UseCanvasNodeClickOptions = {
  * 选中和面板写进当前画布的 store，读的是点击当下的值。
  */
 export function useCanvasNodeClick({
+    pageUi,
     projectId,
     nodesRef,
     segmentRunningMode,
@@ -29,7 +31,7 @@ export function useCanvasNodeClick({
 }: UseCanvasNodeClickOptions) {
     const handleSelectedNodeClick = useCallback(
         (node: CanvasNodeData) => {
-            const { setDialogNodeId, setToolbarNodeId } = canvasPageUiStore(projectId).getState();
+            const { setDialogNodeId, setToolbarNodeId } = pageUi.getState();
             if (segmentRunningMode === "audio") return;
             if (node.metadata?.workflowSlot || node.metadata?.reusableWorkflow) {
                 bringNodeToFront(node.id);
@@ -76,7 +78,7 @@ export function useCanvasNodeClick({
                 });
             }
         },
-        [bringNodeToFront, nodesRef, projectId, segmentRunningMode, setArtCritiqueNodeId, setDrawingNodeId],
+        [pageUi, bringNodeToFront, nodesRef, projectId, segmentRunningMode, setArtCritiqueNodeId, setDrawingNodeId],
     );
 
     const handleNodeBringToFront = useCallback(

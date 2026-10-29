@@ -9,7 +9,6 @@ import { recordConfirmedCanvasCommit } from "../../src/services/canvas-operation
 import { cacheResourceObjectUrl } from "../../src/services/resource-blob-cache";
 import { createModelChannel, defaultConfig, encodeChannelModel, useConfigStore } from "../../src/stores/use-config-store";
 import { useCanvasStore } from "../../src/stores/canvas/use-canvas-store";
-import { canvasPageUiStore } from "../../src/stores/canvas/use-canvas-page-ui-store";
 import { useUserStore } from "../../src/stores/use-user-store";
 import type { CanvasConnection, CanvasNodeData } from "../../src/types/canvas";
 import { customerGenerationProject, type CustomerGenerationScenario } from "./customer-generation-scenarios";
@@ -24,6 +23,8 @@ import { buildCanvasNodeMentionReferenceMap } from "../../src/lib/canvas/canvas-
 import { isolateCopiedNodeMetadata } from "../../src/lib/canvas/canvas-node-copy";
 import { useCanvasNodeOperations } from "../../src/pages/canvas/use-canvas-node-operations";
 import { CanvasGenerationHistoryPicker } from "../../src/components/canvas/canvas-generation-history-picker";
+import { createCanvasPageUiStore } from "../../src/stores/canvas/use-canvas-page-ui-store";
+const pageUi = createCanvasPageUiStore();
 
 const params = new URLSearchParams(location.search);
 const scenario = (params.get("scenario") || "five-images") as CustomerGenerationScenario;
@@ -101,13 +102,13 @@ function Harness() {
         useCanvasStore.getState().updateProject(project.id, { nodes: next });
         return next;
     }), []);
-    useEffect(() => canvasPageUiStore(project.id).subscribe((state, previous) => {
+    useEffect(() => pageUi.subscribe((state, previous) => {
         if (state.dialogNodeId && state.dialogNodeId !== previous.dialogNodeId) setActiveNodeId(state.dialogNodeId);
     }), []);
-    const nodeOperations = useCanvasNodeOperations({ projectId: project.id, defaultDrawingEngine: "excalidraw", nodesRef, connectionsRef, selectedNodeIdsRef,
+    const nodeOperations = useCanvasNodeOperations({ pageUi, projectId: project.id, defaultDrawingEngine: "excalidraw", nodesRef, connectionsRef, selectedNodeIdsRef,
         getCanvasCenter: () => ({ x: 400, y: 300 }), setNodes, setConnections, onNodesDeleted: noop });
     const generation = useCanvasGeneration({ projectId: project.id, domainProjectId: "synthetic-domain", projectLoaded: params.has("recover"), nodes, nodesRef, setNodes });
-    const generate = useCanvasGenerationExecutor({ projectId: project.id, domainProjectId: "synthetic-domain", addedSkills: [], assets: [], nodesRef, connectionsRef, setNodes, setConnections: noop,
+    const generate = useCanvasGenerationExecutor({ pageUi, projectId: project.id, domainProjectId: "synthetic-domain", addedSkills: [], assets: [], nodesRef, connectionsRef, setNodes, setConnections: noop,
         setRunningNodeId: generation.setRunningNodeId, startGenerationRequest: generation.startGenerationRequest, finishGenerationRequest: generation.finishGenerationRequest, bindGenerationTask: generation.bindGenerationTask, applyGenerationTaskResult: generation.applyGenerationTaskResult });
     harness.generate = async () => {
         harness.settled = false;

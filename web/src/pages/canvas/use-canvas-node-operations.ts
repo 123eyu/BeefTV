@@ -19,7 +19,6 @@ import { useEffectiveConfig } from "@/stores/use-config-store";
 import { workflowProviderPluginEnabled } from "@/lib/plugins/builtin/workflows";
 import { usePluginStore } from "@/stores/use-plugin-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
-import { canvasPageUiStore } from "@/stores/canvas/use-canvas-page-ui-store";
 import type { DirectorScene } from "@/types/director";
 import { isCanvasNodeGenerating } from "@/lib/canvas/canvas-node-task-state";
 import { cancelWorkflowRun } from "@/services/api/canvas-workflows";
@@ -27,6 +26,7 @@ import { cancelGenerationTask } from "@/services/api/task-center";
 import { canvasTaskConfirmation } from "./canvas-task-confirmation";
 import { subscribeUserScope } from "@/lib/user-scope";
 import { captureUserScope, userScopeMatches } from "@/lib/user-scope-guard";
+import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";
 
 type CanvasClipboard = {
     nodes: CanvasNodeData[];
@@ -39,6 +39,7 @@ const CANVAS_NODES_JSON_CLIPBOARD_PREFIX = "open-ai-canvas-nodes-json:";
 const CANVAS_NODES_CLIPBOARD_STORAGE_KEY = "open-ai-canvas:nodes-clipboard";
 
 type UseCanvasNodeOperationsOptions = {
+    pageUi: CanvasPageUiStoreHook;
     projectId: string;
     viewportScale?: number;
     defaultDrawingEngine: CanvasDrawingEngine;
@@ -52,6 +53,7 @@ type UseCanvasNodeOperationsOptions = {
 };
 
 export function useCanvasNodeOperations({
+    pageUi,
     projectId,
     viewportScale = 1,
     defaultDrawingEngine,
@@ -158,10 +160,10 @@ export function useCanvasNodeOperations({
 
     const selectNodes = useCallback((ids: Set<string>) => {
         selectedNodeIdsRef.current = ids;
-        const ui = canvasPageUiStore(projectId).getState();
+        const ui = pageUi.getState();
         ui.setSelectedNodeIds(ids);
         ui.setSelectedConnectionId(null);
-    }, [projectId, selectedNodeIdsRef]);
+    }, [pageUi, projectId, selectedNodeIdsRef]);
 
     const createNode = useCallback((type: CanvasNodeTypeId, position?: Position, workflowProvider?: "runninghub") => {
         const disabledReason = getCanvasNodeCreationDisabledReason(type);
@@ -204,10 +206,10 @@ export function useCanvasNodeOperations({
         if (workflowTitle) node.title = workflowTitle;
         commitNodes([...nodesRef.current, node]);
         selectNodes(new Set([node.id]));
-        const { setDialogNodeId } = canvasPageUiStore(projectId).getState();
+        const { setDialogNodeId } = pageUi.getState();
         if (type === CanvasNodeType.Script) setDialogNodeId(null);
         if (canOpenCanvasNodePromptPanel(node) && type !== CanvasNodeType.Text) setDialogNodeId(node.id);
-    }, [commitNodes, defaultDrawingEngine, effectiveConfig, getCanvasCenter, message, nodesRef, projectId, runtimeStatuses, selectNodes, viewportScale]);
+    }, [pageUi, commitNodes, defaultDrawingEngine, effectiveConfig, getCanvasCenter, message, nodesRef, projectId, runtimeStatuses, selectNodes, viewportScale]);
 
     const createFolder = useCallback((position?: Position, linked?: { id: string; projectId: string; title: string; style: CanvasFolderStyle; theme: CanvasFolderTheme; createdAt: string }) => {
         const folder = createCanvasNode(CanvasNodeType.Frame, position || getCanvasCenter(), {
@@ -460,10 +462,10 @@ export function useCanvasNodeOperations({
         const nextNodes = applyCanvasConnectionPromptSync(previousNodes, previousConnections, previousNodes, nextConnections);
         if (nextNodes !== previousNodes) commitNodes(nextNodes);
         commitConnections(nextConnections);
-        const ui = canvasPageUiStore(projectId).getState();
+        const ui = pageUi.getState();
         ui.setSelectedConnectionId((current) => current === connectionId ? null : current);
         ui.setContextMenu((current) => current?.type === "connection" && current.connectionId === connectionId ? null : current);
-    }, [commitConnections, commitNodes, connectionsRef, nodesRef, projectId]);
+    }, [pageUi, commitConnections, commitNodes, connectionsRef, nodesRef, projectId]);
 
     const duplicateNode = useCallback((nodeId: string, duplicateMode: "variant" | "copy" = "variant") => {
         const source = nodesRef.current.find((node) => node.id === nodeId);
@@ -516,8 +518,8 @@ export function useCanvasNodeOperations({
             const sourceNode = sourceByTargetId.get(targetNode.id);
             if (sourceNode) cloneDrawingForNode(sourceNode, targetNode, "绘图副本保存失败，请重新复制");
         });
-        canvasPageUiStore(projectId).getState().setDialogNodeId(canOpenCanvasNodePromptPanel(copiedNodes.find((node) => node.id === id)) ? id : null);
-    }, [cloneDrawingForNode, commitConnections, commitNodes, connectionsRef, isolateDirectorCopies, nodesRef, projectId, selectNodes]);
+        pageUi.getState().setDialogNodeId(canOpenCanvasNodePromptPanel(copiedNodes.find((node) => node.id === id)) ? id : null);
+    }, [pageUi, cloneDrawingForNode, commitConnections, commitNodes, connectionsRef, isolateDirectorCopies, nodesRef, projectId, selectNodes]);
 
     const createGenerationReplacement = useCallback((nodeId: string) => {
         const context = deletionContext.current;
@@ -650,12 +652,12 @@ export function useCanvasNodeOperations({
         });
         const topLevelIds = new Set(nextNodes.filter((node) => !node.parentId).map((node) => node.id));
         selectNodes(topLevelIds);
-        const ui = canvasPageUiStore(projectId).getState();
+        const ui = pageUi.getState();
         ui.setContextMenu(null);
         const primaryNode = nextNodes.find((node) => !node.parentId);
         ui.setDialogNodeId(canOpenCanvasNodePromptPanel(primaryNode) ? primaryNode!.id : null);
         return true;
-    }, [cloneDrawingForNode, commitConnections, commitNodes, connectionsRef, getCanvasCenter, isolateDirectorCopies, nodesRef, projectId, selectNodes]);
+    }, [pageUi, cloneDrawingForNode, commitConnections, commitNodes, connectionsRef, getCanvasCenter, isolateDirectorCopies, nodesRef, projectId, selectNodes]);
 
     const restoreCopiedNodesFromText = useCallback((value: string) => {
         const isMarker = value.startsWith(CANVAS_NODES_CLIPBOARD_PREFIX);

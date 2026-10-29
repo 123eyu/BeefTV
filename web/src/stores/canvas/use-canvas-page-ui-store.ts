@@ -1,14 +1,14 @@
-import { create } from "zustand";
+import { create, type StoreApi, type UseBoundStore } from "zustand";
 
-import { getActiveUserScope } from "@/lib/user-scope";
 import type { ContextMenuState } from "@/types/canvas";
 
 /**
- * 一张画布窗口自己的选中、悬停和面板状态。
+ * 一个画布页面实例自己的选中、悬停和面板状态。
  *
- * 文档内容在 useCanvasStore，这里只放打开这张画布时才存在的界面状态。
- * 按「用户 scope + 画布 id」分开，切画布或开第二个窗口不会把选中和菜单带过去。
- * 写入一律走 getState()，回调里读到的是当前值，不依赖调用方当时抓住的那一份。
+ * 文档内容在 useCanvasStore。这里不按画布 id 做全局登记：每个 InfiniteCanvasPage
+ * 自己创建一份，卸载即释放。同一个项目开两个窗口不会共用选中和菜单；异步回调
+ * 拿到的是创建它的那个页面，账号切换后不会写进另一份。
+ * 写入走 getState()，回调读到的是当前值，不依赖调用方当时抓住的那一份。
  */
 export type CanvasPageUiState = {
     selectedNodeIds: Set<string>;
@@ -44,9 +44,7 @@ type CanvasPageUiActions = {
 
 export type CanvasPageUiStore = CanvasPageUiState & CanvasPageUiActions;
 
-export function canvasPageUiKey(projectId: string, userScope = getActiveUserScope()) {
-    return `${userScope}\0${projectId}`;
-}
+export type CanvasPageUiStoreHook = UseBoundStore<StoreApi<CanvasPageUiStore>>;
 
 export function emptyCanvasPageUiState(): CanvasPageUiState {
     return {
@@ -72,7 +70,7 @@ function sameId(next: string | null, current: string | null) {
     return next === current;
 }
 
-function createCanvasPageUiStore() {
+export function createCanvasPageUiStore() {
     return create<CanvasPageUiStore>((set) => ({
         ...emptyCanvasPageUiState(),
         setSelectedNodeIds: (value) => set((state) => {
@@ -153,21 +151,4 @@ function createCanvasPageUiStore() {
             };
         }),
     }));
-}
-
-const canvasPageUiStores = new Map<string, ReturnType<typeof createCanvasPageUiStore>>();
-
-export function canvasPageUiStore(projectId: string, userScope = getActiveUserScope()) {
-    const key = canvasPageUiKey(projectId, userScope);
-    let store = canvasPageUiStores.get(key);
-    if (!store) {
-        store = createCanvasPageUiStore();
-        canvasPageUiStores.set(key, store);
-    }
-    return store;
-}
-
-/** 测试之间清掉残留的选中和菜单，避免上一张画布的状态漏到下一张。 */
-export function resetCanvasPageUiStores() {
-    canvasPageUiStores.clear();
 }

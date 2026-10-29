@@ -3,9 +3,10 @@ import { App } from "antd";
 
 import { createShortDramaPipeline, deriveShortDramaProgress, persistShortDramaGuideDismissed, readShortDramaGuideDismissed, type CanvasShortDramaStepId } from "@/lib/canvas/canvas-short-drama";
 import type { CanvasConnection, CanvasNodeData, Position } from "@/types/canvas";
-import { canvasPageUiStore } from "@/stores/canvas/use-canvas-page-ui-store";
+import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";
 
 type UseCanvasShortDramaOptions = {
+    pageUi: CanvasPageUiStoreHook;
     projectId: string;
     nodes: CanvasNodeData[];
     connections: CanvasConnection[];
@@ -21,7 +22,7 @@ type UseCanvasShortDramaOptions = {
     openTextEditor: (node: CanvasNodeData) => void;
 };
 
-export function useCanvasShortDrama({ projectId, nodes, connections, nodesRef, connectionsRef, selectedNodeIdsRef, getCanvasCenter, setNodes, setConnections, setStylePickerOpen, fitCanvasSelection, focusCanvasNode, openTextEditor }: UseCanvasShortDramaOptions) {
+export function useCanvasShortDrama({pageUi,  projectId, nodes, connections, nodesRef, connectionsRef, selectedNodeIdsRef, getCanvasCenter, setNodes, setConnections, setStylePickerOpen, fitCanvasSelection, focusCanvasNode, openTextEditor }: UseCanvasShortDramaOptions) {
     const { message } = App.useApp();
     const dismissedRef = useRef(readShortDramaGuideDismissed());
     const [guideCollapsed, setGuideCollapsed] = useState(dismissedRef.current);
@@ -30,9 +31,9 @@ export function useCanvasShortDrama({ projectId, nodes, connections, nodesRef, c
     const selectNodes = useCallback((ids: string[]) => {
         const selection = new Set(ids);
         selectedNodeIdsRef.current = selection;
-        canvasPageUiStore(projectId).getState().setSelectedNodeIds(selection);
-        canvasPageUiStore(projectId).getState().setSelectedConnectionId(null);
-    }, [projectId, selectedNodeIdsRef]);
+        pageUi.getState().setSelectedNodeIds(selection);
+        pageUi.getState().setSelectedConnectionId(null);
+    }, [pageUi, projectId, selectedNodeIdsRef]);
 
     const createPipeline = useCallback(() => {
         if (nodesRef.current.length) return message.info("当前画布已有内容，请在新画布创建短剧流水线");

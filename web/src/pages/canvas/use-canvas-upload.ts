@@ -31,9 +31,10 @@ import type { TimelineDirectMedia } from "@/types/timeline";
 import type { CanvasUploadStatus } from "./canvas-project-feedback";
 import { runOwnedCanvasCreatedNodes, useCanvasOwnerLifetime } from "./canvas-owner-epoch";
 import { createOwnedCanvasUploadGuard, persistOwnedCanvasUploadNode, shouldSuppressOwnedCanvasCallback } from "./canvas-upload-ownership";
-import { canvasPageUiStore } from "@/stores/canvas/use-canvas-page-ui-store";
+import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";
 
 type UseCanvasUploadOptions = {
+    pageUi: CanvasPageUiStoreHook;
     canvasId: string;
     domainProjectId?: string;
     nodesRef: { current: CanvasNodeData[] };
@@ -64,6 +65,7 @@ function isBatchTableDragEvent(event: DragEvent<HTMLElement>) {
 }
 
 export function useCanvasUpload({
+    pageUi,
     canvasId,
     domainProjectId,
     nodesRef,
@@ -130,10 +132,10 @@ export function useCanvasUpload({
     }, [canvasId, lifetime, mountedRef]);
 
     const selectInsertedNode = useCallback((nodeId: string, dialog: "open" | "close" | "preserve") => {
-        canvasPageUiStore(canvasId).getState().setSelectedNodeIds(new Set([nodeId]));
-        canvasPageUiStore(canvasId).getState().setSelectedConnectionId(null);
-        if (dialog !== "preserve") canvasPageUiStore(canvasId).getState().setDialogNodeId(dialog === "open" ? nodeId : null);
-    }, [canvasId, ]);
+        pageUi.getState().setSelectedNodeIds(new Set([nodeId]));
+        pageUi.getState().setSelectedConnectionId(null);
+        if (dialog !== "preserve") pageUi.getState().setDialogNodeId(dialog === "open" ? nodeId : null);
+    }, [pageUi, canvasId, ]);
 
     const persistMediaNode = useCallback(async (node: CanvasNodeData, expectedScope?: CapturedUserScope, signal?: AbortSignal) => {
         const guard = createOwnedCanvasUploadGuard({
@@ -411,9 +413,9 @@ export function useCanvasUpload({
         };
         setNodes((current) => [...current, node]);
         selectInsertedNode(node.id, "open");
-        canvasPageUiStore(canvasId).getState().setContextMenu(null);
+        pageUi.getState().setContextMenu(null);
         return true;
-    }, [canvasId, getCanvasCenter, selectInsertedNode, setNodes]);
+    }, [pageUi, canvasId, getCanvasCenter, selectInsertedNode, setNodes]);
 
     const handleProjectChapterInsert = useCallback(async (chapter: CanvasProjectChapterPayload, position?: Position) => {
         const guard = createOwnedCanvasUploadGuard({
@@ -450,9 +452,9 @@ export function useCanvasUpload({
         node.height = 280;
         setNodes((current) => [...current, node]);
         selectInsertedNode(node.id, "preserve");
-        canvasPageUiStore(canvasId).getState().setContextMenu(null);
+        pageUi.getState().setContextMenu(null);
         message.success(`已添加“${chapter.title}”`);
-    }, [canvasId, getCanvasCenter, lifetime, message, mountedRef, selectInsertedNode, setNodes]);
+    }, [pageUi, canvasId, getCanvasCenter, lifetime, message, mountedRef, selectInsertedNode, setNodes]);
 
     const handleUploadRequest = useCallback((nodeId?: string, position?: Position) => {
         uploadTargetRef.current = { nodeId, position };
@@ -526,9 +528,9 @@ export function useCanvasUpload({
             }
         }
         if (!current()) return false;
-        canvasPageUiStore(canvasId).getState().setSelectedNodeIds(new Set(createdIds));
-        canvasPageUiStore(canvasId).getState().setSelectedConnectionId(null);
-        canvasPageUiStore(canvasId).getState().setDialogNodeId(null);
+        pageUi.getState().setSelectedNodeIds(new Set(createdIds));
+        pageUi.getState().setSelectedConnectionId(null);
+        pageUi.getState().setDialogNodeId(null);
         const failedCount = supportedFiles.length - createdIds.length;
         if (uploadTarget?.referenceToNodeId) {
             if (linkedReferenceCount) message.success(`已添加并连接 ${linkedReferenceCount} 张参考图`);
@@ -537,7 +539,7 @@ export function useCanvasUpload({
         else if (failedCount) message.warning(`已添加 ${createdIds.length} 个文件，${failedCount} 个上传失败`);
         else message.success(`已添加 ${createdIds.length} 个文件到画布`);
         return true;
-    }, [canvasId, lifetime, connectionsRef, createFileNode, getCanvasCenter, message, mountedRef, nodesRef, setConnections, setNodes]);
+    }, [pageUi, canvasId, lifetime, connectionsRef, createFileNode, getCanvasCenter, message, mountedRef, nodesRef, setConnections, setNodes]);
 
     const handleImportUrl = useCallback(async (url: string,kind: "image" | "video" | "audio") => {
         if(!isReferenceHTTPSLink(url)) throw new Error("请填写不含账号密码的 HTTPS 素材网址");
@@ -1002,9 +1004,9 @@ export function useCanvasUpload({
                         nodesRef.current = next;
                         return next;
                     });
-                    canvasPageUiStore(canvasId).getState().setSelectedNodeIds(new Set(nodes.map((node) => node.id)));
-                    canvasPageUiStore(canvasId).getState().setSelectedConnectionId(null);
-                    canvasPageUiStore(canvasId).getState().setDialogNodeId(null);
+                    pageUi.getState().setSelectedNodeIds(new Set(nodes.map((node) => node.id)));
+                    pageUi.getState().setSelectedConnectionId(null);
+                    pageUi.getState().setDialogNodeId(null);
                 },
             });
             if (status !== "committed") return [];
@@ -1032,7 +1034,7 @@ export function useCanvasUpload({
             message.error(error instanceof Error ? error.message : failureMessage);
             throw error;
         }
-    }, [canvasId, createAssetPayloadNodes, lifetime, message, nodesRef, persistMediaNode, setNodes]);
+    }, [pageUi, canvasId, createAssetPayloadNodes, lifetime, message, nodesRef, persistMediaNode, setNodes]);
 
     const handleAssetsInsert = useCallback(async (payloads: InsertAssetPayload[], expectedScope?: CapturedUserScope): Promise<CanvasNodeData[]> => {
         const origin = assetInsertPositionRef.current || getCanvasCenter();

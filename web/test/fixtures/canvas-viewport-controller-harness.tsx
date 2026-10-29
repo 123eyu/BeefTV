@@ -5,6 +5,8 @@ import { InfiniteCanvas } from "../../src/components/canvas/infinite-canvas";
 import { useCanvasViewportController } from "../../src/pages/canvas/use-canvas-viewport-controller";
 import type { CanvasNodeData, ViewportTransform } from "../../src/types/canvas";
 import { applyCanvasLiveViewport, applyCanvasNodeSelectionPreview } from "../../src/lib/canvas/canvas-live-viewport";
+import { createCanvasPageUiStore } from "../../src/stores/canvas/use-canvas-page-ui-store";
+const pageUi = createCanvasPageUiStore();
 
 Object.assign(window, { async scopedScaleProbe() {
     const container = document.createElement("div");
@@ -42,7 +44,7 @@ function Harness() {
     const viewportRef = useRef(viewport);
     const nodesRef = useRef<CanvasNodeData[]>([]);
     const selectedNodeIdsRef = useRef(new Set<string>());
-    const controller = useCanvasViewportController({
+    const controller = useCanvasViewportController({ pageUi,
         projectId: "canvas",
         containerRef, size: { width: 800, height: 600 }, viewport, viewportRef,
         nodesRef, selectedNodeIdsRef, setViewport, setVirtualizationViewport,

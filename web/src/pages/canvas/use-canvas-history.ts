@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateA
 import type { CanvasAppearance } from "@/lib/canvas/canvas-appearance";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import type { CanvasAssistantSession, CanvasConnection, CanvasNodeData } from "@/types/canvas";
-import { canvasPageUiStore } from "@/stores/canvas/use-canvas-page-ui-store";
+import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";
 
 export type CanvasHistorySnapshot = {
     nodes: CanvasNodeData[];
@@ -43,6 +43,7 @@ type CanvasHistoryPatch = {
 };
 
 type UseCanvasHistoryOptions = CanvasHistorySnapshot & {
+    pageUi: CanvasPageUiStoreHook;
     projectId: string;
     projectLoaded: boolean;
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
@@ -55,6 +56,7 @@ type UseCanvasHistoryOptions = CanvasHistorySnapshot & {
 };
 
 export function useCanvasHistory({
+    pageUi,
     projectId,
     projectLoaded,
     nodes,
@@ -115,16 +117,16 @@ export function useCanvasHistory({
         applyCanvasAppearance(snapshot.canvasAppearance);
         setBackgroundMode(snapshot.backgroundMode);
         setShowImageInfo(snapshot.showImageInfo);
-        canvasPageUiStore(projectId).getState().setSelectedNodeIds(new Set());
-        canvasPageUiStore(projectId).getState().setSelectedConnectionId(null);
-        canvasPageUiStore(projectId).getState().setContextMenu(null);
+        pageUi.getState().setSelectedNodeIds(new Set());
+        pageUi.getState().setSelectedConnectionId(null);
+        pageUi.getState().setContextMenu(null);
         if (applyTimerRef.current) clearTimeout(applyTimerRef.current);
         applyTimerRef.current = setTimeout(() => {
             applyingHistoryRef.current = false;
             applyTimerRef.current = null;
             setHistoryState({ canUndo: historyRef.current.past.length > 0, canRedo: historyRef.current.future.length > 0 });
         });
-    }, [projectId, applyCanvasAppearance, clearCommitTimer, setActiveChatId, setBackgroundMode, setChatSessions, setConnections, setNodes, setShowImageInfo]);
+    }, [pageUi, projectId, applyCanvasAppearance, clearCommitTimer, setActiveChatId, setBackgroundMode, setChatSessions, setConnections, setNodes, setShowImageInfo]);
 
     /**
      * 外部写入（内置助手回合、CLI/MCP 操作）投影到编辑器时，把结果当成新的历史基线。

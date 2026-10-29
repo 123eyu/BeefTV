@@ -3,26 +3,28 @@ import { useCallback, useEffect, useRef, type Dispatch, type SetStateAction } fr
 import type { CanvasNodeData } from "@/types/canvas";
 
 import { canvasNodeDragEndChrome, canvasNodeInteractionStartChrome } from "./canvas-pointer-chrome";
-import { canvasPageUiStore } from "@/stores/canvas/use-canvas-page-ui-store";
+import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";
 
 type UseCanvasPointerSelectionChromeOptions = {
+    pageUi: CanvasPageUiStoreHook;
     projectId: string;
     nodesRef: { current: CanvasNodeData[] };
     segmentRunningMode?: string | null;
 };
 
 export function useCanvasPointerSelectionChrome({
+    pageUi,
     projectId,
     nodesRef,
     segmentRunningMode,
 }: UseCanvasPointerSelectionChromeOptions) {
     const handleCanvasSelectionStart = useCallback(() => {
-        canvasPageUiStore(projectId).getState().setContextMenu(null);
-    }, [projectId]);
+        pageUi.getState().setContextMenu(null);
+    }, [pageUi, projectId]);
 
     const handleNodeInteractionStart = useCallback((selectionModifier: boolean) => {
-        canvasPageUiStore(projectId).getState().setContextMenu(null);
-        canvasPageUiStore(projectId).getState().setHoveredNodeId(null);
+        pageUi.getState().setContextMenu(null);
+        pageUi.getState().setHoveredNodeId(null);
         // Keep the source node's extraction state visible while FFmpeg is
         // producing the independent video/audio outputs.
         const chrome = canvasNodeInteractionStartChrome({
@@ -30,26 +32,26 @@ export function useCanvasPointerSelectionChrome({
             selectionModifier,
         });
         if (chrome.ignore) return;
-        canvasPageUiStore(projectId).getState().setToolbarNodeId(null);
-        if (chrome.closeDialog) canvasPageUiStore(projectId).getState().setDialogNodeId(null);
-    }, [projectId, segmentRunningMode]);
+        pageUi.getState().setToolbarNodeId(null);
+        if (chrome.closeDialog) pageUi.getState().setDialogNodeId(null);
+    }, [pageUi, projectId, segmentRunningMode]);
 
     const handleNodeDragEnd = useCallback(
         (nodeId: string) => {
             const chrome = canvasNodeDragEndChrome(nodesRef.current.find((item) => item.id === nodeId));
-            const { setDialogNodeId, setToolbarNodeId } = canvasPageUiStore(projectId).getState();
+            const { setDialogNodeId, setToolbarNodeId } = pageUi.getState();
             setDialogNodeId(chrome.dialogNodeId);
             if (chrome.toolbarNodeId) setToolbarNodeId(chrome.toolbarNodeId);
         },
-        [nodesRef, projectId],
+        [pageUi, nodesRef, projectId],
     );
 
     const handleCanvasDeselect = useCallback(() => {
-        canvasPageUiStore(projectId).getState().setContextMenu(null);
-        canvasPageUiStore(projectId).getState().setHoveredNodeId(null);
-        canvasPageUiStore(projectId).getState().setToolbarNodeId(null);
-        canvasPageUiStore(projectId).getState().setDialogNodeId(null);
-    }, [projectId]);
+        pageUi.getState().setContextMenu(null);
+        pageUi.getState().setHoveredNodeId(null);
+        pageUi.getState().setToolbarNodeId(null);
+        pageUi.getState().setDialogNodeId(null);
+    }, [pageUi, projectId]);
 
     return {
         handleCanvasSelectionStart,
@@ -60,12 +62,14 @@ export function useCanvasPointerSelectionChrome({
 }
 
 type UseCanvasNodeToolbarHoverOptions = {
+    pageUi: CanvasPageUiStoreHook;
     projectId: string;
     nodeDraggingRef: { current: boolean };
     nodeImageSettingsOpen: boolean;
 };
 
 export function useCanvasNodeToolbarHover({
+    pageUi,
     projectId,
     nodeDraggingRef,
     nodeImageSettingsOpen,
@@ -79,18 +83,18 @@ export function useCanvasNodeToolbarHover({
                 clearTimeout(toolbarHideTimerRef.current);
                 toolbarHideTimerRef.current = null;
             }
-            canvasPageUiStore(projectId).getState().setToolbarNodeId(nodeId);
+            pageUi.getState().setToolbarNodeId(nodeId);
         },
-        [nodeDraggingRef, nodeImageSettingsOpen, projectId],
+        [pageUi, nodeDraggingRef, nodeImageSettingsOpen, projectId],
     );
 
     const hideNodeToolbar = useCallback(() => {
         if (toolbarHideTimerRef.current) clearTimeout(toolbarHideTimerRef.current);
         toolbarHideTimerRef.current = setTimeout(() => {
-            canvasPageUiStore(projectId).getState().setToolbarNodeId(null);
+            pageUi.getState().setToolbarNodeId(null);
             toolbarHideTimerRef.current = null;
         }, 120);
-    }, [projectId]);
+    }, [pageUi, projectId]);
 
     useEffect(() => () => {
         if (toolbarHideTimerRef.current) clearTimeout(toolbarHideTimerRef.current);
@@ -99,18 +103,18 @@ export function useCanvasNodeToolbarHover({
     const handleCanvasNodeHoverStart = useCallback(
         (nodeId: string) => {
             if (nodeDraggingRef.current) return;
-            canvasPageUiStore(projectId).getState().setHoveredNodeId(nodeId);
+            pageUi.getState().setHoveredNodeId(nodeId);
             keepNodeToolbar(nodeId);
         },
-        [keepNodeToolbar, nodeDraggingRef],
+        [pageUi, keepNodeToolbar, nodeDraggingRef],
     );
 
     const handleCanvasNodeHoverEnd = useCallback(
         (nodeId: string) => {
-            canvasPageUiStore(projectId).getState().setHoveredNodeId((current) => (current === nodeId ? null : current));
+            pageUi.getState().setHoveredNodeId((current) => (current === nodeId ? null : current));
             hideNodeToolbar();
         },
-        [hideNodeToolbar, projectId],
+        [pageUi, hideNodeToolbar, projectId],
     );
 
     return {
