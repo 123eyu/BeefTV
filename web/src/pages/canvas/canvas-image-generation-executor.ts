@@ -29,6 +29,7 @@ const NODE_STATUS_ERROR = "error" as const;
 const NODE_STATUS_IDLE = "idle" as const;
 
 export async function executeImageGeneration({
+    pageUi,
     resolveReferenceLinks,
     nodeId,
     sourceNode,
@@ -43,9 +44,6 @@ export async function executeImageGeneration({
     nodesRef,
     setNodes,
     setConnections,
-    setSelectedNodeIds,
-    setSelectedConnectionId,
-    setDialogNodeId,
     startGenerationRequest,
     finishGenerationRequest,
     bindGenerationTask,
@@ -215,9 +213,9 @@ export async function executeImageGeneration({
     nodesRef.current = nextNodes;
     setNodes(nextNodes);
     setConnections(nextConnections);
-    setSelectedNodeIds(new Set([nodeId]));
-    setSelectedConnectionId(null);
-    setDialogNodeId(nodeId);
+    pageUi.getState().setSelectedNodeIds(new Set([nodeId]));
+    pageUi.getState().setSelectedConnectionId(null);
+    pageUi.getState().setDialogNodeId(nodeId);
 
     targetIds.forEach((targetId) => startGenerationRequest(targetId, nodeId, nodeId, controller));
     if (count > 1) startGenerationRequest(rootId, nodeId, nodeId, controller);

@@ -21,6 +21,8 @@ import { syncLocalCanvasProjectToBackend } from "../../src/services/local-worksp
 import { refreshLocalCanvasProjectIfChanged } from "../../src/services/local-workspace-repository";
 import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
 import type { CanvasNodeData, CanvasConnection, CanvasAssistantSession } from "../../src/types/canvas";
+import { createCanvasPageUiStore } from "../../src/stores/canvas/use-canvas-page-ui-store";
+const pageUi = createCanvasPageUiStore();
 
 const noop = () => {};
 const cached = (window as any).__reopenProject ?? { id: "c1", revision: 105, title: "Restart", createdAt: "2026-10-02", updatedAt: "2026-10-02", nodes: Array.from({ length: 10 }, (_, i) => ({ id: `n${i}`, type: "image", title: `Node ${i}`, width: 320, height: 200, position: { x: i * 400, y: 0 }, metadata: {} })), connections: [], chatSessions: [], activeChatId: null, appearance: canvasAppearanceForTheme("dark"), backgroundMode: "grid", showImageInfo: false, viewport: { x: 0, y: 0, k: 1 }, directorScenes: [] };
@@ -93,10 +95,10 @@ function Harness() {
     const [viewport, setViewport] = useState({ x: 0, y: 0, k: 1 });
     const [projectLoaded, setProjectLoaded] = useState(false);
     const connectionsRef = useRef(connections), chatSessionsRef = useRef(chatSessions), activeChatIdRef = useRef(activeChatId), viewportRef = useRef(viewport);
-    const history = useCanvasHistory({ projectLoaded, nodes, connections, chatSessions, activeChatId, canvasAppearance, backgroundMode, showImageInfo, setNodes, setConnections, setChatSessions, setActiveChatId, applyCanvasAppearance: setCanvasAppearance, setBackgroundMode, setShowImageInfo, setSelectedNodeIds: noop, setSelectedConnectionId: noop, setContextMenu: noop });
+    const history = useCanvasHistory({ pageUi, projectId, projectLoaded, nodes, connections, chatSessions, activeChatId, canvasAppearance, backgroundMode, showImageInfo, setNodes, setConnections, setChatSessions, setActiveChatId, applyCanvasAppearance: setCanvasAppearance, setBackgroundMode, setShowImageInfo });
     useCanvasProjectLifecycle({ projectId, projectLoaded, nodes, connections, chatSessions, activeChatId, canvasAppearance, backgroundMode, showImageInfo, viewport, nodesRef, connectionsRef, chatSessionsRef, activeChatIdRef, viewportRef, historyPausedRef: history.historyPausedRef, setNodes, setConnections, setChatSessions, setActiveChatId, setCanvasAppearance, setBackgroundMode, setShowImageInfo, setViewport, setProjectLoaded, resetHistory: history.resetHistory, adoptExternalSnapshot: history.adoptExternalSnapshot, cleanupAssetImages: noop, cleanupCanvasFiles: noop });
     const generation = useCanvasGeneration({ projectId, projectLoaded: false, nodes, nodesRef, setNodes });
-    const generate = useCanvasGenerationExecutor({ projectId, addedSkills: [], assets: [], nodesRef, connectionsRef, setNodes, setConnections, setSelectedNodeIds: noop, setSelectedConnectionId: noop, setDialogNodeId: noop,
+    const generate = useCanvasGenerationExecutor({ pageUi, projectId, addedSkills: [], assets: [], nodesRef, connectionsRef, setNodes, setConnections,
         setRunningNodeId: generation.setRunningNodeId, startGenerationRequest: generation.startGenerationRequest, finishGenerationRequest: generation.finishGenerationRequest, bindGenerationTask: generation.bindGenerationTask, applyGenerationTaskResult: generation.applyGenerationTaskResult });
     (harness as any).generateImage = async () => {
         // Hold the first write-back so the editor still has its pre-generation

@@ -1,5 +1,7 @@
 import { mock } from "bun:test";
 import { strict as assert } from "node:assert";
+import { createCanvasPageUiStore } from "../../src/stores/canvas/use-canvas-page-ui-store";
+const pageUi = createCanvasPageUiStore();
 
 // Run in a separate process: deterministic model/network boundaries must not leak
 // into the rest of the frontend suite. The real hook owns confirmation and dispatch.
@@ -36,7 +38,7 @@ const frozenNodes = [node("image"), node("text")];
 const nodesRef = { current: structuredClone(frozenNodes) };
 const connectionsRef = { current: [] as any[] };
 const no = () => {};
-const generate = useCanvasGenerationExecutor({ projectId: "canvas", addedSkills: [], assets: [], nodesRef, connectionsRef, setNodes: no, setConnections: no, setSelectedNodeIds: no, setSelectedConnectionId: no, setDialogNodeId: no, setRunningNodeId: no, startGenerationRequest: () => new AbortController(), finishGenerationRequest: no, bindGenerationTask: no, applyGenerationTaskResult: async () => {} });
+const generate = useCanvasGenerationExecutor({ pageUi, projectId: "canvas", addedSkills: [], assets: [], nodesRef, connectionsRef, setNodes: no, setConnections: no, setRunningNodeId: no, startGenerationRequest: () => new AbortController(), finishGenerationRequest: no, bindGenerationTask: no, applyGenerationTaskResult: async () => {} });
 const options = { confirmedInputs: { nodes: frozenNodes, connections: [], config: {} as any, assets: [], skills: [] } };
 const first = generate("image", "image", "coffee", options);
 const second = generate("text", "image", "coffee", options);

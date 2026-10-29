@@ -38,8 +38,10 @@ import { canvasNodeHasPendingOutcomeResult, isNodeRegenerateBlocked, isNodeRegen
 import { createReferenceLinkResolver } from "@/components/generation-reference-links";
 import { confirmCanvasGeneration, waitForCanvasPreparation } from "./canvas-generation-preflight";
 import { startOperation } from "@/stores/use-operation-progress";
+import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";
 
 type UseCanvasGenerationExecutorOptions = {
+    pageUi: CanvasPageUiStoreHook;
     projectId: string;
     domainProjectId?: string;
     addedSkills: Skill[];
@@ -48,9 +50,6 @@ type UseCanvasGenerationExecutorOptions = {
     connectionsRef: { current: CanvasConnection[] };
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
     setConnections: Dispatch<SetStateAction<CanvasConnection[]>>;
-    setSelectedNodeIds: Dispatch<SetStateAction<Set<string>>>;
-    setSelectedConnectionId: Dispatch<SetStateAction<string | null>>;
-    setDialogNodeId: Dispatch<SetStateAction<string | null>>;
     setRunningNodeId: Dispatch<SetStateAction<string | null>>;
     startGenerationRequest: (targetNodeId: string, originNodeId: string, runningId?: string, controller?: AbortController) => AbortController;
     finishGenerationRequest: (targetNodeId: string, controller: AbortController) => void;
@@ -78,6 +77,7 @@ export type CanvasNodeGenerationOptions = {
 };
 
 export function useCanvasGenerationExecutor({
+    pageUi,
     projectId,
     domainProjectId,
     addedSkills,
@@ -86,9 +86,6 @@ export function useCanvasGenerationExecutor({
     connectionsRef,
     setNodes,
     setConnections,
-    setSelectedNodeIds,
-    setSelectedConnectionId,
-    setDialogNodeId,
     setRunningNodeId,
     startGenerationRequest,
     finishGenerationRequest,
@@ -470,6 +467,7 @@ export function useCanvasGenerationExecutor({
                         let pendingNodeIds: string[] = [];
                         const boundTaskIds = new Set<string>();
                         const execution = {
+                            pageUi,
                             projectId,
                             nodesRef,
                             nodeId,
@@ -496,9 +494,6 @@ export function useCanvasGenerationExecutor({
                                     `canvas:${createClientId()}`,
                             setNodes,
                             setConnections,
-                            setSelectedNodeIds,
-                            setSelectedConnectionId,
-                            setDialogNodeId,
                             startGenerationRequest,
                             finishGenerationRequest,
                             bindGenerationTask: (targetNodeId: string, task: GenerationTask) => {
@@ -602,11 +597,8 @@ export function useCanvasGenerationExecutor({
             connectionsRef,
             projectId,
             setConnections,
-            setDialogNodeId,
             setNodes,
             setRunningNodeId,
-            setSelectedConnectionId,
-            setSelectedNodeIds,
             startGenerationRequest,
         ],
     );

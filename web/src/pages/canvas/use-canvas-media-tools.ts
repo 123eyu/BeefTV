@@ -88,10 +88,12 @@ function normalizeMaskEditQuality(quality: string | undefined, size: string | un
     return pixels <= 2_000_000 ? "1k" : pixels <= 4_300_000 ? "2k" : pixels <= 8_294_400 ? "4k" : quality || "auto";
 }
 import { defaultConfig, resolveModelRequestConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
-import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type ContextMenuState } from "@/types/canvas";
+import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
 import type { StartCanvasUploadStatus } from "./use-canvas-upload";
+import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";
 
 type UseCanvasMediaToolsOptions = {
+    pageUi: CanvasPageUiStoreHook;
     projectId: string;
     domainProjectId?: string;
     nodesRef: { current: CanvasNodeData[] };
@@ -99,12 +101,6 @@ type UseCanvasMediaToolsOptions = {
     selectedNodeIdsRef: { current: Set<string> };
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
     setConnections: Dispatch<SetStateAction<CanvasConnection[]>>;
-    setSelectedNodeIds: Dispatch<SetStateAction<Set<string>>>;
-    setSelectedConnectionId: Dispatch<SetStateAction<string | null>>;
-    setDialogNodeId: Dispatch<SetStateAction<string | null>>;
-    setContextMenu: Dispatch<SetStateAction<ContextMenuState | null>>;
-    setHoveredNodeId: Dispatch<SetStateAction<string | null>>;
-    setToolbarNodeId: Dispatch<SetStateAction<string | null>>;
     setRunningNodeId: Dispatch<SetStateAction<string | null>>;
     startUploadStatus: StartCanvasUploadStatus;
     startGenerationRequest: (targetNodeId: string, originNodeId: string, runningId?: string, controller?: AbortController) => AbortController;
@@ -118,6 +114,7 @@ const NODE_STATUS_ERROR = "error" as const;
 const NODE_STATUS_IDLE = "idle" as const;
 
 export function useCanvasMediaTools({
+    pageUi,
     projectId,
     domainProjectId,
     nodesRef,
@@ -125,12 +122,6 @@ export function useCanvasMediaTools({
     selectedNodeIdsRef,
     setNodes,
     setConnections,
-    setSelectedNodeIds,
-    setSelectedConnectionId,
-    setDialogNodeId,
-    setContextMenu,
-    setHoveredNodeId,
-    setToolbarNodeId,
     setRunningNodeId,
     startUploadStatus,
     startGenerationRequest,
@@ -327,11 +318,11 @@ export function useCanvasMediaTools({
         };
         setNodes((current) => [...current, textNode, resultNode]);
         setConnections((current) => [...current, { id: nanoid(), fromNodeId: node.id, toNodeId: resultNode.id }, { id: nanoid(), fromNodeId: textNode.id, toNodeId: resultNode.id }]);
-        setSelectedNodeIds(new Set([resultNode.id]));
-        setSelectedConnectionId(null);
-        setDialogNodeId(resultNode.id);
-        setContextMenu(null);
-    }, [effectiveConfig.model, effectiveConfig.textModel, message, setConnections, setContextMenu, setDialogNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds]);
+        pageUi.getState().setSelectedNodeIds(new Set([resultNode.id]));
+        pageUi.getState().setSelectedConnectionId(null);
+        pageUi.getState().setDialogNodeId(resultNode.id);
+        pageUi.getState().setContextMenu(null);
+    }, [pageUi, projectId, effectiveConfig.model, effectiveConfig.textModel, message, setConnections, setNodes]);
 
     const openPortraitTextureEditor = useCallback((node: CanvasNodeData) => {
         if (node.type !== CanvasNodeType.Image || !node.metadata?.content) {
@@ -341,6 +332,7 @@ export function useCanvasMediaTools({
         const portraitTextureSettings = { ...DEFAULT_PORTRAIT_TEXTURE_SETTINGS, ...node.metadata?.portraitTexture };
         const child = createPortraitTextureNode(node, nanoid());
         child.metadata = { ...child.metadata, portraitTexture: portraitTextureSettings };
+        const { setHoveredNodeId, setToolbarNodeId, setSelectedNodeIds, setSelectedConnectionId, setDialogNodeId } = pageUi.getState();
         setHoveredNodeId(null);
         setToolbarNodeId(null);
         setNodes((current) => [...current, child]);
@@ -348,7 +340,7 @@ export function useCanvasMediaTools({
         setSelectedNodeIds(new Set([child.id]));
         setSelectedConnectionId(null);
         setDialogNodeId(child.id);
-    }, [message, setConnections, setDialogNodeId, setHoveredNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds, setToolbarNodeId]);
+    }, [pageUi, projectId, message, setConnections, setNodes]);
 
     const cropImageNode = useCallback(async (node: CanvasNodeData, crop: CanvasImageCropRect) => {
         if (!node.metadata?.content) return;
@@ -364,14 +356,14 @@ export function useCanvasMediaTools({
             const connection = { id: nanoid(), fromNodeId: node.id, toNodeId: childId };
             setNodes((current) => [...current, child]);
             setConnections((current) => [...current, connection]);
-            setSelectedNodeIds(new Set([childId]));
-            setDialogNodeId(childId);
+            pageUi.getState().setSelectedNodeIds(new Set([childId]));
+            pageUi.getState().setDialogNodeId(childId);
             setCropNodeId(null);
             await persistMediaNodes([child], [connection]);
         } catch (error) {
             message.error(error instanceof Error ? `裁切失败：${error.message}` : "裁切失败，请重试");
         }
-    }, [message, persistMediaNodes, setConnections, setDialogNodeId, setNodes, setSelectedNodeIds]);
+    }, [pageUi, projectId, message, persistMediaNodes, setConnections, setNodes]);
 
     const cropVideoNode = useCallback(async (node: CanvasNodeData, crop: CanvasVideoCropRect, sourceDimensions: { width: number; height: number }) => {
         const source = { url: node.metadata?.content, storageKey: node.metadata?.storageKey };
@@ -400,8 +392,8 @@ export function useCanvasMediaTools({
         // downstream node owns the asynchronous FFmpeg work and its outcome.
         setNodes((current) => [...current, pendingChild]);
         setConnections((current) => [...current, connection]);
-        setSelectedNodeIds(new Set([childId]));
-        setSelectedConnectionId(null);
+        pageUi.getState().setSelectedNodeIds(new Set([childId]));
+        pageUi.getState().setSelectedConnectionId(null);
         setVideoCropNodeId(null);
         try {
             const output = await cropVideo(source, normalizedCrop);
@@ -428,7 +420,7 @@ export function useCanvasMediaTools({
                 metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails: details },
             } : item));
         }
-    }, [persistMediaNodes, setConnections, setNodes, setSelectedConnectionId, setSelectedNodeIds]);
+    }, [pageUi, projectId, persistMediaNodes, setConnections, setNodes]);
 
     const depthCaptureNode = useCallback(async (node: CanvasNodeData) => {
         const resourceId = ownedResourceIdFromMediaRef(node.metadata?.storageKey, node.metadata?.content);
@@ -472,8 +464,8 @@ export function useCanvasMediaTools({
         connectionsRef.current = [...connectionsRef.current, connection];
         setNodes(nodesRef.current);
         setConnections((current) => [...current, connection]);
-        setSelectedNodeIds(new Set([childId]));
-        setSelectedConnectionId(null);
+        pageUi.getState().setSelectedNodeIds(new Set([childId]));
+        pageUi.getState().setSelectedConnectionId(null);
         let submittedTaskId: string | undefined;
         let latestDepthTask: GenerationTask | undefined;
         try {
@@ -532,7 +524,7 @@ export function useCanvasMediaTools({
         } finally {
             depthObserversRef.current.delete(observer);
         }
-    }, [message, modal, nodesRef, connectionsRef, projectId, setConnections, setNodes, setSelectedConnectionId, setSelectedNodeIds]);
+    }, [pageUi, message, modal, nodesRef, connectionsRef, projectId, setConnections, setNodes]);
 
     const retryDepthCaptureNode = useCallback(async (node: CanvasNodeData) => {
         // A known task is recovered before considering a new execution.
@@ -678,13 +670,13 @@ export function useCanvasMediaTools({
         const connection = { id: nanoid(), fromNodeId: node.id, toNodeId: childId };
         setNodes((current) => [...current, child]);
         setConnections((current) => [...current, connection]);
-        setSelectedNodeIds(new Set([childId]));
-        setSelectedConnectionId(null);
-        setDialogNodeId(null);
+        pageUi.getState().setSelectedNodeIds(new Set([childId]));
+        pageUi.getState().setSelectedConnectionId(null);
+        pageUi.getState().setDialogNodeId(null);
         setAnnotationNodeId(null);
         await persistMediaNodes([child], [connection]);
         message.success("标注图片已保存为新节点");
-    }, [message, persistMediaNodes, setConnections, setDialogNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds]);
+    }, [pageUi, projectId, message, persistMediaNodes, setConnections, setNodes]);
 
     const closeFrameDialog = useCallback(() => {
         if (extractingVideoFramesNodeIdRef.current) return;
@@ -734,8 +726,8 @@ export function useCanvasMediaTools({
             selectedNodeIdsRef.current = selection;
             setNodes(nextNodes);
             setConnections(nextConnections);
-            setSelectedNodeIds(selection);
-            setSelectedConnectionId(null);
+            pageUi.getState().setSelectedNodeIds(selection);
+            pageUi.getState().setSelectedConnectionId(null);
             await persistMediaNodes(frameNodes, links);
             const failedCount = captured.failures.length + uploadFailures.length;
             progress.done(failedCount ? `已截取 ${frameNodes.length} 个关键帧，${failedCount} 个失败` : `已截取 ${frameNodes.length} 个关键帧并创建独立图片节点`);
@@ -749,7 +741,7 @@ export function useCanvasMediaTools({
             extractingVideoFramesNodeIdRef.current = null;
             setExtractingVideoFramesNodeId(null);
         }
-    }, [connectionsRef, message, nodesRef, persistMediaNodes, selectedNodeIdsRef, setConnections, setNodes, setSelectedConnectionId, setSelectedNodeIds, startUploadStatus]);
+    }, [pageUi, projectId, connectionsRef, message, nodesRef, persistMediaNodes, selectedNodeIdsRef, setConnections, setNodes, startUploadStatus]);
 
     // 视频节点工具栏的三个快捷取帧动作直接执行，不再打开批量选帧弹窗。
     const extractVideoFrameAt = useCallback((node: CanvasNodeData, preset: "current" | "first" | "last" = "current") => {
@@ -761,10 +753,10 @@ export function useCanvasMediaTools({
         const durationMs = resolveCanvasVideoDurationMs(node.metadata?.durationMs, video?.duration);
         const currentMs = video && Number.isFinite(video.currentTime) ? Math.round(video.currentTime * 1000) : 0;
         const timeMs = resolveVideoFramePresetTimeMs(preset, durationMs, currentMs);
-        setHoveredNodeId(null);
-        setToolbarNodeId(null);
+        pageUi.getState().setHoveredNodeId(null);
+        pageUi.getState().setToolbarNodeId(null);
         void extractVideoFrames(node, { timesMs: [timeMs] });
-    }, [extractVideoFrames, message, setHoveredNodeId, setToolbarNodeId]);
+    }, [pageUi, projectId, extractVideoFrames, message]);
 
     const openInlineVideoTrim = useCallback((node: CanvasNodeData) => {
         if (!node.metadata?.content) {
@@ -772,27 +764,27 @@ export function useCanvasMediaTools({
             return;
         }
         if (inlineTrimRunningRef.current) return;
-        setHoveredNodeId(null);
-        setToolbarNodeId(null);
-        setDialogNodeId(null);
+        pageUi.getState().setHoveredNodeId(null);
+        pageUi.getState().setToolbarNodeId(null);
+        pageUi.getState().setDialogNodeId(null);
         // Preload the same shared worker while the user sets the trim range.
         // A failure remains non-blocking here and is reported by submission.
         void warmFFmpeg().catch(() => undefined);
         setInlineTrimNodeId(node.id);
-    }, [message, setDialogNodeId, setHoveredNodeId, setToolbarNodeId]);
+    }, [pageUi, projectId, message]);
 
     const openVideoCrop = useCallback((node: CanvasNodeData) => {
         if (!node.metadata?.content) {
             message.warning("视频节点为空，无法裁切");
             return;
         }
-        setHoveredNodeId(null);
-        setToolbarNodeId(null);
+        pageUi.getState().setHoveredNodeId(null);
+        pageUi.getState().setToolbarNodeId(null);
         // The editor remains responsive while FFmpeg initializes in the
         // background; confirmation then reuses this exact worker instance.
         void warmFFmpeg().catch(() => undefined);
         setVideoCropNodeId(node.id);
-    }, [message, setHoveredNodeId, setToolbarNodeId]);
+    }, [pageUi, projectId, message]);
 
     const closeInlineVideoTrim = useCallback(() => {
         if (!inlineTrimRunningRef.current) setInlineTrimNodeId(null);
@@ -841,9 +833,9 @@ export function useCanvasMediaTools({
             selectedNodeIdsRef.current = new Set([child.id]);
             setNodes(nextNodes);
             setConnections(nextConnections);
-            setSelectedNodeIds(new Set([child.id]));
-            setSelectedConnectionId(null);
-            setDialogNodeId(null);
+            pageUi.getState().setSelectedNodeIds(new Set([child.id]));
+            pageUi.getState().setSelectedConnectionId(null);
+            pageUi.getState().setDialogNodeId(null);
             await persistMediaNodes([child]);
             setInlineTrimNodeId(null);
             progress.done(`已生成 ${((range.endMs - range.startMs) / 1000).toFixed(2)} 秒剪辑视频`);
@@ -856,7 +848,7 @@ export function useCanvasMediaTools({
             inlineTrimRunningRef.current = false;
             setInlineTrimRunning(false);
         }
-    }, [connectionsRef, message, nodesRef, persistMediaNodes, selectedNodeIdsRef, setConnections, setDialogNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds, startUploadStatus]);
+    }, [pageUi, projectId, connectionsRef, message, nodesRef, persistMediaNodes, selectedNodeIdsRef, setConnections, setNodes, startUploadStatus]);
 
     // 音视频分离同时产出独立音轨和无声视频，原视频始终保留。
     const runExtractVideoAudio = useCallback(async (node: CanvasNodeData, params: { startMs: number; endMs: number }) => {
@@ -893,8 +885,8 @@ export function useCanvasMediaTools({
             connectionsRef.current = [...connectionsRef.current, ...links];
             setNodes(nodesRef.current);
             setConnections(connectionsRef.current);
-            setSelectedNodeIds(outputIds);
-            setSelectedConnectionId(null);
+            pageUi.getState().setSelectedNodeIds(outputIds);
+            pageUi.getState().setSelectedConnectionId(null);
             const savedAssets = await persistMediaNodes(outputs, links);
             if (outputs.some((output) => !savedAssets.get(output.id))) throw new Error("分离结果尚未确认保存，请重试；不要将当前节点视为已保存的成品");
             progress.done("已生成并保存无声视频和独立音轨");
@@ -905,7 +897,7 @@ export function useCanvasMediaTools({
             progress.fail(details);
             modal.error({ title: "音视频分离未完成", content: details, okText: "知道了" });
         }
-    }, [connectionsRef, message, modal, nodesRef, persistMediaNodes, setConnections, setSelectedConnectionId, setSelectedNodeIds, setNodes, startUploadStatus]);
+    }, [pageUi, projectId, connectionsRef, message, modal, nodesRef, persistMediaNodes, setConnections, setNodes, startUploadStatus]);
 
     // 音视频分离始终处理整段视频，直接生成独立音轨节点，不再打开范围选择弹窗。
     const extractAudioFromVideo = useCallback((node: CanvasNodeData) => {
@@ -916,8 +908,8 @@ export function useCanvasMediaTools({
         if (segmentRunningRef.current) return;
         segmentRunningRef.current = true;
         setSegmentRunningMode("audio");
-        setHoveredNodeId(null);
-        setToolbarNodeId(null);
+        pageUi.getState().setHoveredNodeId(null);
+        pageUi.getState().setToolbarNodeId(null);
         const video = document.querySelector<HTMLVideoElement>(`[data-node-id="${CSS.escape(node.id)}"] video`);
         const durationMs = resolveCanvasVideoDurationMs(node.metadata.durationMs, video?.duration);
         if (!durationMs || durationMs <= 0) {
@@ -930,7 +922,7 @@ export function useCanvasMediaTools({
             segmentRunningRef.current = false;
             setSegmentRunningMode(null);
         });
-    }, [message, runExtractVideoAudio, setHoveredNodeId, setSegmentRunningMode, setToolbarNodeId]);
+    }, [pageUi, projectId, message, runExtractVideoAudio, setSegmentRunningMode]);
 
     const mergeVideosByIds = useCallback(async (videoNodeIds: string[]) => {
         if (mergeVideoRunningRef.current) return;
@@ -977,9 +969,9 @@ export function useCanvasMediaTools({
             setConnections(nextConnections);
             const selection = new Set([mergedNode.id]);
             selectedNodeIdsRef.current = selection;
-            setSelectedNodeIds(selection);
-            setSelectedConnectionId(null);
-            setDialogNodeId(null);
+            pageUi.getState().setSelectedNodeIds(selection);
+            pageUi.getState().setSelectedConnectionId(null);
+            pageUi.getState().setDialogNodeId(null);
             setMergeVideoProgress({ phase: "binding", progress: 98 });
             await persistMediaNodes([mergedNode]);
             setMergeVideoProgress({ phase: "done", progress: 100 });
@@ -990,7 +982,7 @@ export function useCanvasMediaTools({
             mergeVideoRunningRef.current = false;
             window.setTimeout(() => setMergeVideoProgress(null), 700);
         }
-    }, [connectionsRef, message, nodesRef, persistMediaNodes, selectedNodeIdsRef, setConnections, setDialogNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds]);
+    }, [pageUi, projectId, connectionsRef, message, nodesRef, persistMediaNodes, selectedNodeIdsRef, setConnections, setNodes]);
 
     const mergeSelectedVideos = useCallback(() => mergeVideosByIds(Array.from(selectedNodeIdsRef.current)), [mergeVideosByIds, selectedNodeIdsRef]);
 
@@ -1027,13 +1019,13 @@ export function useCanvasMediaTools({
                 .map((reference) => ({ id: nanoid(), fromNodeId: reference.id, toNodeId: childId }));
             return [...current, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }, ...extraConnections];
         });
-        setSelectedNodeIds(new Set([childId]));
-        setSelectedConnectionId(null);
+        pageUi.getState().setSelectedNodeIds(new Set([childId]));
+        pageUi.getState().setSelectedConnectionId(null);
         // 全景节点是纯查看器，创建后不弹提示词面板。
-        setDialogNodeId(null);
+        pageUi.getState().setDialogNodeId(null);
         setPanoramaConfigNodeId(null);
         message.success(config.sourceMode === "image" ? "已创建全景查看节点" : "已创建全景生成节点");
-    }, [message, setConnections, setDialogNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds]);
+    }, [pageUi, projectId, message, setConnections, setNodes]);
 
     const addPanoramaCaptureNode = useCallback(async (node: CanvasNodeData, dataUrl: string, title: string) => {
         const image = await uploadImage(dataUrl);
@@ -1078,12 +1070,12 @@ export function useCanvasMediaTools({
         } satisfies CanvasNodeData));
         setNodes((current) => [...current, ...childNodes]);
         setConnections((current) => [...current, ...childNodes.map((child) => ({ id: nanoid(), fromNodeId: node.id, toNodeId: child.id }))]);
-        setSelectedNodeIds(new Set(childNodes.map((child) => child.id)));
-        setSelectedConnectionId(null);
-        setDialogNodeId(null);
+        pageUi.getState().setSelectedNodeIds(new Set(childNodes.map((child) => child.id)));
+        pageUi.getState().setSelectedConnectionId(null);
+        pageUi.getState().setDialogNodeId(null);
         await persistMediaNodes(childNodes);
         message.success(`已切分为 ${childNodes.length} 个子节点`);
-    }, [message, persistMediaNodes, setConnections, setDialogNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds]);
+    }, [pageUi, projectId, message, persistMediaNodes, setConnections, setNodes]);
 
     const maskEditImageNode = useCallback(async (node: CanvasNodeData, payload: CanvasImageMaskEditPayload) => {
         if (!node.metadata?.content) return;
@@ -1161,9 +1153,9 @@ export function useCanvasMediaTools({
         setRunningNodeId(rootId);
         setNodes((current) => [...current, rootNode, ...childNodes]);
         setConnections((current) => [...current, { id: nanoid(), fromNodeId: node.id, toNodeId: rootId }, ...childIds.map((childId) => ({ id: nanoid(), fromNodeId: rootId, toNodeId: childId }))]);
-        setSelectedNodeIds(new Set([rootId, ...childIds]));
-        setSelectedConnectionId(null);
-        setDialogNodeId(rootId);
+        pageUi.getState().setSelectedNodeIds(new Set([rootId, ...childIds]));
+        pageUi.getState().setSelectedConnectionId(null);
+        pageUi.getState().setDialogNodeId(rootId);
         const controller = startGenerationRequest(rootId, node.id, rootId);
         targetIds.forEach((targetId) => startGenerationRequest(targetId, node.id, rootId, controller));
         let hasSuccess = false;
@@ -1244,7 +1236,7 @@ export function useCanvasMediaTools({
             if (requestedCount > 1) finishGenerationRequest(rootId, controller);
             setRunningNodeId(null);
         }
-    }, [bindGenerationTask, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, nodesRef, persistMediaNodes, projectId, resolveImageEditStyle, setConnections, setDialogNodeId, setNodes, setRunningNodeId, setSelectedConnectionId, setSelectedNodeIds, startGenerationRequest]);
+    }, [bindGenerationTask, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, nodesRef, persistMediaNodes, projectId, resolveImageEditStyle, setConnections, setNodes, setRunningNodeId, startGenerationRequest]);
 
     const upscaleImageNode = useCallback(async (node: CanvasNodeData, params: CanvasImageUpscaleParams) => {
         if (!node.metadata?.content) return;
@@ -1259,10 +1251,10 @@ export function useCanvasMediaTools({
         }) };
         setNodes((current) => [...current, child]);
         setConnections((current) => [...current, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }]);
-        setSelectedNodeIds(new Set([childId]));
-        setDialogNodeId(childId);
+        pageUi.getState().setSelectedNodeIds(new Set([childId]));
+        pageUi.getState().setDialogNodeId(childId);
         await persistMediaNodes([child]);
-    }, [persistMediaNodes, setConnections, setDialogNodeId, setNodes, setSelectedNodeIds]);
+    }, [pageUi, projectId, persistMediaNodes, setConnections, setNodes]);
 
     const generateAngleNode = useCallback(async (node: CanvasNodeData, params: CanvasImageAngleParams) => {
         if (!node.metadata?.content) return;
@@ -1285,8 +1277,8 @@ export function useCanvasMediaTools({
         setRunningNodeId(childId);
         setNodes((current) => [...current, { id: childId, type: CanvasNodeType.Image, title, position: { x: node.position.x + node.width + 96, y: node.position.y }, width: imageSpec.width, height: imageSpec.height, metadata: { prompt: effectivePrompt, status: NODE_STATUS_LOADING, ...generationMetadata, ...styleMetadata } }]);
         setConnections((current) => [...current, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }]);
-        setSelectedNodeIds(new Set([childId]));
-        setDialogNodeId(childId);
+        pageUi.getState().setSelectedNodeIds(new Set([childId]));
+        pageUi.getState().setDialogNodeId(childId);
         const controller = startGenerationRequest(childId, node.id, childId);
         try {
             const result = await runBackendCanvasGenerationTask({ projectId, nodeId: childId, mode: "image", prompt: effectivePrompt, config: generationConfig, referenceImages: [source], signal: controller.signal, metadata: { sourceNodeId: node.id, edit: "angle", ...styleMetadata }, onTaskCreated: (task) => bindGenerationTask(childId, task) });
@@ -1307,7 +1299,7 @@ export function useCanvasMediaTools({
             finishGenerationRequest(childId, controller);
             setRunningNodeId(null);
         }
-    }, [bindGenerationTask, effectiveConfig, finishGenerationRequest, isAiConfigReady, nodesRef, persistMediaNodes, projectId, resolveImageEditStyle, setConnections, setDialogNodeId, setNodes, setRunningNodeId, setSelectedNodeIds, startGenerationRequest]);
+    }, [pageUi, bindGenerationTask, effectiveConfig, finishGenerationRequest, isAiConfigReady, nodesRef, persistMediaNodes, projectId, resolveImageEditStyle, setConnections, setNodes, setRunningNodeId, startGenerationRequest]);
 
     const generateLightingNode = useCallback((node: CanvasNodeData, options: CanvasImageLightingOptions, prompt: string) => {
         if (!node.metadata?.content) return;
@@ -1334,10 +1326,10 @@ export function useCanvasMediaTools({
             },
         }]);
         setConnections((current) => [...current, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }]);
-        setSelectedNodeIds(new Set([childId]));
-        setSelectedConnectionId(null);
-        setDialogNodeId(childId);
-    }, [effectiveConfig, setConnections, setDialogNodeId, setLightingNodeId, setNodes, setSelectedConnectionId, setSelectedNodeIds]);
+        pageUi.getState().setSelectedNodeIds(new Set([childId]));
+        pageUi.getState().setSelectedConnectionId(null);
+        pageUi.getState().setDialogNodeId(childId);
+    }, [pageUi, projectId, effectiveConfig, setConnections, setLightingNodeId, setNodes]);
 
     const generateEmotionNode = useCallback(async (node: CanvasNodeData, payload: CanvasImageEmotionPayload) => {
         if (!node.metadata?.content) return;
@@ -1377,9 +1369,9 @@ export function useCanvasMediaTools({
         setRunningNodeId(childId);
         setNodes((current) => [...current, { id: childId, type: CanvasNodeType.Image, title: `${payload.characterName} · ${payload.label}`, position: { x: node.position.x + node.width + 96, y: node.position.y }, width: node.width, height: node.height, metadata: { prompt: providerPrompt, status: NODE_STATUS_LOADING, ...generationMetadata, ...styleMetadata, emotionEdit } }]);
         setConnections((current) => [...current, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }]);
-        setSelectedNodeIds(new Set([childId]));
-        setSelectedConnectionId(null);
-        setDialogNodeId(childId);
+        pageUi.getState().setSelectedNodeIds(new Set([childId]));
+        pageUi.getState().setSelectedConnectionId(null);
+        pageUi.getState().setDialogNodeId(childId);
         const controller = startGenerationRequest(childId, node.id, childId);
         try {
             const mask = emotionProviderMask(editPlan, { id: `${node.id}-emotion-mask`, name: "emotion-mask.png", type: "image/png", dataUrl: payload.maskDataUrl });
@@ -1401,7 +1393,7 @@ export function useCanvasMediaTools({
             message.error(details);
             setNodes((current) => current.map((item) => item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails: details } } : item));
         } finally { finishGenerationRequest(childId, controller); setRunningNodeId(null); }
-    }, [bindGenerationTask, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, nodesRef, persistMediaNodes, projectId, resolveImageEditStyle, setConnections, setDialogNodeId, setNodes, setRunningNodeId, setSelectedConnectionId, setSelectedNodeIds, startGenerationRequest]);
+    }, [pageUi, bindGenerationTask, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, nodesRef, persistMediaNodes, projectId, resolveImageEditStyle, setConnections, setNodes, setRunningNodeId, startGenerationRequest]);
 
     return {
         clearDeletedNodes,

@@ -6,6 +6,8 @@ import { App } from "antd";
 import { useCanvasNodeEditor } from "../../src/pages/canvas/use-canvas-node-editor";
 import { setActiveUserScope } from "../../src/lib/user-scope";
 import { CanvasNodeType, type CanvasNodeData } from "../../src/types/canvas";
+import { createCanvasPageUiStore } from "../../src/stores/canvas/use-canvas-page-ui-store";
+const pageUi = createCanvasPageUiStore();
 
 type EnsureCall = {
     source?: string;
@@ -91,17 +93,12 @@ function Harness() {
         setNodesState((current) => (typeof value === "function" ? value(current) : value));
     };
 
-    const editor = useCanvasNodeEditor({
+    const editor = useCanvasNodeEditor({ pageUi,
         canvasId,
         canvasTitle: "画布",
         domainProjectId: "project-a",
         nodesRef,
         setNodes,
-        setSelectedNodeIds: () => {},
-        setSelectedConnectionId: () => {},
-        setDialogNodeId: () => {},
-        setToolbarNodeId: () => {},
-        setHoveredNodeId: () => {},
     });
 
     harnessWindow.__editorHarness!.switchABA = async () => {

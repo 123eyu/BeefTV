@@ -14,8 +14,10 @@ import {
 } from "@/lib/canvas/canvas-libtv-fixture";
 import { libtvOriginalEdgeEndpoints } from "@/lib/canvas/libtv-original-edges";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type ViewportTransform } from "@/types/canvas";
+import type { CanvasPageUiStoreHook } from "@/stores/canvas/use-canvas-page-ui-store";
 
 type UseCanvasLibTvVisualFixturesParams = {
+    pageUi: CanvasPageUiStoreHook;
     projectId: string;
     projectLoaded: boolean;
     readOnly: boolean;
@@ -27,13 +29,12 @@ type UseCanvasLibTvVisualFixturesParams = {
     viewportRef: MutableRefObject<ViewportTransform>;
     setNodes: Dispatch<SetStateAction<CanvasNodeData[]>>;
     setConnections: Dispatch<SetStateAction<CanvasConnection[]>>;
-    setSelectedNodeIds: Dispatch<SetStateAction<Set<string>>>;
-    setDialogNodeId: Dispatch<SetStateAction<string | null>>;
     setViewport: Dispatch<SetStateAction<ViewportTransform>>;
     saveCanvasProject: (options?: { requireRemote?: boolean }) => Promise<boolean>;
 };
 
 export function useCanvasLibTvVisualFixtures({
+    pageUi,
     projectId,
     projectLoaded,
     readOnly,
@@ -45,8 +46,6 @@ export function useCanvasLibTvVisualFixtures({
     viewportRef,
     setNodes,
     setConnections,
-    setSelectedNodeIds,
-    setDialogNodeId,
     setViewport,
     saveCanvasProject,
 }: UseCanvasLibTvVisualFixturesParams) {
@@ -82,12 +81,12 @@ export function useCanvasLibTvVisualFixtures({
         // A saved LibTV storyboard opens in browse mode. Do not carry a stale
         // dialog/selection from the canvas that was used to load the fixture;
         // otherwise the first screenshot is polluted by a text composer.
-        setSelectedNodeIds(new Set());
+        pageUi.getState().setSelectedNodeIds(new Set());
         selectedNodeIdsRef.current = new Set();
-        setDialogNodeId(null);
+        pageUi.getState().setDialogNodeId(null);
         // Read-only reference mode is intentionally side-effect free: saving here
         // would surface a local-save toast that the public LibTV viewer does not show.
-    }, [nodes, nodesRef, projectId, projectLoaded, readOnly, saveCanvasProject, searchParams, setDialogNodeId, setNodes, setSelectedNodeIds, selectedNodeIdsRef]);
+    }, [pageUi, nodes, nodesRef, projectId, projectLoaded, readOnly, saveCanvasProject, searchParams, setNodes, selectedNodeIdsRef]);
 
     useEffect(() => {
         if (!projectLoaded || readOnly || searchParams.get("fixture") !== "libtv-readonly-dense") return;
@@ -125,8 +124,8 @@ export function useCanvasLibTvVisualFixtures({
         connectionsRef.current = denseConnections;
         setConnections(denseConnections);
         selectedNodeIdsRef.current = new Set();
-        setSelectedNodeIds(new Set());
-        setDialogNodeId(null);
+        pageUi.getState().setSelectedNodeIds(new Set());
+        pageUi.getState().setDialogNodeId(null);
         // Match the public read-only overview captured from LibTV: 10% scale,
         // two-column groups and a small top-left camera offset.
         const denseViewport = { x: 189.2, y: -179.4, k: 0.1 };
@@ -134,7 +133,7 @@ export function useCanvasLibTvVisualFixtures({
         setViewport(denseViewport);
         // Do not save in the read-only fixture: LibTV's public viewer has no
         // local-save toast or persistence side effect while it is being read.
-    }, [connectionsRef, nodes, nodesRef, projectId, projectLoaded, readOnly, saveCanvasProject, searchParams, setConnections, setDialogNodeId, setNodes, setSelectedNodeIds, setViewport, selectedNodeIdsRef, viewportRef]);
+    }, [pageUi, connectionsRef, nodes, nodesRef, projectId, projectLoaded, readOnly, saveCanvasProject, searchParams, setConnections, setNodes, setViewport, selectedNodeIdsRef, viewportRef]);
 
     useEffect(() => {
         if (!projectLoaded || readOnly || searchParams.get("fixture") !== "libtv-video-merge") return;
@@ -146,10 +145,10 @@ export function useCanvasLibTvVisualFixtures({
         setNodes(nextNodes);
         const selectedFixtureNodes = new Set(fixtureNodes.map((node) => node.id));
         selectedNodeIdsRef.current = selectedFixtureNodes;
-        setSelectedNodeIds(selectedFixtureNodes);
+        pageUi.getState().setSelectedNodeIds(selectedFixtureNodes);
         focusFixtureOnNarrowViewport(fixtureNodes);
         void saveCanvasProject({ requireRemote: false });
-    }, [focusFixtureOnNarrowViewport, nodes, nodesRef, projectId, projectLoaded, readOnly, saveCanvasProject, searchParams, setNodes, setSelectedNodeIds, selectedNodeIdsRef]);
+    }, [pageUi, focusFixtureOnNarrowViewport, nodes, nodesRef, projectId, projectLoaded, readOnly, saveCanvasProject, searchParams, setNodes, selectedNodeIdsRef]);
 
     useEffect(() => {
         if (!projectLoaded || readOnly || !["libtv-video", "libtv-video-subtitle"].includes(searchParams.get("fixture") || "")) return;

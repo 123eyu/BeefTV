@@ -1,5 +1,7 @@
 import { mock } from "bun:test";
 import { strict as assert } from "node:assert";
+import { createCanvasPageUiStore } from "../../src/stores/canvas/use-canvas-page-ui-store";
+const pageUi = createCanvasPageUiStore();
 
 // HTTP WebViews expose getRandomValues, but may not expose randomUUID.
 Object.defineProperty(crypto, "randomUUID", { value: undefined, configurable: true });
@@ -45,8 +47,8 @@ const { useOperationProgress } = await import("@/stores/use-operation-progress")
 const progressEntries = () => Object.values(useOperationProgress.getState().entries);
 const nodesRef: any = { current: [{ id: "video", type: "video", metadata: { content: "old-result", status: "success" } }] };
 const no = () => {};
-const generate = useCanvasGenerationExecutor({ projectId: "canvas", addedSkills: [], assets: [], nodesRef, connectionsRef: { current: [] },
-    setNodes: (update: any) => { nodesRef.current = update(nodesRef.current); }, setConnections: no, setSelectedNodeIds: no, setSelectedConnectionId: no, setDialogNodeId: no,
+const generate = useCanvasGenerationExecutor({ pageUi, projectId: "canvas", addedSkills: [], assets: [], nodesRef, connectionsRef: { current: [] },
+    setNodes: (update: any) => { nodesRef.current = update(nodesRef.current); }, setConnections: no,
     setRunningNodeId: (update: any) => { running = typeof update === "function" ? update(running) : update; },
     startGenerationRequest: (id, _origin, _running, controller = new AbortController()) => { requests.set(id, controller); return controller; },
     finishGenerationRequest: (id, controller) => { if (requests.get(id) === controller) requests.delete(id); }, bindGenerationTask: no, applyGenerationTaskResult: async () => {},

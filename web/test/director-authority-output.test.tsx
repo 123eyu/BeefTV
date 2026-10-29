@@ -15,6 +15,8 @@ import * as assetSync from "@/services/project-asset-sync";
 import { resetWorkspaceAssetCommitStateForTests } from "@/services/workspace-asset-repository";
 import { peekAssetStoreDraft, resetAssetStoreDraftsForTests, useAssetStore } from "@/stores/use-asset-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
+import { createCanvasPageUiStore } from "../src/stores/canvas/use-canvas-page-ui-store";
+const pageUi = createCanvasPageUiStore();
 
 function deferred<T = void>() {
     let resolve!: (value: T | PromiseLike<T>) => void;
@@ -47,7 +49,7 @@ function directorNode(sceneId: string, shotId: string): CanvasNodeData {
 function mountDirector(projectId: string, node: CanvasNodeData, scene: ReturnType<typeof createDirectorScene>, nodesRef: { current: CanvasNodeData[] }) {
     let director!: ReturnType<typeof useCanvasDirector>;
     function Harness() {
-        director = useCanvasDirector({
+        director = useCanvasDirector({ pageUi,
             projectId,
             directorNodeId: node.id,
             directorScenes: [scene],
@@ -56,8 +58,6 @@ function mountDirector(projectId: string, node: CanvasNodeData, scene: ReturnTyp
             getCanvasCenter: () => ({ x: 0, y: 0 }),
             setNodes: (value) => { nodesRef.current = typeof value === "function" ? value(nodesRef.current) : value; },
             setConnections: () => {},
-            setSelectedNodeIds: () => {},
-            setSelectedConnectionId: () => {},
             setDirectorNodeId: () => {},
             updateProject: useCanvasStore.getState().updateProject,
         });

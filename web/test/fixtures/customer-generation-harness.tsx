@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "antd";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -23,6 +23,8 @@ import { buildCanvasNodeMentionReferenceMap } from "../../src/lib/canvas/canvas-
 import { isolateCopiedNodeMetadata } from "../../src/lib/canvas/canvas-node-copy";
 import { useCanvasNodeOperations } from "../../src/pages/canvas/use-canvas-node-operations";
 import { CanvasGenerationHistoryPicker } from "../../src/components/canvas/canvas-generation-history-picker";
+import { createCanvasPageUiStore } from "../../src/stores/canvas/use-canvas-page-ui-store";
+const pageUi = createCanvasPageUiStore();
 
 const params = new URLSearchParams(location.search);
 const scenario = (params.get("scenario") || "five-images") as CustomerGenerationScenario;
@@ -100,11 +102,13 @@ function Harness() {
         useCanvasStore.getState().updateProject(project.id, { nodes: next });
         return next;
     }), []);
-    const nodeOperations = useCanvasNodeOperations({ projectId: project.id, defaultDrawingEngine: "excalidraw", nodesRef, connectionsRef, selectedNodeIdsRef,
-        getCanvasCenter: () => ({ x: 400, y: 300 }), setNodes, setConnections, setSelectedNodeIds: noop, setSelectedConnectionId: noop, setContextMenu: noop,
-        setDialogNodeId: id => { if (id) setActiveNodeId(id); }, onNodesDeleted: noop });
+    useEffect(() => pageUi.subscribe((state, previous) => {
+        if (state.dialogNodeId && state.dialogNodeId !== previous.dialogNodeId) setActiveNodeId(state.dialogNodeId);
+    }), []);
+    const nodeOperations = useCanvasNodeOperations({ pageUi, projectId: project.id, defaultDrawingEngine: "excalidraw", nodesRef, connectionsRef, selectedNodeIdsRef,
+        getCanvasCenter: () => ({ x: 400, y: 300 }), setNodes, setConnections, onNodesDeleted: noop });
     const generation = useCanvasGeneration({ projectId: project.id, domainProjectId: "synthetic-domain", projectLoaded: params.has("recover"), nodes, nodesRef, setNodes });
-    const generate = useCanvasGenerationExecutor({ projectId: project.id, domainProjectId: "synthetic-domain", addedSkills: [], assets: [], nodesRef, connectionsRef, setNodes, setConnections: noop, setSelectedNodeIds: noop, setSelectedConnectionId: noop, setDialogNodeId: noop,
+    const generate = useCanvasGenerationExecutor({ pageUi, projectId: project.id, domainProjectId: "synthetic-domain", addedSkills: [], assets: [], nodesRef, connectionsRef, setNodes, setConnections: noop,
         setRunningNodeId: generation.setRunningNodeId, startGenerationRequest: generation.startGenerationRequest, finishGenerationRequest: generation.finishGenerationRequest, bindGenerationTask: generation.bindGenerationTask, applyGenerationTaskResult: generation.applyGenerationTaskResult });
     harness.generate = async () => {
         harness.settled = false;
