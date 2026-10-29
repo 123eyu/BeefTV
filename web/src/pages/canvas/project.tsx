@@ -959,7 +959,6 @@ function InfiniteCanvasPage() {
         segmentRunningMode,
         inlineTrimNodeId,
         inlineTrimRunning,
-        setInlineTrimNodeId,
         openInlineVideoTrim,
         openVideoCrop,
         closeInlineVideoTrim,
@@ -976,6 +975,7 @@ function InfiniteCanvasPage() {
         splitImageNode,
         upscaleImageNode,
         upscaleNodeId,
+        clearDeletedNodes: clearDeletedMediaToolNodes,
     } = useCanvasMediaTools({
         projectId,
         domainProjectId: linkedProjectId,
@@ -1037,15 +1037,7 @@ function InfiniteCanvasPage() {
             setToolbarNodeId(clearDeletedId);
             setDialogNodeId(clearDeletedId);
             clearDeletedNodeIds(removedIds);
-            setFrameDialogNodeId(clearDeletedId);
-            setInlineTrimNodeId(clearDeletedId);
-            setCropNodeId(clearDeletedId);
-            setMaskEditNodeId(clearDeletedId);
-            setAnnotationNodeId(clearDeletedId);
-            setUpscaleNodeId(clearDeletedId);
-            setAngleNodeId(clearDeletedId);
-            setLightingNodeId(clearDeletedId);
-            setEmotionNodeId(clearDeletedId);
+            clearDeletedMediaToolNodes(removedIds);
             setRunningNodeId(clearDeletedId);
             setScriptScrollTopById((current) => Object.fromEntries(Object.entries(current).filter(([id]) => !removedIds.has(id))));
             setContextMenu((current) => (current?.type === "node" && removedIds.has(current.nodeId) ? null : current));
@@ -1066,18 +1058,10 @@ function InfiniteCanvasPage() {
         [
             chatSessions,
             cleanupCanvasFiles,
+            clearDeletedMediaToolNodes,
             clearDeletedNodeIds,
             message,
             projectId,
-            setAngleNodeId,
-            setAnnotationNodeId,
-            setCropNodeId,
-            setEmotionNodeId,
-            setFrameDialogNodeId,
-            setLightingNodeId,
-            setMaskEditNodeId,
-            setInlineTrimNodeId,
-            setUpscaleNodeId,
             setRunningNodeId,
         ],
     );
