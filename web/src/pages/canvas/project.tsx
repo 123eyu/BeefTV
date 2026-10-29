@@ -15,7 +15,6 @@ import { uploadMediaFile } from "@/services/file-storage";
 import { getActiveUserScope, scopedLocalStorage } from "@/lib/user-scope";
 import { assertUserScope, captureUserScope, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { findWorkspaceAssetIdByStorageKey } from "@/lib/canvas/director/director-library-persist";
-import { resourceFileUrl, resourceIdFromStorageKey } from "@/services/api/resources";
 import { uploadImage } from "@/services/image-storage";
 import { imageMetadata } from "@/lib/canvas/canvas-generation-task-sync";
 import { isCanvasImageSourceNode } from "@/lib/canvas/canvas-image-source";
@@ -121,6 +120,7 @@ import { useCanvasMediaTools } from "./use-canvas-media-tools";
 import { useCanvasNodeEditor } from "./use-canvas-node-editor";
 import { useCanvasNodeOperations } from "./use-canvas-node-operations";
 import { useCanvasProjectMenu } from "./use-canvas-project-menu";
+import { buildLinkedFolderPreviewNodes } from "@/lib/canvas/canvas-linked-folder-previews";
 import { useCanvasProjectLifecycle } from "./use-canvas-project-lifecycle";
 import { useCanvasRenderModel } from "./use-canvas-render-model";
 import { useCanvasSelectionController } from "./use-canvas-selection-controller";
@@ -1458,33 +1458,7 @@ function InfiniteCanvasPage() {
         [nodesRef, openProjectAssets, toggleFrameCollapsed],
     );
 
-    const linkedFolderPreviewNodesById = useMemo(() => {
-        const result = new Map<string, CanvasNodeData[]>();
-        const localById = new Map(assets.map((asset) => [asset.id, asset]));
-        for (const asset of linkedProjectQuery.data?.assets || []) {
-            if (!asset.folderId) continue;
-            const local = localById.get(asset.id);
-            const characterCover = asset.character?.representations.find((item) => item.role === "turnaround_sheet") || asset.character?.representations.find((item) => item.role === "primary") || asset.character?.representations[0];
-            const type = asset.category === "character" || asset.mediaType === "image" ? CanvasNodeType.Image : asset.mediaType === "video" ? CanvasNodeType.Video : asset.mediaType === "audio" ? CanvasNodeType.Audio : CanvasNodeType.Text;
-            const remoteResourceId = resourceIdFromStorageKey(asset.storageKey);
-            const content = characterCover
-                ? resourceFileUrl(characterCover.resourceId)
-                : local?.kind === "image"
-                  ? local.data.dataUrl || local.coverUrl
-                  : local?.kind === "video" || local?.kind === "audio"
-                    ? local.data.url
-                    : local?.kind === "text"
-                      ? local.data.content
-                      : remoteResourceId
-                        ? resourceFileUrl(remoteResourceId)
-                        : asset.previewText || "";
-            const preview: CanvasNodeData = { id: asset.id, type, title: asset.title, position: { x: 0, y: 0 }, width: 240, height: 160, metadata: { assetId: asset.id, content } };
-            const current = result.get(asset.folderId) || [];
-            current.push(preview);
-            result.set(asset.folderId, current);
-        }
-        return result;
-    }, [assets, linkedProjectQuery.data?.assets]);
+    const linkedFolderPreviewNodesById = useMemo(() => buildLinkedFolderPreviewNodes(assets, linkedProjectQuery.data?.assets || []), [assets, linkedProjectQuery.data?.assets]);
 
     const singleSelectedNodeId = selectedNodeIds.size === 1 ? selectedNodeIds.values().next().value ?? null : null;
     // Nodes that need live controls stay as DOM cards above the overview canvas.
