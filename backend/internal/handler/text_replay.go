@@ -28,11 +28,11 @@ type textReplayAPI interface {
 type appTextReplayAPI struct{ svc *app.Service }
 
 func (a appTextReplayAPI) Append(userID, taskID, content string) (*model.TaskTextDelta, error) {
-	return a.svc.AppendTaskTextDelta(userID, taskID, content)
+	return a.svc.TextReplay().Append(userID, taskID, content)
 }
 
 func (a appTextReplayAPI) Read(userID, taskID string, after int64) (*textreplay.Result, error) {
-	return a.svc.TaskTextReplay(userID, taskID, after)
+	return a.svc.TextReplay().Read(userID, taskID, after)
 }
 
 func (a appTextReplayAPI) CachedRead(ctx context.Context, userID, taskID string, after int64) (*textreplay.Result, error) {
@@ -40,7 +40,7 @@ func (a appTextReplayAPI) CachedRead(ctx context.Context, userID, taskID string,
 }
 
 func (a appTextReplayAPI) Complete(userID, taskID, text string) (*model.Task, error) {
-	return a.svc.CompleteTextReplayTask(userID, taskID, text)
+	return a.svc.TextReplay().Complete(userID, taskID, text)
 }
 
 func registerTaskTextReplayRoutes(r *gin.RouterGroup, svc *app.Service) {

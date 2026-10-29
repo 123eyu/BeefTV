@@ -92,6 +92,9 @@ func (c *pluginRuntime) uninstall(id string) error {
 	return c.Runtime.Uninstall(id)
 }
 
+// PluginDomain exposes the domain service to the HTTP composition layer.
+func (s *Service) PluginDomain() *plugins.Service { return s.pluginDomain() }
+
 func (s *Service) pluginDomain() *plugins.Service {
 	var runtime *plugins.Runtime
 	if s != nil && s.pluginRuntime != nil {

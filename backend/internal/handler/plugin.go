@@ -26,7 +26,7 @@ func RegisterPluginRoutes(r *gin.RouterGroup, svc *app.Service, hosted ...bool) 
 		}
 		scope := strings.TrimSpace(c.DefaultQuery("scope", "user.custom-channel"))
 		capability := strings.TrimSpace(c.Query("capability"))
-		ok(c, gin.H{"providers": svc.PluginProviderCatalog(scope, capability, false)})
+		ok(c, gin.H{"providers": svc.PluginDomain().ProviderCatalog(scope, capability, false)})
 	})
 	statusRoutes := r.Group("/plugins")
 	statusRoutes.GET("/status", func(c *gin.Context) {
@@ -35,12 +35,12 @@ func RegisterPluginRoutes(r *gin.RouterGroup, svc *app.Service, hosted ...bool) 
 			failService(c, err)
 			return
 		}
-		states, err := svc.PluginStatesForUser(user)
+		states, err := svc.PluginDomain().StatesForUser(user)
 		if err != nil {
 			failService(c, err)
 			return
 		}
-		statuses, err := svc.WorkflowPluginStatusesForUser(user.ID)
+		statuses, err := svc.PluginDomain().WorkflowStatusesForUser(user.ID)
 		if err != nil {
 			failService(c, err)
 			return
@@ -62,7 +62,7 @@ func RegisterPluginRoutes(r *gin.RouterGroup, svc *app.Service, hosted ...bool) 
 			failService(c, err)
 			return
 		}
-		states, err := svc.PluginStatesForUser(user)
+		states, err := svc.PluginDomain().StatesForUser(user)
 		if err != nil {
 			failService(c, err)
 			return
@@ -127,7 +127,7 @@ func RegisterPluginRoutes(r *gin.RouterGroup, svc *app.Service, hosted ...bool) 
 			failService(c, app.Forbidden("无权访问该插件包"))
 			return
 		}
-		data, fileName, err := svc.PluginPackage(c.Param("id"))
+		data, fileName, err := svc.PluginDomain().Package(c.Param("id"))
 		if err != nil {
 			failService(c, err)
 			return

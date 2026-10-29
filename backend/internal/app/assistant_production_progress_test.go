@@ -34,7 +34,7 @@ func productionProgressFixture(t *testing.T) (*Service, string, string) {
 	if _, err := svc.BeginAssistantTurn("local", canvasID, source, AssistantTurnInput{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.BindAssistantDurableSession("local", source, backgroundContinuationSession, false); err != nil {
+	if err := svc.AssistantTurns().BindDurableSession("local", source, backgroundContinuationSession, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.FinalizeAssistantTurn(source); err != nil {
@@ -153,7 +153,7 @@ func TestProductionProgressAdvancesOnlySavedDependenciesWithoutModelTurns(t *tes
 
 func TestProductionProgressStopRevokesFurtherAdmissions(t *testing.T) {
 	svc, canvasID, id := productionProgressFixture(t)
-	if err := svc.CancelAssistantContinuations("local", canvasID, backgroundContinuationSession, false); err != nil {
+	if err := svc.AssistantTurns().CancelContinuations("local", canvasID, backgroundContinuationSession, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.ClaimAssistantContinuation("local", id); err == nil {

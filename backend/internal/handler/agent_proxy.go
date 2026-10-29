@@ -281,7 +281,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			fail(c, http.StatusBadRequest, app.BadAuthRequest("canvasId 必填"))
 			return nil, false
 		}
-		raw, err := svc.UserCanvasProject(c.GetString("agentUserId"), canvasID)
+		raw, err := svc.CanvasService().UserCanvasProject(c.GetString("agentUserId"), canvasID)
 		if err != nil {
 			fail(c, http.StatusNotFound, app.BadAuthRequest("画布不存在或不属于当前工作区"))
 			return nil, false
@@ -369,7 +369,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		if _, allowed := requireOwnedCanvas(c, payload.CanvasID); !allowed {
 			return
 		}
-		revision, err := svc.UndoAssistantTurn(c.GetString("agentUserId"), payload.CanvasID, c.Param("turnId"))
+		revision, err := svc.AssistantTurns().Undo(c.GetString("agentUserId"), payload.CanvasID, c.Param("turnId"))
 		if err != nil {
 			var turnErr *app.AssistantTurnError
 			if errors.As(err, &turnErr) {
@@ -405,7 +405,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		if _, allowed := requireOwnedCanvas(c, payload.CanvasID); !allowed {
 			return
 		}
-		if err := svc.CheckAssistantProposalRunnable(c.GetString("agentUserId"), payload.CanvasID, c.Param("turnId")); err != nil {
+		if err := svc.AssistantTurns().CheckProposalRunnable(c.GetString("agentUserId"), payload.CanvasID, c.Param("turnId")); err != nil {
 			var turnErr *app.AssistantTurnError
 			if errors.As(err, &turnErr) {
 				status := http.StatusConflict
@@ -676,7 +676,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			target["sessionId"] = *payload.SessionID
 			target["requestId"] = *payload.RequestID
 		}
-		if err := svc.CancelAssistantContinuations(c.GetString("agentUserId"), payload.CanvasID, cancelSession, false); err != nil {
+		if err := svc.AssistantTurns().CancelContinuations(c.GetString("agentUserId"), payload.CanvasID, cancelSession, false); err != nil {
 			failService(c, err)
 			return
 		}
@@ -768,7 +768,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 			}
 			input := assistantTurnInput(nil, refs)
 			input.SkillPins = pins
-			if err := svc.ExtendAssistantTurn(c.GetString("agentUserId"), payload.CanvasID, active.TurnID, input); err != nil {
+			if err := svc.AssistantTurns().Extend(c.GetString("agentUserId"), payload.CanvasID, active.TurnID, input); err != nil {
 				failService(c, err)
 				return
 			}
