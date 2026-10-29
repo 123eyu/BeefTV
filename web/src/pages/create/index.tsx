@@ -14,7 +14,7 @@ import { assertUserScope, captureUserScope, userScopeMatches, type CapturedUserS
 import { continueCreationConversationOnCanvas } from "@/services/creation-canvas-conversation";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { useExternalAssetSources } from "@/hooks/use-external-asset-sources";
-import { modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, videoDurationOptions } from "@/lib/model-capabilities";
+import { modelCapabilityConfigFor, normalizeImageValue, normalizeVideoValue, videoDurationOptions, VIDEO_CAPABILITIES_UNAVAILABLE } from "@/lib/model-capabilities";
 import { inferVideoOperation, resolveCompatibleModel, mergedImageCapabilityConfig, type ModelRequirements } from "@/lib/model-selection";
 import { videoSubmitNotice } from "./creation-submit-guard";
 import type { BackendGenerationResult } from "@/services/api/generation-task";
@@ -246,6 +246,7 @@ export default function CreatePage() {
 
     useEffect(() => {
         if (!composerPreferencesHydrated || !composerPreferencesInitialized || mode !== "video") return;
+        if (modelCapabilityConfigFor(config, selectedModel).videoCapabilitiesUnavailable) return;
         const saved = useCreationPreferencesStore.getState().preferences.video;
         // 优先恢复用户上次选择；只有当前模型不支持该值时，normalizeVideoValue 才回退到模型默认值。
         const normalized = normalizeVideoValue(videoProfile, {
@@ -256,7 +257,7 @@ export default function CreatePage() {
         setSeconds(normalized.seconds);
         setRatio(normalized.ratio);
         setVideoQuality(normalized.resolution.replace(/p$/i, ""));
-    }, [composerPreferencesHydrated, composerPreferencesInitialized, mode, selectedModel, videoProfile]);
+    }, [composerPreferencesHydrated, composerPreferencesInitialized, mode, selectedModel, videoProfile, config]);
 
     useEffect(() => {
         const reconciled = reconcileCreationAttachmentLimit(attachments, mentionReferences, referenceLimits);
@@ -664,6 +665,11 @@ export default function CreatePage() {
         }
         if (!selectedModel) {
             toast.warning(`请先在设置中配置${modeLabels[mode]}模型`);
+            releaseRetryLock();
+            return;
+        }
+        if (mode === "video" && modelCapabilityConfigFor(config, selectedModel).videoCapabilitiesUnavailable) {
+            setComposerNotice(VIDEO_CAPABILITIES_UNAVAILABLE);
             releaseRetryLock();
             return;
         }

@@ -127,6 +127,7 @@ func taskInputFromCanvas(input Input) modelcatalog.TaskInput {
 		Metadata:        input.Metadata,
 		Config: modelcatalog.TaskConfig{
 			ImageCapabilitiesVersion: input.Config.ImageCapabilitiesVersion,
+			VideoCapabilitiesVersion: input.Config.VideoCapabilitiesVersion,
 			ChannelID:                input.Config.ChannelID,
 			ChannelModelKey:          input.Config.ChannelModelKey,
 			Model:                    input.Config.Model,

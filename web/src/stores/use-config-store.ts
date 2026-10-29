@@ -941,7 +941,9 @@ function enrichBeefApiMediaChannel(channel: ModelChannel): ModelChannel {
         existing.delete(model);
     }
     for (const model of models.filter((model) => isVideoModelName(model) || Boolean(beefAPIVideoContract(model)))) {
+        if (channel.id === "beefapi" || channel.credentialRef === MANAGED_BEEFAPI_CREDENTIAL_REF) continue;
         const current = existing.get(model);
+        if (current?.videoCapabilitiesVersion?.trim() && current.capabilityConfig?.video) continue;
         // Repair known routes using the shared contract; preserve catalog and
         // custom protocols for models whose wire contract is not declared here.
         const protocol = beefApiVideoProtocol(model, current?.protocol);

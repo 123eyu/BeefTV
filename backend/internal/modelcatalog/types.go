@@ -87,18 +87,27 @@ const (
 )
 
 type VideoCapabilityConfig struct {
-	References          VideoReferenceConfig `json:"references"`
-	Duration            VideoDurationConfig  `json:"duration"`
-	DurationSupported   *bool                `json:"durationSupported,omitempty"`
-	Ratios              []string             `json:"ratios"`
-	DefaultRatio        string               `json:"defaultRatio"`
-	Resolutions         []string             `json:"resolutions"`
-	DefaultResolution   string               `json:"defaultResolution"`
-	GenerateAudio       VideoBooleanConfig   `json:"generateAudio"`
-	Watermark           VideoBooleanConfig   `json:"watermark"`
-	Operations          []string             `json:"operations"`
-	DefaultOperation    string               `json:"defaultOperation"`
-	TaskTypeConstraints bool                 `json:"taskTypeConstraints,omitempty"`
+	References          VideoReferenceConfig                `json:"references"`
+	OperationReferences map[string]VideoOperationReferences `json:"operationReferences,omitempty"`
+	Duration            VideoDurationConfig                 `json:"duration"`
+	DurationSupported   *bool                               `json:"durationSupported,omitempty"`
+	Ratios              []string                            `json:"ratios"`
+	DefaultRatio        string                              `json:"defaultRatio"`
+	Resolutions         []string                            `json:"resolutions"`
+	DefaultResolution   string                              `json:"defaultResolution"`
+	GenerateAudio       VideoBooleanConfig                  `json:"generateAudio"`
+	Watermark           VideoBooleanConfig                  `json:"watermark"`
+	Operations          []string                            `json:"operations"`
+	DefaultOperation    string                              `json:"defaultOperation"`
+	TaskTypeConstraints bool                                `json:"taskTypeConstraints,omitempty"`
+}
+
+// Nil inherits the model-wide count; a declared zero forbids that media kind.
+type VideoOperationReferences struct {
+	MinImages *int `json:"minImages,omitempty"`
+	MaxImages *int `json:"maxImages,omitempty"`
+	MaxVideos *int `json:"maxVideos,omitempty"`
+	MaxAudios *int `json:"maxAudios,omitempty"`
 }
 
 type ModelCapabilityDraft struct {
@@ -277,6 +286,7 @@ type MediaRef struct {
 // selection and declared options.
 type TaskConfig struct {
 	ImageCapabilitiesVersion *string
+	VideoCapabilitiesVersion *string
 	ChannelID                string
 	ChannelModelKey          string
 	Model                    string

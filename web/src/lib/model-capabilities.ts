@@ -1,4 +1,4 @@
-import { isVolcengineArkVideoProtocol, type ModelProtocol, type ModelProtocolWorkflow } from "@/lib/model-protocols";
+import { isVolcengineArkVideoProtocol, modelProtocolCapability, type ModelProtocol, type ModelProtocolWorkflow } from "@/lib/model-protocols";
 import { beefAPIImageContract } from "@/lib/beefapi-image-contracts";
 import { seedreamFamily, seedreamImageCapability } from "@/lib/seedream-image";
 import type { ImageResolutionOption, ImageResolutionTier } from "@/lib/image-resolution-tiers";
@@ -9,7 +9,11 @@ export type ModelCapabilityConfig = {
     text?: TextCapabilityConfig;
     image?: ImageCapabilityConfig;
     video?: VideoCapabilityConfig;
+    /** Local display state; never a supplier capability or request option. */
+    videoCapabilitiesUnavailable?: boolean;
 };
+
+export const VIDEO_CAPABILITIES_UNAVAILABLE = "当前视频模型能力尚未加载，请在设置中刷新模型列表";
 
 export type TextCapabilityConfig = {
     /** Whether the upstream text endpoint accepts SSE streaming responses. */
@@ -120,6 +124,7 @@ export type VideoCapabilityConfig = {
     watermark: { supported: boolean; default: boolean };
     operations: string[];
     defaultOperation: string;
+    operationReferences?: Record<string, Partial<Pick<VideoCapabilityConfig["references"], "minImages" | "maxImages" | "maxVideos" | "maxAudios">>>;
 };
 
 // 旧版本的“允许自定义”可能只保存了 `*`，前台需要用这组标准值恢复可选项。
@@ -336,6 +341,24 @@ export function sanitizeServerVideoCapability(value: unknown): VideoCapabilityCo
         operations,
         defaultOperation,
     };
+    if ("operationReferences" in object) {
+        const byOperation = catalogObject(object.operationReferences);
+        if (!byOperation) return null;
+        video.operationReferences = {};
+        for (const [operation, raw] of Object.entries(byOperation)) {
+            const limits = catalogObject(raw);
+            if (!limits || !operations.includes(operation)) return null;
+            const counts: NonNullable<VideoCapabilityConfig["operationReferences"]>[string] = {};
+            for (const key of ["minImages", "maxImages", "maxVideos", "maxAudios"] as const) {
+                if (!(key in limits)) continue;
+                const count = limits[key];
+                if (typeof count !== "number" || !Number.isInteger(count) || count < 0 || count > 100) return null;
+                counts[key] = count;
+            }
+            if ((counts.minImages ?? normalizedRefs.minImages ?? 0) > (counts.maxImages ?? normalizedRefs.maxImages ?? 0)) return null;
+            video.operationReferences[operation] = counts;
+        }
+    }
     if ("durationSupported" in object) {
         if (typeof object.durationSupported !== "boolean") return null;
         video.durationSupported = object.durationSupported;
@@ -351,6 +374,17 @@ export function videoSupportsTaskTypeConstraints(video?: VideoCapabilityConfig |
     if (!video) return false;
     if (typeof video.taskTypeConstraints === "boolean") return video.taskTypeConstraints;
     return Boolean(video.operations?.includes("inpaint") || video.operations?.includes("extend"));
+}
+
+export function versionedVideoCapability(value: unknown, version: string | undefined): VideoCapabilityConfig | null {
+    if (!version?.trim()) return null;
+    const video = sanitizeServerVideoCapability(value);
+    if (!video || ![video.references.maxImages, video.references.maxVideos, video.references.maxAudios].every(Number.isInteger)) return null;
+    return video;
+}
+
+export function videoReferencesForOperation(profile: VideoCapabilityConfig, operation: string): VideoCapabilityConfig["references"] {
+    return { ...profile.references, ...profile.operationReferences?.[operation] };
 }
 
 // Keep explicit pixel presets for each resolution tier so the settings panel can
@@ -710,9 +744,9 @@ export function pluginWorkflowCapabilityConfig(protocol: ModelProtocol, workflow
 }
 
 export function modelCapabilityConfigFor(
-    config: { channels: Array<{ id: string; models: string[]; baseUrl?: string; interfaceType?: ModelProtocol; modelProfiles?: Array<{ model: string; capabilityConfig?: ModelCapabilityConfig; protocol?: ModelProtocol; imageCapabilitiesVersion?: string }> }> },
+    config: { channels: Array<{ id: string; models: string[]; baseUrl?: string; credentialRef?: string; interfaceType?: ModelProtocol; modelProfiles?: Array<{ model: string; capability?: string; capabilityConfig?: ModelCapabilityConfig; protocol?: ModelProtocol; imageCapabilitiesVersion?: string; videoCapabilitiesVersion?: string }> }> },
     model: string,
-) {
+): ModelCapabilityConfig {
     const separator = model.indexOf("::");
     const channelId = separator >= 0 ? model.slice(0, separator) : "";
     const modelName = separator >= 0 ? model.slice(separator + 2) : model;
@@ -725,6 +759,19 @@ export function modelCapabilityConfigFor(
     const profile = channel?.modelProfiles?.find((item) => item.model === modelName && item.capabilityConfig && !Array.isArray(item.capabilityConfig)) || channel?.modelProfiles?.find((item) => item.model === modelName);
     const protocol = profile?.protocol || channel?.interfaceType;
     if (profile?.imageCapabilitiesVersion && profile.capabilityConfig?.image) return structuredClone(profile.capabilityConfig);
+    const sourcedVideo = versionedVideoCapability(profile?.capabilityConfig?.video, profile?.videoCapabilitiesVersion);
+    if (sourcedVideo) return { ...defaultModelCapabilityConfig(), video: sourcedVideo };
+    if ((channel?.id === "beefapi" || channel?.credentialRef === "beefapi-enterprise") && (!profile || profile.capability === "video" || modelProtocolCapability(protocol) === "video")) {
+        // Keep callers renderable without claiming any controls are supported.
+        // Submission and settings surfaces display the unavailable state.
+        return { ...defaultModelCapabilityConfig(), videoCapabilitiesUnavailable: true, video: {
+            references: { promptMaxChars: 0, minImages: 0, maxImages: 0, maxImageBytes: 0, maxVideos: 0, maxVideoBytes: 0, maxVideoDurationSeconds: 0, maxAudios: 0, maxAudioBytes: 0, maxAudioDurationSeconds: 0 },
+            duration: { selection: "enum", values: [], default: 0 },
+            ratios: [], defaultRatio: "", resolutions: [], defaultResolution: "",
+            generateAudio: { supported: false, default: false }, watermark: { supported: false, default: false },
+            operations: [], defaultOperation: "text_to_video",
+        } };
+    }
     const fallback = defaultModelCapabilityConfig(protocol, modelName);
     // Official gateway contracts also upgrade capabilities cached by older installs.
     try {
@@ -1523,6 +1570,7 @@ export function videoDurationOptions(profile: VideoCapabilityConfig) {
 }
 
 export function videoDurationAllowed(profile: VideoCapabilityConfig, value: number) {
+    if (profile.durationSupported === false) return true;
     if (value === -1) return (profile.duration.values || []).includes(-1);
     if (profile.duration.selection === "enum") return (profile.duration.values || []).includes(value);
     const min = profile.duration.continuous ? profile.duration.fractionalMin || profile.duration.min || .92 : profile.duration.min || 1;

@@ -425,6 +425,15 @@ func (CapabilityNormalizer) NormalizeModelCapabilityDraft(draft ModelCapabilityD
 }
 
 func NormalizeModelCapabilityDraft(draft ModelCapabilityDraft) (*ModelCapabilityConfig, error) {
+	if draft.VideoCapabilitiesVersion != nil && strings.TrimSpace(*draft.VideoCapabilitiesVersion) != "" {
+		if draft.CapabilityConfig == nil || draft.CapabilityConfig.Video == nil {
+			return nil, kernel.BadAuthRequest("当前视频模型能力尚未加载，请在设置中刷新模型列表")
+		}
+		if err := validateVideoCapabilityConfig(draft.CapabilityConfig.Video); err != nil {
+			return nil, err
+		}
+		return &ModelCapabilityConfig{Version: 1, Video: draft.CapabilityConfig.Video}, nil
+	}
 	modelName := strings.TrimSpace(draft.Model)
 	protocol := strings.ToLower(strings.TrimSpace(kernel.FirstNonEmpty(draft.Protocol, draft.InterfaceType)))
 	rawCapability := strings.TrimSpace(kernel.FirstNonEmpty(draft.Capability, draft.Type, draft.Category))
@@ -964,6 +973,20 @@ func validateVideoCapabilityConfig(value *VideoCapabilityConfig) error {
 	if len(value.Operations) == 0 || strings.TrimSpace(value.DefaultOperation) == "" || !containsCapabilityString(value.Operations, value.DefaultOperation) {
 		return kernel.BadAuthRequest("请至少配置一个生成模式，并选择默认模式")
 	}
+	for operation, limits := range value.OperationReferences {
+		if !containsCapabilityString(value.Operations, operation) {
+			return kernel.BadAuthRequest("参考素材限制对应的生成模式不存在")
+		}
+		for _, count := range []*int{limits.MinImages, limits.MaxImages, limits.MaxVideos, limits.MaxAudios} {
+			if count != nil && (*count < 0 || *count > 100) {
+				return kernel.BadAuthRequest("参考素材数量限制必须在 0-100 之间")
+			}
+		}
+		refs := videoReferencesForOperation(value, operation)
+		if refs.MinImages > refs.MaxImages {
+			return kernel.BadAuthRequest("最少图片引用数不能超过最大图片引用数")
+		}
+	}
 	return nil
 }
 
@@ -1103,29 +1126,25 @@ func validateVideoTaskParameters(profile *VideoCapabilityConfig, input TaskInput
 			allowed = videoDurationAllowed(profile.Duration, int(seconds))
 		}
 	}
-	if !allowed {
+	if !allowed && videoDurationSupported(profile) {
 		requirement := videoDurationRequirement(profile.Duration)
 		if requirement == "" {
 			return kernel.BadAuthRequest("当前模型没有可用的输出时长，请先在模型能力里设置至少 4 秒的时长后再提交")
 		}
 		return kernel.BadAuthRequest(fmt.Sprintf("输出时长为 %s 秒，当前模型只支持 %s；请改成 %s 后再提交", strings.TrimSpace(input.Config.VideoSeconds), requirement, requirement))
 	}
-	if input.Config.Size != "" && !videoRatioAllowed(profile.Ratios, input.Config.Size) {
+	if input.Config.Size != "" && !(hasServerVideoCapability(input.Config) && len(profile.Ratios) == 0) && !videoRatioAllowed(profile.Ratios, input.Config.Size) {
 		return kernel.BadAuthRequest("画面比例不在当前模型支持范围内")
 	}
 	if len(profile.Resolutions) > 0 && !isAutomaticVideoResolution(input.Config.VQuality) && videoResolutionNameRequest(profile, input.Config.VQuality) == "" {
 		return kernel.BadAuthRequest("输出分辨率不在当前模型支持范围内")
 	}
-	operation := metadataString(input.Metadata, "videoEditOperation")
-	if operation == "" {
-		if len(input.ReferenceImages) > 0 {
-			operation = "image_to_video"
-		} else {
-			operation = profile.DefaultOperation
-		}
-	}
+	operation := videoTaskOperation(profile, input)
 	if !containsCapabilityString(profile.Operations, operation) {
 		return kernel.BadAuthRequest("当前视频模型不支持该生成模式")
+	}
+	if len(profile.OperationReferences) > 0 {
+		return validateVideoReferenceCounts(videoReferencesForOperation(profile, metadataString(input.Metadata, "videoEditOperation")), input)
 	}
 	return nil
 }

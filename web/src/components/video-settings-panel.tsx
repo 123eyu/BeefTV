@@ -7,8 +7,8 @@ import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceDuration, normalize
 import { isVolcengineArkVideoProtocol } from "@/lib/model-protocols";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { formatVideoResolutionLabel, isVideoResolutionMatch, normalizeVideoDuration, sortVideoResolutionOptions, videoDimensionsForRatioAndResolution, VIDEO_DURATION_MIN } from "@/lib/video-generation-options";
-import { modelCapabilityConfigFor, normalizeVideoValue, resolveVideoRatioValue, resolveVideoResolutionValue, videoDurationOptions, videoSupportsTaskTypeConstraints, type VideoCapabilityConfig } from "@/lib/model-capabilities";
-import { modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
+import { modelCapabilityConfigFor, normalizeVideoValue, resolveVideoRatioValue, resolveVideoResolutionValue, VIDEO_CAPABILITIES_UNAVAILABLE, videoDurationOptions, videoSupportsTaskTypeConstraints, type VideoCapabilityConfig } from "@/lib/model-capabilities";
+import { modelOptionName, resolveModelChannel, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
 const sizeOptions = [
     { value: "1280x720", label: "横屏", width: 1280, height: 720 },
@@ -29,11 +29,14 @@ type VideoSettingsPanelProps = {
 };
 
 export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[292px] space-y-3", taskConstraints }: VideoSettingsPanelProps) {
-    const profile = modelCapabilityConfigFor(config, config.model).video!;
-    if (resolveModelRequestConfig(config, config.model).interfaceType === "volcengine-jimeng-video") {
+    const capabilityConfig = modelCapabilityConfigFor(config, config.model);
+    const profile = capabilityConfig.video!;
+    if (capabilityConfig.videoCapabilitiesUnavailable) return <p className={className} style={{ color: theme.node.muted }}>{VIDEO_CAPABILITIES_UNAVAILABLE}</p>;
+    const serverOwned = Boolean(resolveModelChannel(config, config.model).modelProfiles?.find((item) => item.model === modelOptionName(config.model))?.videoCapabilitiesVersion?.trim());
+    if (!serverOwned && resolveModelRequestConfig(config, config.model).interfaceType === "volcengine-jimeng-video") {
         return <JiMengVideoSettingsPanel config={config} profile={profile} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
     }
-    if (isSeedanceVideoConfig(config)) {
+    if (!serverOwned && isSeedanceVideoConfig(config)) {
         return <SeedanceVideoSettingsPanel config={config} profile={profile} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} taskConstraints={taskConstraints} />;
     }
 
@@ -95,9 +98,9 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         </>}
                     </SettingGroup>
                 ) : null}
-                <SettingGroup title="秒数" color={theme.node.muted}>
-                    <VideoDurationControl profile={profile} value={Number(seconds)} theme={theme} onChange={(value) => onConfigChange("videoSeconds", String(value))} />
-                </SettingGroup>
+                {profile.durationSupported !== false ? <SettingGroup title="秒数" color={theme.node.muted}>
+                    {taskConstraints?.durationLocked ? <p className="text-sm">随原视频</p> : <VideoDurationControl profile={profile} value={Number(seconds)} theme={theme} onChange={(value) => onConfigChange("videoSeconds", String(value))} />}
+                </SettingGroup> : null}
                 {profile.generateAudio.supported || profile.watermark.supported ? (
                     <SettingGroup title="输出" color={theme.node.muted}>
                         <div className="grid grid-cols-2 gap-3 rounded-md px-2" style={{ background: theme.toolbar.itemHover }}>

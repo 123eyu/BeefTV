@@ -4,10 +4,12 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 
+	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/providerpreset"
@@ -28,6 +30,52 @@ func (s *Service) validateResolvedVideoCapabilityContext(ctx context.Context, in
 }
 
 func (s *Service) resolveVideoCapability(ctx context.Context, input *canvasGenerationInput) error {
+	if input.Config.CredentialRef == managedBeefAPIRef {
+		body, err := s.ReadLocalModelConfig()
+		if err != nil {
+			return err
+		}
+		// Only the saved account catalog can authorize a managed submission;
+		// request-supplied versions and profiles are not trusted capabilities.
+		input.Config.VideoCapabilitiesVersion = nil
+		input.Config.CapabilityConfig = nil
+		for _, item := range modelcatalog.ParseLocalChannelModels(body) {
+			if item.ChannelID != "beefapi" || !item.Enabled || item.Model != input.Config.Model || item.VideoCapabilitiesVersion == nil || strings.TrimSpace(*item.VideoCapabilitiesVersion) == "" {
+				continue
+			}
+			config, _ := item.CapabilityConfig.(map[string]any)
+			rawVideo, _ := json.Marshal(config["video"])
+			video, valid := beefapi.NormalizeVersionedVideoCapability(rawVideo, *item.VideoCapabilitiesVersion)
+			if !valid {
+				continue
+			}
+			raw, err := json.Marshal(map[string]any{"version": 1, "video": video})
+			if err != nil {
+				return err
+			}
+			input.Config.CapabilityConfig, err = DecodeModelCapabilityConfig(string(raw))
+			if err != nil {
+				return err
+			}
+			input.Config.VideoCapabilitiesVersion = item.VideoCapabilitiesVersion
+			break
+		}
+		if input.Config.VideoCapabilitiesVersion == nil {
+			return BadAuthRequest("当前视频模型能力尚未加载，请在设置中刷新模型列表")
+		}
+	}
+	if input.Config.VideoCapabilitiesVersion != nil && strings.TrimSpace(*input.Config.VideoCapabilitiesVersion) != "" {
+		profile := input.Config.CapabilityConfig
+		if profile == nil || profile.Video == nil {
+			return BadAuthRequest("当前视频模型能力尚未加载，请在设置中刷新模型列表")
+		}
+		if err := modelcatalog.ValidateVideoCapabilityConfig(profile.Video); err != nil {
+			return err
+		}
+		input.VideoCapability = profile.Video
+		applyFixedVideoResolution(input, profile.Video)
+		return nil
+	}
 	if isBeefAPIVideoConfig(ctx, input.Config) {
 		if contract, ok := providerpreset.BeefAPIVideoContract(input.Config.Model); ok {
 			for _, ref := range []struct {

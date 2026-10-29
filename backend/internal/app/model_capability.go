@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 
 	"infinite-canvas/backend/internal/model"
@@ -18,6 +19,15 @@ func (s *Service) ValidateTaskCapability(input map[string]any) error {
 	}
 	if taskInput.Mode != "image" && taskInput.Mode != "video" && taskInput.Mode != "audio" {
 		return nil
+	}
+	if taskInput.Mode == "video" && taskInput.Config.CredentialRef == managedBeefAPIRef {
+		if err := s.resolveVideoCapability(context.Background(), &taskInput); err != nil {
+			return err
+		}
+		if config, ok := input["config"].(map[string]any); ok {
+			config["capabilityConfig"] = taskInput.Config.CapabilityConfig
+			config["videoCapabilitiesVersion"] = taskInput.Config.VideoCapabilitiesVersion
+		}
 	}
 	if isWorkflowProviderInterface(taskInput.Config.InterfaceType) {
 		if err := validateWorkflowProviderPromptLength(taskInput); err != nil {

@@ -1,5 +1,5 @@
 import { normalizeVideoDuration } from "@/lib/video-generation-options";
-import { modelCapabilityConfigFor, videoDurationAllowed, videoDurationRequirement } from "@/lib/model-capabilities";
+import { modelCapabilityConfigFor, videoDurationAllowed, videoDurationRequirement, videoReferencesForOperation } from "@/lib/model-capabilities";
 import { channelHasGenerationCredential, isBuiltinBeefAPIChannel, resolveModelChannel } from "@/stores/use-config-store";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import type { ReferenceImage } from "@/types/image";
@@ -12,9 +12,9 @@ export function assertVideoCapability(
     videoReferences: ReferenceVideo[],
     audioReferences: ReferenceAudio[],
     seconds: string,
-    options: { deferResourceMetadataToBackend?: boolean } = {},
+    options: { deferResourceMetadataToBackend?: boolean; operation?: string } = {},
 ) {
-    const refs = profile.references;
+    const refs = videoReferencesForOperation(profile, options.operation || "");
     if (references.length > refs.maxImages) throw new Error(`当前视频模型最多支持 ${refs.maxImages} 张参考图`);
     if (videoReferences.length > refs.maxVideos) throw new Error(`当前视频模型最多支持 ${refs.maxVideos} 个参考视频`);
     if (audioReferences.length > refs.maxAudios) throw new Error(`当前视频模型最多支持 ${refs.maxAudios} 段参考音频`);

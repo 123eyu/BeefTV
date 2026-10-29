@@ -29,6 +29,26 @@ func applyCatalog(store *workspace.ProviderConfig, models []CatalogModel, previo
 	channels, _ := config["channels"].([]any)
 	replaced := false
 	replaceModels := previousAccountID != "" && nextAccountID != "" && previousAccountID != nextAccountID
+	previousVideos := map[string]bool{}
+	if !replaceModels {
+		for _, raw := range channels {
+			channel, _ := raw.(map[string]any)
+			if channel["id"] != ChannelID {
+				continue
+			}
+			profiles, _ := channel["modelProfiles"].([]any)
+			for _, raw := range profiles {
+				profile, _ := raw.(map[string]any)
+				version, _ := profile["videoCapabilitiesVersion"].(string)
+				config, _ := profile["capabilityConfig"].(map[string]any)
+				video, _ := json.Marshal(config["video"])
+				if _, valid := NormalizeVersionedVideoCapability(video, version); valid {
+					id, _ := profile["model"].(string)
+					previousVideos[id] = true
+				}
+			}
+		}
+	}
 	nextModels := make([]any, 0, len(models))
 	nextProfiles := make([]any, 0, len(models))
 	for _, model := range models {
@@ -44,6 +64,11 @@ func applyCatalog(store *workspace.ProviderConfig, models []CatalogModel, previo
 			profile["displayName"] = model.DisplayName
 		}
 		capability, protocol := catalogCapabilityAndProtocol(model)
+		if previousVideos[model.ID] && (model.ModelType == "" || model.ModelType == "video") {
+			// A partial refresh cannot reclassify an established video as chat
+			// merely because this response omitted its media declaration.
+			capability, protocol = "video", "openai-videos"
+		}
 		if catalogClearsGeneration(model) {
 			profile["capability"] = ""
 			profile["protocol"] = ""
@@ -55,9 +80,9 @@ func applyCatalog(store *workspace.ProviderConfig, models []CatalogModel, previo
 				profile["protocol"] = protocol
 			}
 			if capability == "video" {
-				if video, ok := NormalizeCatalogVideoCapability(model.VideoCapabilities); ok {
+				if video, ok := NormalizeVersionedVideoCapability(model.VideoCapabilities, model.VideoCapabilitiesVersion); ok {
 					profile["capabilityConfig"] = map[string]any{"version": 1, "video": video}
-					profile["videoCapabilitiesVersion"] = model.VideoCapabilitiesVersion
+					profile["videoCapabilitiesVersion"] = strings.TrimSpace(model.VideoCapabilitiesVersion)
 				}
 			}
 			if capability == "image" {
@@ -82,7 +107,6 @@ func applyCatalog(store *workspace.ProviderConfig, models []CatalogModel, previo
 		} else {
 			// Availability belongs to the current account's catalog. Preserve
 			// overrides only for models that are still present in that catalog.
-			channel["models"], channel["modelProfiles"] = withoutPortraitCatalogEntries(channel["models"], channel["modelProfiles"])
 			channel["models"] = nextModels
 			available := make(map[string]bool, len(models))
 			for _, model := range models {
@@ -184,6 +208,9 @@ func catalogProtocol(model CatalogModel) string {
 }
 
 func catalogCapabilityAndProtocol(model CatalogModel) (capability, protocol string) {
+	if _, ok := NormalizeVersionedVideoCapability(model.VideoCapabilities, model.VideoCapabilitiesVersion); ok {
+		return "video", "openai-videos"
+	}
 	if contract, ok := providerpreset.BeefAPIImageContract(model.ID); ok {
 		return "image", contract.Protocol
 	}
@@ -505,26 +532,4 @@ func findChannel(channels []any, id string) map[string]any {
 		}
 	}
 	return nil
-}
-
-func withoutPortraitCatalogEntries(models, profiles any) ([]any, []any) {
-	isPortrait := func(id string) bool { return id == "seedance-2.0-portrait" || id == "seedance-2.5-portrait" }
-	keptModels := make([]any, 0)
-	for _, raw := range mergeModelIDs(models, nil) {
-		id, _ := raw.(string)
-		if !isPortrait(id) {
-			keptModels = append(keptModels, raw)
-		}
-	}
-	keptProfiles := make([]any, 0)
-	if items, ok := profiles.([]any); ok {
-		for _, raw := range items {
-			profile, _ := raw.(map[string]any)
-			id, _ := profile["model"].(string)
-			if !isPortrait(id) {
-				keptProfiles = append(keptProfiles, raw)
-			}
-		}
-	}
-	return keptModels, keptProfiles
 }

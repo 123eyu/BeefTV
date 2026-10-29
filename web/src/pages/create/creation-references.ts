@@ -56,6 +56,7 @@ export type CreationReferenceLimitOptions = {
 // 不代表“不支持参考素材”，这里不设上限以免把用户已选好的附件和引用直接删掉。
 export function creationReferenceLimitsFor(mode: CreationMode, capabilities: ModelCapabilityConfig, options: CreationReferenceLimitOptions = {}): CreationReferenceLimits {
     if (mode === "video") {
+        if (capabilities.videoCapabilitiesUnavailable) return {};
         const video = capabilities.video;
         if (!video || !video.operations.includes("image_to_video")) return { image: 0, video: 0, audio: 0 };
         return { image: video.references.maxImages, video: video.references.maxVideos, audio: video.references.maxAudios };

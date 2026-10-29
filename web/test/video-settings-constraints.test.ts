@@ -33,6 +33,7 @@ test("switching to Seedance preserves its existing settings constraints", () => 
                 capability: "video" as const,
                 protocol: "newapi" as const,
                 capabilityConfig: { version: 1, video: { ...h3Video, taskTypeConstraints: true } },
+                videoCapabilitiesVersion: "fixture-v1",
             },
         ],
     };
