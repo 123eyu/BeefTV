@@ -159,8 +159,6 @@ func arkPrivateAssetResponseField(response map[string]interface{}, keys ...strin
 type ArkPrivateAssetSyncResult = generation.ArkPrivateAssetSyncResult
 
 type seedanceVideosRequest = generation.SeedanceVideosRequest
-type grokImageRequest = generation.GrokImageRequest
-type grokImageInput = generation.GrokImageInput
 type geminiImageRequest = generation.GeminiImageRequest
 type geminiImageContent = generation.GeminiImageContent
 type geminiImageContentPart = generation.GeminiImageContentPart

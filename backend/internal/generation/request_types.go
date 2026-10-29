@@ -28,21 +28,6 @@ type SeedanceVideosRequest struct {
 	ReferenceAudios       []string `json:"reference_audios,omitempty"`
 }
 
-type GrokImageRequest struct {
-	Model          string          `json:"model"`
-	Prompt         string          `json:"prompt"`
-	Image          *GrokImageInput `json:"image,omitempty"`
-	N              int             `json:"n"`
-	ResponseFormat string          `json:"response_format"`
-	AspectRatio    string          `json:"aspect_ratio,omitempty"`
-	// Resolution 对应 xAI / grok2api 的 resolution（常见 1k / 2k）。
-	Resolution string `json:"resolution,omitempty"`
-}
-
-type GrokImageInput struct {
-	URL string `json:"url"`
-}
-
 type GeminiImageRequest struct {
 	Contents          []GeminiImageContent        `json:"contents"`
 	SystemInstruction *GeminiImageContent         `json:"systemInstruction,omitempty"`
