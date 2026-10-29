@@ -16,7 +16,7 @@ import (
 
 func TestSkillRequirementsRejectUnconfiguredMediaBeforeExecution(t *testing.T) {
 	s, _, _ := newAssistantTurnService(t)
-	item, err := s.CreateSkill("local", SkillMutationRequest{SkillName: "文字技能", Description: "按输入组织结果", Instruction: "列出三点。", Tag: "others", IsPrivate: true})
+	item, err := s.SkillsDomain().CreateSkill("local", SkillMutationRequest{SkillName: "文字技能", Description: "按输入组织结果", Instruction: "列出三点。", Tag: "others", IsPrivate: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestSkillRequirementsGuardContextAndFileEntrypointsWithoutDroppingRecovery(
 	if err := database.ConfigurePool(s.Database()); err != nil {
 		t.Fatal(err)
 	}
-	item, err := s.CreateSkill("local", SkillMutationRequest{SkillName: "条件技能", Description: "保留输入", Instruction: "列出三点。", Tag: "others", IsPrivate: true})
+	item, err := s.SkillsDomain().CreateSkill("local", SkillMutationRequest{SkillName: "条件技能", Description: "保留输入", Instruction: "列出三点。", Tag: "others", IsPrivate: true})
 	if err != nil {
 		t.Fatal(err)
 	}

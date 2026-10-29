@@ -45,7 +45,7 @@ func installTestSkill(t *testing.T, env *assistantTestEnv, userID string, files 
 		t.Fatal(err)
 	}
 	defer req.MultipartForm.RemoveAll()
-	installed, err := env.service.InstallSkillUpload(userID, "zip", req.MultipartForm.File["file"][0], app.SkillInstallRequest{IsPrivate: true})
+	installed, err := env.service.SkillsDomain().InstallSkillUpload(userID, "zip", req.MultipartForm.File["file"][0], app.SkillInstallRequest{IsPrivate: true})
 	if err != nil {
 		t.Fatal(err)
 	}
