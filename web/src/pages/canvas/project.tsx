@@ -136,6 +136,7 @@ import { useCanvasGenerationOrchestration } from "./use-canvas-generation-orches
 import { useCanvasNodeContent } from "./use-canvas-node-content";
 import { useCanvasPointerSelectionChrome, useCanvasNodeToolbarHover } from "./use-canvas-pointer-chrome";
 import { useCanvasNodeClick } from "./use-canvas-node-click";
+import { pasteCanvasAtPosition } from "./canvas-project-clipboard";
 import { useCanvasContextMenu } from "./use-canvas-context-menu";
 import { useCanvasProjectDialogs } from "./use-canvas-project-dialogs";
 import { useCanvasResourceHandoff } from "./use-canvas-resource-handoff";
@@ -1599,16 +1600,12 @@ function InfiniteCanvasPage() {
 
     const pasteAtPosition = useCallback(
         (position: Position) => {
-            if (shouldPreferCopiedNodes() && pasteCopiedNodes(position)) return;
-            void (async () => {
-                try {
-                    // 标记写入成功时仍优先系统图片，兼容截图和从外部应用复制的媒体。
-                    const handled = await pasteSystemClipboard(position);
-                    if (!handled) pasteCopiedNodes(position);
-                } catch {
-                    if (!pasteCopiedNodes(position)) message.warning("无法读取剪贴板内容");
-                }
-            })();
+            pasteCanvasAtPosition(position, {
+                shouldPreferCopiedNodes,
+                pasteCopiedNodes,
+                pasteSystemClipboard,
+                warn: (content) => message.warning(content),
+            });
         },
         [message, pasteCopiedNodes, pasteSystemClipboard, shouldPreferCopiedNodes],
     );
