@@ -55,6 +55,7 @@ function mountEditor(canvasId = "canvas-a") {
             setDialogNodeId: () => {},
             setToolbarNodeId: () => {},
             setHoveredNodeId: () => {},
+            openProjectAssets: () => {},
         });
         return null;
     }
