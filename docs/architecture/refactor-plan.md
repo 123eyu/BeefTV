@@ -71,7 +71,7 @@ memory_review_due: event:step-4-done
 
 工作量是粗估，不含 review 和发版等待。
 
-### 第 0 步：修 `outcome` 的三处问题（已完成，见本分支提交）
+### 第 0 步：修 `outcome` 的三处问题（已完成）
 
 - 审核失败（`content_policy_violation` / `content_moderation` / `SAFETY.INPUT.*`）由 `blocked` 改为 `confirm`，节点有出口；审核失败不代表没扣钱，所以仍要确认。
 - 删除恒为 false 的 `ConfirmedUncharged`。
@@ -80,7 +80,7 @@ memory_review_due: event:step-4-done
 
 验收：`go test ./internal/task/ ./internal/taskdelivery/` 通过。改动前 `outcome` 没有任何前端或后台守门在读，所以这一步没有用户可见变化。
 
-### 第 1 步：删前端旧的直连生成代码（已完成，见本分支提交）
+### 第 1 步：删前端旧的直连生成代码（已完成）
 
 - 删除 `requestVideoGeneration` / `createVideoGenerationTask` / `pollVideoGenerationTask`、`requestGeneration` / `requestEdit`，以及只为它们存在的 `video-provider-*.ts`（8 个）、`video-transport.ts`、`video-response.ts`、`video-reference-roles.ts` 和 `image.ts` 内的私有辅助函数。
 - `video.ts` 只保留仍在用的 `storeGeneratedVideo` 和类型。`requestImageQuestion`、`requestToolResponse`、`video-validation.ts` 保留。
@@ -181,3 +181,23 @@ memory_review_due: event:step-4-done
 - 第 0、1 步只在本机跑了后端相关包测试和前端测试；`internal/app` 有 3 个视频恢复用例在未改动的 main 上同样失败（本机未装视频插件），与本次改动无关。
 - 未运行客户端，未做真实生成。
 - 修复次数按提交标题和改动路径统计，标题写法不规范的提交可能计错模块。
+
+## 八、进度（2026-10-29，PR #290）
+
+按 `origin/main` 与 PR 分支实测对比，不按提交说明计。
+
+| 步骤 | 状态 | 实测 |
+| --- | --- | --- |
+| 第 0 步 outcome 三处问题 | 完成 | 审核失败不再锁死；`ConfirmedUncharged` 与中文阶段比较已删 |
+| 第 1 步 删旧直连生成代码 | 完成 | 删 11 个文件约 2350 行 |
+| 第 2 步 模型能力只留后端 | 后端完成，前端未完成 | `app` 里那份 Seedance 规则已删，后端有表格用例和能力计算接口；前端 Seedance 规则删除后导致参考素材上限变 0（CI 38 项失败），已恢复。三份变两份 |
+| 第 3 步 错误分类只留后端 | 部分完成 | 后端任务失败改用后端类别；前端按文字判断 103 处减到 93 处，浏览器直连渠道和只存文字的批次项仍在前端判断 |
+| 第 4a 步 后台取回 | 完成 | 视频、超分自动查询上游，不重新提交；`POST /tasks/:id/recover` |
+| 第 4b 步 前端读 outcome | 部分完成 | 32 个前端文件读 `outcome`；旧推断字段从 27 个文件减到 12 个；新增的 `lib/task-outcome.ts` 对没有 outcome 的旧节点仍按错误码推断，属于过渡代码 |
+| 第 4c 步 扣费原值 | 完成 | 读 BeefAPI 结算原值；结算列改由 v27 迁移添加，已验证 v2.0.5 库可升级 |
+| 第 5 步 助手 #38 | 代码完成，未做桌面实测 | 自动接续只由后台发起；`durable-session-owner.mjs` 1221 → 858 行；两条分镜规则移入「剧本资产视频一条龙创作」技能 |
+| 第 6 步 画布三方保存 | 完成 | 并发测试通过，未发现丢改动 |
+| 第 7 步 后端分层 | 未开始 | 44 个 handler 文件仍直接用 `app.Service`；`internal/app` 反而增加约 580 行（主要是 `video_auto_recovery.go`） |
+| 拆大文件 | 部分 | 提示词面板 1161 → 724 行；`project.tsx` 3556 → 3277 行 |
+
+剩余工作按优先级：前端模型能力改读后端（需先让目录导入与配置加载路径拿到后端结果）；删 `task-outcome.ts` 的旧节点推断（旧节点补齐 outcome 后）；第 3 步剩余文字判断；第 7 步并把新增的取回代码移出 `internal/app`；`project.tsx` 按职责继续拆。
