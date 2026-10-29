@@ -51,11 +51,11 @@ func TestCanvasWorkflowCreatesGenerationWithoutSuccessfulSourceTask(t *testing.T
 		t.Fatal(err)
 	}
 	d := cw.Definition{Version: 1, Nodes: []cw.Node{{ID: "new-video", Title: "生成视频", Role: "operation", MediaType: "video", OperationID: "generate.video", OperationVersion: 1, Config: map[string]any{"modelOption": "custom::video-model", "prompt": "A landscape", "size": "16:9", "videoSeconds": float64(5)}}}, OutputNodeIDs: []string{"new-video"}}
-	created, err := s.CreateCanvasWorkflow("owner", cw.CreateRequest{Name: "New generator", Definition: d})
+	created, err := s.workflowTemplates().Create("owner", cw.CreateRequest{Name: "New generator", Definition: d})
 	if err != nil {
 		t.Fatal(err)
 	}
-	editor, err := s.CanvasWorkflowEditor("owner", created.ID, 0)
+	editor, err := s.workflowTemplates().Editor("owner", created.ID, 0)
 	if err != nil || editor.Workflow.Definition.Nodes[0].SourceTaskID != "" || editor.Workflow.Definition.Nodes[0].Config["modelOption"] != "custom::video-model" {
 		t.Fatalf("new generation=%+v err=%v", editor, err)
 	}
@@ -72,7 +72,7 @@ func TestCanvasWorkflowDirectGenerationKinds(t *testing.T) {
 				t.Fatal(err)
 			}
 			d := cw.Definition{Version: 1, Nodes: []cw.Node{{ID: "generate", Title: "Generate", Role: "operation", MediaType: kind, OperationID: "generate." + kind, OperationVersion: 1, Config: map[string]any{"modelOption": "custom::new-model", "prompt": "A landscape"}}}, OutputNodeIDs: []string{"generate"}}
-			if _, err := s.CreateCanvasWorkflow("owner", cw.CreateRequest{Name: "Direct " + kind, Definition: d}); err != nil {
+			if _, err := s.workflowTemplates().Create("owner", cw.CreateRequest{Name: "Direct " + kind, Definition: d}); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -82,11 +82,11 @@ func TestCanvasWorkflowDirectGenerationKinds(t *testing.T) {
 func TestCanvasWorkflowAbstractSlotsSaveWithoutOriginalMedia(t *testing.T) {
 	s, _, definition := workflowFixture(t)
 	definition.PresentationVersion = 1
-	created, err := s.CreateCanvasWorkflow("owner", cw.CreateRequest{Name: "Reusable", Definition: definition})
+	created, err := s.workflowTemplates().Create("owner", cw.CreateRequest{Name: "Reusable", Definition: definition})
 	if err != nil {
 		t.Fatal(err)
 	}
-	editor, err := s.CanvasWorkflowEditor("owner", created.ID, 0)
+	editor, err := s.workflowTemplates().Editor("owner", created.ID, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestCanvasWorkflowAbstractSlotsSaveWithoutOriginalMedia(t *testing.T) {
 			t.Fatalf("original media leaked into reusable slot: %s", node.ID)
 		}
 	}
-	if _, err = s.UpdateCanvasWorkflow("owner", created.ID, cw.UpdateRequest{Name: "Reusable", Definition: editor.Workflow.Definition, ExpectedRevision: 1}); err != nil {
+	if _, err = s.workflowTemplates().Update("owner", created.ID, cw.UpdateRequest{Name: "Reusable", Definition: editor.Workflow.Definition, ExpectedRevision: 1}); err != nil {
 		t.Fatalf("abstract slots could not be recompiled: %v", err)
 	}
 }
@@ -111,11 +111,11 @@ func TestCanvasWorkflowEditorRevisionsAndPromptRebinding(t *testing.T) {
 	db.Model(&source).Update("input_json", string(sourceRaw))
 	d.Nodes = append(d.Nodes, cw.Node{ID: "text", Title: "Text", Role: "input", MediaType: "text", Text: "person"})
 	d.Edges = append(d.Edges, cw.Edge{From: "text", To: "gen"})
-	first, e := s.CreateCanvasWorkflow("owner", cw.CreateRequest{Name: "Old", Definition: d})
+	first, e := s.workflowTemplates().Create("owner", cw.CreateRequest{Name: "Old", Definition: d})
 	if e != nil {
 		t.Fatal(e)
 	}
-	editor, e := s.CanvasWorkflowEditor("owner", first.ID, 1)
+	editor, e := s.workflowTemplates().Editor("owner", first.ID, 1)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -130,11 +130,11 @@ func TestCanvasWorkflowEditorRevisionsAndPromptRebinding(t *testing.T) {
 		}
 	}
 	request := cw.UpdateRequest{Name: "New", Definition: editor.Workflow.Definition, ExpectedRevision: 1}
-	second, e := s.UpdateCanvasWorkflow("owner", first.ID, request)
+	second, e := s.workflowTemplates().Update("owner", first.ID, request)
 	if e != nil || second.Revision != 2 {
 		t.Fatalf("update=%+v err=%v", second, e)
 	}
-	if _, e = s.UpdateCanvasWorkflow("owner", first.ID, request); e == nil {
+	if _, e = s.workflowTemplates().Update("owner", first.ID, request); e == nil {
 		t.Fatal("stale editor overwrote revision")
 	}
 	old, e := s.StartCanvasWorkflow("owner", first.ID, cw.RunRequest{ClientOperationID: "revision-old", TemplateRevision: 1})
@@ -186,7 +186,7 @@ func TestCanvasWorkflowEditorRevisionsAndPromptRebinding(t *testing.T) {
 func TestCanvasWorkflowTrimWithoutModelAndExplicitPorts(t *testing.T) {
 	s, _, _ := workflowFixture(t)
 	d := cw.Definition{Version: 1, Nodes: []cw.Node{{ID: "input", Title: "Input", Role: "input", MediaType: "video"}, {ID: "trim", Title: "Trim", Role: "operation", MediaType: "video", OperationID: "video.trim", OperationVersion: 1, Config: map[string]any{"endSeconds": float64(1)}}}, Edges: []cw.Edge{{From: "input", To: "trim", FromPort: "output", ToPort: "video"}}, OutputNodeIDs: []string{"trim"}}
-	template, e := s.CreateCanvasWorkflow("owner", cw.CreateRequest{Name: "Trim", Definition: d})
+	template, e := s.workflowTemplates().Create("owner", cw.CreateRequest{Name: "Trim", Definition: d})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -206,7 +206,7 @@ func TestCanvasWorkflowTrimWithoutModelAndExplicitPorts(t *testing.T) {
 		t.Fatalf("not local timeline task: %+v %v", task, e)
 	}
 	d.Nodes[0].MediaType = "image"
-	if e = s.ValidateCanvasWorkflow("owner", d); e == nil {
+	if e = s.workflowTemplates().Validate("owner", d); e == nil {
 		t.Fatal("wrong port media type accepted")
 	}
 }
@@ -222,19 +222,19 @@ func TestCanvasWorkflowEditorIndependentOfTaskHistoryAndTextDefaults(t *testing.
 	db.Model(&task).Update("input_json", string(raw))
 	d.Nodes = append(d.Nodes, cw.Node{ID: "text", Title: "Text", Role: "input", MediaType: "text", Text: "person"})
 	d.Edges = append(d.Edges, cw.Edge{From: "text", To: "gen"})
-	created, e := s.CreateCanvasWorkflow("owner", cw.CreateRequest{Name: "Original", Definition: d})
+	created, e := s.workflowTemplates().Create("owner", cw.CreateRequest{Name: "Original", Definition: d})
 	if e != nil {
 		t.Fatal(e)
 	}
 	db.Delete(&model.Task{}, "id = ?", "original")
-	editor, e := s.CanvasWorkflowEditor("owner", created.ID, 1)
+	editor, e := s.workflowTemplates().Editor("owner", created.ID, 1)
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = s.PrepareCanvasWorkflow("owner", editor.Workflow.Definition, created.ID, 1); e != nil {
+	if _, e = s.workflowTemplates().Prepare("owner", editor.Workflow.Definition, created.ID, 1); e != nil {
 		t.Fatal(e)
 	}
-	renamed, e := s.UpdateCanvasWorkflow("owner", created.ID, cw.UpdateRequest{Name: "Renamed", ExpectedRevision: 1, Definition: editor.Workflow.Definition})
+	renamed, e := s.workflowTemplates().Update("owner", created.ID, cw.UpdateRequest{Name: "Renamed", ExpectedRevision: 1, Definition: editor.Workflow.Definition})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -243,7 +243,7 @@ func TestCanvasWorkflowEditorIndependentOfTaskHistoryAndTextDefaults(t *testing.
 			editor.Workflow.Definition.Nodes[i].Text = "new person"
 		}
 	}
-	updated, e := s.UpdateCanvasWorkflow("owner", created.ID, cw.UpdateRequest{Name: "Changed text", ExpectedRevision: renamed.Revision, Definition: editor.Workflow.Definition})
+	updated, e := s.workflowTemplates().Update("owner", created.ID, cw.UpdateRequest{Name: "Changed text", ExpectedRevision: renamed.Revision, Definition: editor.Workflow.Definition})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -267,7 +267,7 @@ func TestCanvasWorkflowEditorIndependentOfTaskHistoryAndTextDefaults(t *testing.
 			updated.Definition.Nodes[i] = n
 		}
 	}
-	if _, e = s.UpdateCanvasWorkflow("owner", created.ID, cw.UpdateRequest{Name: "Prompt", ExpectedRevision: updated.Revision, Definition: updated.Definition}); e != nil {
+	if _, e = s.workflowTemplates().Update("owner", created.ID, cw.UpdateRequest{Name: "Prompt", ExpectedRevision: updated.Revision, Definition: updated.Definition}); e != nil {
 		t.Fatal(e)
 	}
 }
@@ -283,7 +283,7 @@ func TestCanvasWorkflowPrepareInfersOriginalReferenceOrder(t *testing.T) {
 	db.Model(&task).Update("input_json", string(raw))
 	d.Nodes = append(d.Nodes, cw.Node{ID: "mask", Title: "Mask", Role: "input", MediaType: "image", ResourceID: "fixed-mask"})
 	d.Edges = append(d.Edges, cw.Edge{From: "mask", To: "gen"})
-	prepared, e := s.PrepareCanvasWorkflow("owner", d, "", 0)
+	prepared, e := s.workflowTemplates().Prepare("owner", d, "", 0)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -314,11 +314,11 @@ func TestCanvasWorkflowPromptEditValidatesCapability(t *testing.T) {
 	config["capabilityConfig"] = profile
 	raw, _ := json.Marshal(input)
 	db.Model(&task).Update("input_json", string(raw))
-	created, e := s.CreateCanvasWorkflow("owner", cw.CreateRequest{Name: "Limit", Definition: d})
+	created, e := s.workflowTemplates().Create("owner", cw.CreateRequest{Name: "Limit", Definition: d})
 	if e != nil {
 		t.Fatal(e)
 	}
-	editor, e := s.CanvasWorkflowEditor("owner", created.ID, 1)
+	editor, e := s.workflowTemplates().Editor("owner", created.ID, 1)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -328,7 +328,7 @@ func TestCanvasWorkflowPromptEditValidatesCapability(t *testing.T) {
 			editor.Workflow.Definition.Nodes[i] = node
 		}
 	}
-	if _, e = s.UpdateCanvasWorkflow("owner", created.ID, cw.UpdateRequest{Name: "Too long", ExpectedRevision: 1, Definition: editor.Workflow.Definition}); e == nil || !strings.Contains(e.Error(), "31") {
+	if _, e = s.workflowTemplates().Update("owner", created.ID, cw.UpdateRequest{Name: "Too long", ExpectedRevision: 1, Definition: editor.Workflow.Definition}); e == nil || !strings.Contains(e.Error(), "31") {
 		t.Fatalf("prompt cap bypassed: %v", e)
 	}
 }

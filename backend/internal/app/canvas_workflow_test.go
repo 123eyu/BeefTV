@@ -59,7 +59,7 @@ func TestCanvasWorkflowCompilesProtectedRecipeAndReplacesSlots(t *testing.T) {
 	if e := db.Model(&original).Update("input_json", string(originalRaw)).Error; e != nil {
 		t.Fatal(e)
 	}
-	template, e := svc.CreateCanvasWorkflow("owner", cw.CreateRequest{Name: "Motion", Definition: d})
+	template, e := svc.workflowTemplates().Create("owner", cw.CreateRequest{Name: "Motion", Definition: d})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -126,7 +126,7 @@ func TestCanvasWorkflowCompilesProtectedRecipeAndReplacesSlots(t *testing.T) {
 	if e = svc.repo.DeleteResource("owner", "fixed-mask"); e == nil {
 		t.Fatal("template resource can be deleted")
 	}
-	if _, e = svc.CanvasWorkflow("other", template.ID); e == nil {
+	if _, e = svc.workflowTemplates().Get("other", template.ID); e == nil {
 		t.Fatal("foreign template is visible")
 	}
 }
@@ -134,21 +134,21 @@ func TestCanvasWorkflowCompilesProtectedRecipeAndReplacesSlots(t *testing.T) {
 func TestCanvasWorkflowRejectsAmbiguousAndForeignSource(t *testing.T) {
 	svc, db, d := workflowFixture(t)
 	d.Nodes[2].ResourceID = "new-person"
-	if _, e := svc.CreateCanvasWorkflow("owner", cw.CreateRequest{Name: "Bad binding", Definition: d}); e == nil || !strings.Contains(e.Error(), "映射") {
+	if _, e := svc.workflowTemplates().Create("owner", cw.CreateRequest{Name: "Bad binding", Definition: d}); e == nil || !strings.Contains(e.Error(), "映射") {
 		t.Fatalf("unmatched media accepted: %v", e)
 	}
 	d.Nodes[2].ResourceID = "old-person"
 	if e := db.Model(&model.Task{}).Where("id = ?", "original").Update("user_id", "other").Error; e != nil {
 		t.Fatal(e)
 	}
-	if _, e := svc.CreateCanvasWorkflow("owner", cw.CreateRequest{Name: "Foreign source", Definition: d}); e == nil {
+	if _, e := svc.workflowTemplates().Create("owner", cw.CreateRequest{Name: "Foreign source", Definition: d}); e == nil {
 		t.Fatal("foreign task accepted")
 	}
 }
 
 func TestCanvasWorkflowRunReconcilesReceiptsAndKeepsSnapshot(t *testing.T) {
 	svc, db, d := workflowFixture(t)
-	template, e := svc.CreateCanvasWorkflow("owner", cw.CreateRequest{Name: "Motion", Definition: d})
+	template, e := svc.workflowTemplates().Create("owner", cw.CreateRequest{Name: "Motion", Definition: d})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -172,7 +172,7 @@ func TestCanvasWorkflowRunReconcilesReceiptsAndKeepsSnapshot(t *testing.T) {
 			t.Fatal(e)
 		}
 	}
-	if e = svc.DeleteCanvasWorkflow("owner", template.ID); e != nil {
+	if e = svc.workflowTemplates().Delete("owner", template.ID); e != nil {
 		t.Fatal(e)
 	}
 	svc.advanceCanvasWorkflows(context.Background())
@@ -198,7 +198,7 @@ func TestCanvasWorkflowRunReconcilesReceiptsAndKeepsSnapshot(t *testing.T) {
 
 func TestCanvasWorkflowCancelPreventsAdmission(t *testing.T) {
 	svc, db, d := workflowFixture(t)
-	template, e := svc.CreateCanvasWorkflow("owner", cw.CreateRequest{Name: "Motion", Definition: d})
+	template, e := svc.workflowTemplates().Create("owner", cw.CreateRequest{Name: "Motion", Definition: d})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -236,7 +236,7 @@ func TestCanvasWorkflowDepthUsesExistingAdmissionAndReplays(t *testing.T) {
 	if e := db.Model(&model.Resource{}).Where("id = ?", "old-action").Update("kind", "media").Error; e != nil {
 		t.Fatal(e)
 	}
-	template, e := svc.CreateCanvasWorkflow("owner", cw.CreateRequest{Name: "Depth only", Definition: d})
+	template, e := svc.workflowTemplates().Create("owner", cw.CreateRequest{Name: "Depth only", Definition: d})
 	if e != nil {
 		t.Fatal(e)
 	}

@@ -7,22 +7,14 @@ import (
 	"strconv"
 	"strings"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 	cw "infinite-canvas/backend/internal/canvasworkflow"
 	"infinite-canvas/backend/internal/generation"
-	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/mediatools"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
 )
 
-func workflowRevision(n int) int {
-	if n < 1 {
-		return 1
-	}
-	return n
-}
+func workflowRevision(n int) int { return cw.NormalizeRevision(n) }
 
 func (s *Service) CanvasWorkflowOperations() []cw.Operation {
 	operations := cw.Operations()
@@ -74,55 +66,8 @@ func (s *Service) CanvasWorkflowOperations() []cw.Operation {
 	}
 	return operations
 }
-func workflowSnapshot(row model.CanvasWorkflow) *model.CanvasWorkflowRevision {
-	return &model.CanvasWorkflowRevision{TemplateID: row.ID, Revision: workflowRevision(row.Revision), UserID: row.UserID, Name: row.Name, Description: row.Description, DefinitionJSON: row.DefinitionJSON, RecipeCipher: row.RecipeCipher}
-}
 func (s *Service) workflowRevisionRow(user, id string, revision int) (model.CanvasWorkflow, error) {
-	var row model.CanvasWorkflow
-	if e := s.repo.DB().Where("id = ? AND user_id = ?", id, user).First(&row).Error; e != nil {
-		return row, workflowNotFound()
-	}
-	revision = workflowRevision(revision)
-	if workflowRevision(row.Revision) == revision {
-		return row, nil
-	}
-	var snapshot model.CanvasWorkflowRevision
-	if e := s.repo.DB().Where("template_id = ? AND user_id = ? AND revision = ?", id, user, revision).First(&snapshot).Error; e != nil {
-		return row, workflowNotFound()
-	}
-	row.Revision = snapshot.Revision
-	row.Name = snapshot.Name
-	row.Description = snapshot.Description
-	row.DefinitionJSON = snapshot.DefinitionJSON
-	row.RecipeCipher = snapshot.RecipeCipher
-	return row, nil
-}
-func (s *Service) CanvasWorkflowEditor(user, id string, revision int) (cw.Editor, error) {
-	if revision == 0 {
-		current, e := s.CanvasWorkflow(user, id)
-		if e != nil {
-			return cw.Editor{}, e
-		}
-		revision = current.Revision
-	}
-	row, e := s.workflowRevisionRow(user, id, revision)
-	if e != nil {
-		return cw.Editor{}, e
-	}
-	public, e := workflowTemplate(row)
-	if e != nil {
-		return cw.Editor{}, e
-	}
-	plain, e := s.decryptSettingSecret(row.RecipeCipher)
-	if e != nil {
-		return cw.Editor{}, e
-	}
-	var recipes workflowRecipes
-	if e = json.Unmarshal([]byte(plain), &recipes); e != nil {
-		return cw.Editor{}, e
-	}
-	public.Definition = workflowEditorDefinition(public.Definition, recipes)
-	return cw.Editor{Workflow: public, Operations: s.CanvasWorkflowOperations()}, nil
+	return s.workflowTemplates().RevisionRow(user, id, revision)
 }
 func workflowEditorDefinition(d cw.Definition, recipes workflowRecipes) cw.Definition {
 	d = cw.Normalize(d)
@@ -191,88 +136,57 @@ func workflowEditorDefinition(d cw.Definition, recipes workflowRecipes) cw.Defin
 	}
 	return d
 }
-func (s *Service) ValidateCanvasWorkflow(user string, d cw.Definition) error {
-	_, _, e := s.compileCanvasWorkflow(user, d)
-	return e
+
+// CanvasWorkflowTemplates is the template domain service used by the HTTP layer.
+func (s *Service) CanvasWorkflowTemplates() *cw.Templates { return s.workflowTemplates() }
+
+func (s *Service) workflowTemplates() *cw.Templates {
+	return cw.NewTemplates(s.repo, workflowRecipeHost{s}, &s.canvasWorkflowMu)
 }
-func (s *Service) PrepareCanvasWorkflow(user string, d cw.Definition, id string, revision int) (cw.Definition, error) {
+
+// workflowRecipeHost compiles private recipes with the host's model selection,
+// credentials and encryption. It moves into canvasworkflow with the compiler.
+type workflowRecipeHost struct{ s *Service }
+
+func (h workflowRecipeHost) Compile(user string, d cw.Definition, existing *model.CanvasWorkflow, seal bool) (cw.Compiled, error) {
 	var recipes workflowRecipes
+	var refs map[string]bool
 	var e error
-	if id == "" {
-		recipes, _, e = s.compileCanvasWorkflow(user, d)
+	if existing == nil {
+		recipes, refs, e = h.s.compileCanvasWorkflow(user, d)
 	} else {
-		if revision < 1 {
-			return d, workflowBad("编辑校验需要有效的模板版本")
-		}
-		var row model.CanvasWorkflow
-		row, e = s.workflowRevisionRow(user, id, revision)
-		if e == nil {
-			recipes, _, e = s.compileCanvasWorkflow(user, d, row)
-		}
+		recipes, refs, e = h.s.compileCanvasWorkflow(user, d, *existing)
 	}
 	if e != nil {
+		return cw.Compiled{}, e
+	}
+	// Presenting rewrites nodes in place; keep the caller's definition intact.
+	presented := d
+	presented.Nodes = append([]cw.Node(nil), d.Nodes...)
+	presented.Edges = append([]cw.Edge(nil), d.Edges...)
+	out := cw.Compiled{Presented: workflowEditorDefinition(presented, recipes), References: refs}
+	if seal {
+		raw, e := json.Marshal(recipes)
+		if e != nil {
+			return cw.Compiled{}, e
+		}
+		if out.Cipher, e = h.s.encryptSettingSecret(string(raw)); e != nil {
+			return cw.Compiled{}, e
+		}
+	}
+	return out, nil
+}
+
+func (h workflowRecipeHost) Present(d cw.Definition, recipeCipher string) (cw.Definition, error) {
+	plain, e := h.s.decryptSettingSecret(recipeCipher)
+	if e != nil {
+		return d, e
+	}
+	var recipes workflowRecipes
+	if e = json.Unmarshal([]byte(plain), &recipes); e != nil {
 		return d, e
 	}
 	return workflowEditorDefinition(d, recipes), nil
 }
-func (s *Service) UpdateCanvasWorkflow(user, id string, req cw.UpdateRequest) (cw.Template, error) {
-	s.canvasWorkflowMu.Lock()
-	defer s.canvasWorkflowMu.Unlock()
-	req.Name = strings.TrimSpace(req.Name)
-	if req.Name == "" || len([]rune(req.Name)) > 100 || len(req.Description) > 4000 {
-		return cw.Template{}, workflowBad("工作流名称或说明无效")
-	}
-	var row model.CanvasWorkflow
-	if e := s.repo.DB().Where("id = ? AND user_id = ?", id, user).First(&row).Error; e != nil {
-		return cw.Template{}, workflowNotFound()
-	}
-	if req.ExpectedRevision != workflowRevision(row.Revision) {
-		return cw.Template{}, kernel.NewAppError(kernel.CodeConflict, "工作流已更新，请保留草稿并重新载入比较")
-	}
-	recipes, refs, e := s.compileCanvasWorkflow(user, req.Definition, row)
-	if e != nil {
-		return cw.Template{}, e
-	}
-	raw, e := json.Marshal(recipes)
-	if e != nil {
-		return cw.Template{}, e
-	}
-	cipher, e := s.encryptSettingSecret(string(raw))
-	if e != nil {
-		return cw.Template{}, e
-	}
-	if req.Definition.PresentationVersion > 0 {
-		req.Definition = workflowEditorDefinition(req.Definition, recipes)
-	}
-	definition, e := json.Marshal(req.Definition)
-	if e != nil {
-		return cw.Template{}, e
-	}
-	old := row
-	row.Revision = workflowRevision(row.Revision) + 1
-	row.Name = req.Name
-	row.Description = req.Description
-	row.DefinitionJSON = string(definition)
-	row.RecipeCipher = cipher
-	e = s.repo.DB().Transaction(func(tx *gorm.DB) error {
-		if e := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(workflowSnapshot(old)).Error; e != nil {
-			return e
-		}
-		result := tx.Model(&model.CanvasWorkflow{}).Where("id = ? AND user_id = ? AND revision = ?", id, user, req.ExpectedRevision).Updates(map[string]any{"revision": row.Revision, "name": row.Name, "description": row.Description, "definition_json": row.DefinitionJSON, "recipe_cipher": row.RecipeCipher})
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected != 1 {
-			return kernel.NewAppError(kernel.CodeConflict, "工作流版本冲突")
-		}
-		if e := tx.Create(workflowSnapshot(row)).Error; e != nil {
-			return e
-		}
-		// References are a union across immutable revisions; never release old inputs on edit.
-		return persistWorkflowReferences(tx, workflowReferenceRows(id, user, refs))
-	})
-	if e != nil {
-		return cw.Template{}, e
-	}
-	return s.CanvasWorkflow(user, id)
-}
+
+func (h workflowRecipeHost) Operations() []cw.Operation { return h.s.CanvasWorkflowOperations() }
