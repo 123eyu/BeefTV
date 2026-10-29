@@ -136,6 +136,7 @@ import { useCanvasGenerationOrchestration } from "./use-canvas-generation-orches
 import { useCanvasNodeContent } from "./use-canvas-node-content";
 import { useCanvasPointerSelectionChrome, useCanvasNodeToolbarHover } from "./use-canvas-pointer-chrome";
 import { useCanvasNodeClick } from "./use-canvas-node-click";
+import { useCanvasContextMenu } from "./use-canvas-context-menu";
 import { useCanvasProjectDialogs } from "./use-canvas-project-dialogs";
 import { useCanvasResourceHandoff } from "./use-canvas-resource-handoff";
 import {
@@ -156,10 +157,6 @@ import type { ReferenceImage } from "@/types/image";
 import { ART_CRITIQUE_NODE_TYPE } from "@/lib/art-critique/contracts";
 
 const EMPTY_RESOURCE_REFERENCES: CanvasResourceReference[] = [];
-
-function isCanvasTextEditingTarget(target: EventTarget | null) {
-    return target instanceof Element && Boolean(target.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])"));
-}
 
 function visibleGenerationBatch(node: CanvasNodeData) {
     const batches = node.metadata?.generationBatches || [];
@@ -1629,41 +1626,17 @@ function InfiniteCanvasPage() {
         handleConfigNodeChange,
     });
 
-    const handleCanvasContextMenu = useCallback(
-        (event: ReactMouseEvent) => {
-            const target = event.target instanceof Element ? event.target : null;
-            if (target?.closest("[data-node-id],[data-connection-id]")) return;
-
-            event.preventDefault();
-            event.stopPropagation();
-            if (target?.closest("[data-canvas-no-zoom],.ant-modal,.ant-popover,.ant-dropdown")) {
-                setContextMenu(null);
-                return;
-            }
-
-            closeConnectionCreateMenu();
-            setContextMenu({ type: "canvas", x: event.clientX, y: event.clientY, position: screenToCanvas(event.clientX, event.clientY) });
-        },
-        [closeConnectionCreateMenu, screenToCanvas],
-    );
-
-    const handleNodeContextMenu = useCallback(
-        (event: ReactMouseEvent, id: string) => {
-            if (isCanvasTextEditingTarget(event.target)) return;
-            event.preventDefault();
-            event.stopPropagation();
-            setSelectedNodeIds((current) => {
-                if (current.has(id) && current.size > 1) return current;
-                return new Set([id]);
-            });
-            setSelectedConnectionId(null);
-            closeConnectionCreateMenu();
-            setToolbarNodeId(null);
-            setDialogNodeId(null);
-            setContextMenu({ type: "node", x: event.clientX, y: event.clientY, nodeId: id });
-        },
-        [closeConnectionCreateMenu],
-    );
+    const {
+        handleCanvasContextMenu,
+        handleNodeContextMenu,
+        handleConnectionSelect,
+        handleConnectionContextMenu,
+    } = useCanvasContextMenu({
+        projectId,
+        selectedNodeIdsRef,
+        screenToCanvas,
+        closeConnectionCreateMenu,
+    });
 
     const renderCanvasNodePanel = useCallback(
         (panelNode: CanvasNodeData) => {
@@ -2004,25 +1977,6 @@ function InfiniteCanvasPage() {
             }
         },
         [cancelCanvasTask, message],
-    );
-    const handleConnectionSelect = useCallback(
-        (connectionId: string) => {
-            setSelectedConnectionId(connectionId);
-            selectedNodeIdsRef.current = new Set();
-            setSelectedNodeIds(new Set());
-            setContextMenu(null);
-        },
-        [selectedNodeIdsRef, setContextMenu, setSelectedConnectionId, setSelectedNodeIds],
-    );
-    const handleConnectionContextMenu = useCallback(
-        (event: ReactMouseEvent<SVGPathElement>, connectionId: string) => {
-            setSelectedConnectionId(connectionId);
-            selectedNodeIdsRef.current = new Set();
-            setSelectedNodeIds(new Set());
-            closeConnectionCreateMenu();
-            setContextMenu({ type: "connection", x: event.clientX, y: event.clientY, connectionId });
-        },
-        [closeConnectionCreateMenu, selectedNodeIdsRef, setContextMenu, setSelectedConnectionId, setSelectedNodeIds],
     );
     const openCanvasNodeVersions = useCallback((node: CanvasNodeData) => setVersionCompareRootId(node.metadata?.versionOfNodeId || node.id), []);
     const viewCanvasNodeImage = useCallback((node: CanvasNodeData) => setPreviewNodeId(node.id), []);
