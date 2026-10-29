@@ -44,8 +44,6 @@ import { CanvasProjectSidebar } from "@/components/canvas/canvas-project-sidebar
 import { CanvasCharacterReferenceNodeContent } from "@/components/canvas/canvas-character-reference-node";
 import { CanvasNodeToolbar } from "@/components/canvas/canvas-node-toolbar";
 import { useCanvasUpscaleBatch } from "./use-canvas-upscale-batch";
-import { createDefaultUpscaleSettings } from "@/lib/canvas/canvas-upscale";
-import { findAvailableGenerationGroupPosition } from "@/lib/canvas/canvas-generation-layout";
 import { CanvasVideoInlineTrimOverlay } from "@/components/canvas/canvas-video-inline-trim";
 import { syncNodeSubtitlesToTimeline } from "@/lib/timeline/timeline-build";
 import { CanvasNodeAnglePanel } from "@/components/canvas/canvas-node-angle-dialog";
@@ -120,6 +118,7 @@ import { useCanvasProjectMenu } from "./use-canvas-project-menu";
 import { buildLinkedFolderPreviewNodes } from "@/lib/canvas/canvas-linked-folder-previews";
 import { appendCanvasImport } from "@/lib/canvas/canvas-import-snapshot";
 import { replaceCanvasNodeReference } from "@/lib/canvas/canvas-reference-replace";
+import { planUpscaleProcessingNode } from "@/lib/canvas/canvas-upscale-processor";
 import { useCanvasProjectLifecycle } from "./use-canvas-project-lifecycle";
 import { useCanvasRenderModel } from "./use-canvas-render-model";
 import { useCanvasSelectionController } from "./use-canvas-selection-controller";
@@ -992,17 +991,11 @@ function InfiniteCanvasPage() {
             else message.warning("请先选择可读取的图片或视频");
             return;
         }
-        const selectedSources = selectedNodeIdsRef.current.has(source.id)
-            ? nodesRef.current.filter(node => selectedNodeIdsRef.current.has(node.id) && (node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video) && (node.metadata?.content || node.metadata?.storageKey))
-            : [source];
-        const settings = createDefaultUpscaleSettings();
-        const position = findAvailableGenerationGroupPosition(nodesRef.current, { x: source.position.x + source.width + 120, y: source.position.y }, { width: 420, height: 1000 });
-        const processor = createCanvasNode(CanvasNodeType.Upscale, { x: position.x + 210, y: position.y + 120 }, { upscale: settings, status: "idle" });
-        const nextConnections = [...connectionsRef.current, ...selectedSources.map(node => ({ id: nanoid(), fromNodeId: node.id, toNodeId: processor.id }))];
-        connectionsRef.current = nextConnections;
-        setConnections(nextConnections);
-        setNodes(current => [...current, processor]);
-        setSelectedNodeIds(new Set([processor.id]));
+        const plan = planUpscaleProcessingNode(nodesRef.current, connectionsRef.current, source, selectedNodeIdsRef.current);
+        connectionsRef.current = plan.connections;
+        setConnections(plan.connections);
+        setNodes(current => [...current, plan.processor]);
+        setSelectedNodeIds(new Set([plan.processor.id]));
         setDialogNodeId(null);
         setToolbarNodeId(null);
     }, [message, recoverAIUpscale, setConnections, setNodes]);
