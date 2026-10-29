@@ -395,14 +395,7 @@ func doBinaryWithAdmission(req *http.Request, onChunk func(string, []byte), admi
 			cancel(nil)
 		}()
 	}
-	if transport, ok := client.Transport.(*http.Transport); ok {
-		observation.TransportRoute = "direct"
-		if transport.Proxy != nil {
-			if proxy, proxyErr := transport.Proxy(req); proxyErr == nil && proxy != nil {
-				observation.TransportRoute = "proxy"
-			}
-		}
-	}
+	observation.TransportRoute = outbound.RequestNetworkRoute(req, client.Transport)
 	resp, err := client.Do(req)
 	observation.Dispatched, observation.TransportPhase = trace.result(err)
 	if err != nil {

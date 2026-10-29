@@ -60,6 +60,14 @@ func applyCatalog(store *workspace.ProviderConfig, models []CatalogModel, previo
 					profile["videoCapabilitiesVersion"] = model.VideoCapabilitiesVersion
 				}
 			}
+			if capability == "image" {
+				// A partial/older directory must not replace the last valid server
+				// declaration with local model defaults. A valid new version replaces it.
+				if image, ok := NormalizeCatalogImageCapability(model.ImageCapabilities); ok && model.ImageCapabilitiesVersion != "" {
+					profile["capabilityConfig"] = map[string]any{"version": 1, "image": image}
+					profile["imageCapabilitiesVersion"] = model.ImageCapabilitiesVersion
+				}
+			}
 		}
 		nextProfiles = append(nextProfiles, profile)
 	}

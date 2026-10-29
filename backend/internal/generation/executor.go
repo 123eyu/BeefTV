@@ -10,7 +10,6 @@ import (
 	"infinite-canvas/backend/internal/modelcatalog"
 	"infinite-canvas/backend/internal/outbound"
 	"infinite-canvas/backend/internal/provider/workflow"
-	"infinite-canvas/backend/internal/providerpreset"
 )
 
 // Execute owns paid-generation orchestration: prompt templates, config,
@@ -48,24 +47,11 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 		return nil, errors.New("无法解析系统渠道配置")
 	}
 	applyCanvasTextStreaming(runtime.Call.TaskType, &input)
-	if UpscaleMediaType(input.Config.Model) != "" {
+	if input.Upscale != nil {
 		if err := requireTaskRuntime(ctx); err != nil {
 			return nil, err
 		}
 		return RunUpscaleTask(ctx, input)
-	}
-	if input.Mode == "image" && providerpreset.IsBeefAPIEndpoint(input.Config.BaseURL) {
-		if contract, ok := providerpreset.BeefAPIImageContract(input.Config.Model); ok {
-			input.Config.InterfaceType = contract.Protocol
-			input.Config.APIFormat = "openai"
-			input.Config.CapabilityConfig = &ModelCapabilityConfig{Version: 1, Image: modelcatalog.DefaultImageCapabilityConfig(contract.Protocol, input.Config.Model)}
-		}
-	}
-	if input.Mode == "video" && providerpreset.IsBeefAPIEndpoint(input.Config.BaseURL) {
-		if contract, ok := providerpreset.BeefAPIVideoContract(input.Config.Model); ok {
-			input.Config.InterfaceType = contract.Protocol
-			input.Config.APIFormat = "openai"
-		}
 	}
 
 	if workflow.IsProviderInterface(input.Config.InterfaceType) {
@@ -93,6 +79,9 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 		if err := runtime.Config.ApplyCapabilities(ctx, &input); err != nil {
 			return nil, err
 		}
+	}
+	if input.Mode == "image" && managedConnection(input.Config) {
+		return runManagedImageTask(ctx, input)
 	}
 
 	resumed := ResumedProviderRequestID(ctx) != ""
@@ -242,6 +231,12 @@ func applyCanvasTextStreaming(taskType string, input *Input) {
 }
 
 func validatePreparedInput(ctx context.Context, input Input) error {
+	if (input.Mode == "image" && managedConnection(input.Config)) || (input.Mode == "video" && (managedConnection(input.Config) || IsBeefAPIVideoConfig(ctx, input.Config))) {
+		if strings.TrimSpace(input.Config.BaseURL) == "" || strings.TrimSpace(input.Config.APIKey) == "" || strings.TrimSpace(input.Config.Model) == "" {
+			return errors.New("后端生成任务缺少 Base URL、API Key 或模型名")
+		}
+		return nil
+	}
 	if input.Config.APIFormat == "gemini" && input.Config.InterfaceType != string(model.ChannelInterfaceGeminiVeo) && input.Config.InterfaceType != string(model.ChannelInterfaceGeminiImage) {
 		_, hasDeclarativeAgent := agentProtocolAdapterForContext(ctx, input.Config.InterfaceType)
 		if input.AgentRequests == nil || !hasDeclarativeAgent {

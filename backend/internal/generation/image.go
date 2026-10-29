@@ -16,8 +16,6 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/modelcatalog"
-	"infinite-canvas/backend/internal/providerpreset"
 )
 
 // usesSeedreamRequestBody 判断这次出图是否走 Seedream 专用请求体。Seedream 型号自带
@@ -32,36 +30,15 @@ func usesSeedreamRequestBody(input Input) bool {
 }
 
 func RunImageTask(ctx context.Context, input Input) (map[string]interface{}, error) {
+	if managedConnection(input.Config) {
+		return runManagedImageTask(ctx, input)
+	}
 	if usesSeedreamRequestBody(input) {
 		return runSeedreamImageTask(ctx, input)
 	}
 	outputCount := 1
 	if input.ImageCapability != nil && input.ImageCapability.FixedOutputs > 0 {
 		outputCount = input.ImageCapability.FixedOutputs
-	}
-	if providerpreset.IsBeefAPIEndpoint(input.Config.BaseURL) {
-		if contract, ok := providerpreset.BeefAPIImageContract(input.Config.Model); ok {
-			if contract.FixedOutputs == 0 {
-				return runBeefAPIImageTask(ctx, input, contract)
-			}
-			if input.Config.TransparentBackground == "true" || len(input.ReferenceVideos)+len(input.ReferenceAudios) > 0 {
-				return nil, errors.New("当前图片模型不支持透明背景或参考音视频")
-			}
-			if err := modelcatalog.ValidateImageTask(nil, taskInputFromCanvas(input)); err != nil {
-				return nil, err
-			}
-			outputCount = contract.FixedOutputs
-			if len(contract.Presets) > 0 {
-				prompt, err := contract.GenerationPrompt(WithSystemPrompt(input.Config, input.Prompt), input.Config.Size)
-				if err != nil {
-					return nil, err
-				}
-				input.Prompt = prompt
-				input.Config.SystemPrompt = ""
-				// Omit fixed square size: the gateway rejects it when --ar selects a non-square frame.
-				input.Config.Size = "auto"
-			}
-		}
 	}
 	if _, ok := DeclarativeProtocolAdapterForContext(ctx, input.Config.InterfaceType); ok {
 		return RunDeclarativeProtocolTask(ctx, input)
@@ -154,7 +131,11 @@ func RunImageTask(ctx context.Context, input Input) (map[string]interface{}, err
 	if err != nil {
 		return nil, err
 	}
-	return map[string]interface{}{"mode": "image", "images": images}, nil
+	result := map[string]interface{}{"mode": "image", "images": images}
+	if payload.Usage != nil {
+		result["usage"] = payload.Usage
+	}
+	return result, nil
 }
 
 func RunGeminiImageTask(ctx context.Context, input Input) (map[string]interface{}, error) {

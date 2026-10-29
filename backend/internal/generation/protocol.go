@@ -1011,7 +1011,11 @@ func finishProtocolResult(ctx context.Context, config Config, mode string, taskI
 	}
 	switch mode {
 	case "image":
-		return map[string]interface{}{"mode": "image", "images": items}, nil
+		output := map[string]interface{}{"mode": "image", "images": items}
+		if result.Usage != nil {
+			output["usage"] = result.Usage
+		}
+		return output, nil
 	case "video":
 		return map[string]interface{}{"mode": "video", "video": items[0]}, nil
 	default:
