@@ -9,13 +9,14 @@ import (
 )
 
 func RegisterStyleProfileRoutes(r *gin.RouterGroup, svc *app.Service) {
+	prompts := svc.PromptService()
 	r.GET("/style-profiles", func(c *gin.Context) {
 		user, err := currentUser(c, svc)
 		if err != nil {
 			failService(c, err)
 			return
 		}
-		profiles, err := svc.ListStyleProfiles(user.ID)
+		profiles, err := prompts.ListStyleProfiles(user.ID)
 		if err != nil {
 			failService(c, err)
 			return
@@ -34,7 +35,7 @@ func RegisterStyleProfileRoutes(r *gin.RouterGroup, svc *app.Service) {
 			fail(c, http.StatusBadRequest, err)
 			return
 		}
-		profile, err := svc.CreateStyleProfile(user.ID, req)
+		profile, err := prompts.CreateStyleProfile(user.ID, req)
 		if err != nil {
 			failService(c, err)
 			return
@@ -53,7 +54,7 @@ func RegisterStyleProfileRoutes(r *gin.RouterGroup, svc *app.Service) {
 			fail(c, http.StatusBadRequest, err)
 			return
 		}
-		profile, err := svc.UpdateStyleProfile(user.ID, c.Param("id"), req)
+		profile, err := prompts.UpdateStyleProfile(user.ID, c.Param("id"), req)
 		if app.IsProjectNotFound(err) {
 			fail(c, http.StatusNotFound, err)
 			return
@@ -75,7 +76,7 @@ func RegisterStyleProfileRoutes(r *gin.RouterGroup, svc *app.Service) {
 			fail(c, http.StatusBadRequest, err)
 			return
 		}
-		if err := svc.SetStyleProfileFavorite(user.ID, c.Param("id"), req.Favorite); app.IsProjectNotFound(err) {
+		if err := prompts.SetStyleProfileFavorite(user.ID, c.Param("id"), req.Favorite); app.IsProjectNotFound(err) {
 			fail(c, http.StatusNotFound, err)
 			return
 		} else if err != nil {
@@ -90,7 +91,7 @@ func RegisterStyleProfileRoutes(r *gin.RouterGroup, svc *app.Service) {
 			failService(c, err)
 			return
 		}
-		if err := svc.TouchStyleProfile(user.ID, c.Param("id")); app.IsProjectNotFound(err) {
+		if err := prompts.TouchStyleProfile(user.ID, c.Param("id")); app.IsProjectNotFound(err) {
 			fail(c, http.StatusNotFound, err)
 			return
 		} else if err != nil {
@@ -105,7 +106,7 @@ func RegisterStyleProfileRoutes(r *gin.RouterGroup, svc *app.Service) {
 			failService(c, err)
 			return
 		}
-		if err := svc.DeleteStyleProfile(user.ID, c.Param("id")); app.IsProjectNotFound(err) {
+		if err := prompts.DeleteStyleProfile(user.ID, c.Param("id")); app.IsProjectNotFound(err) {
 			fail(c, http.StatusNotFound, err)
 			return
 		} else if err != nil {
