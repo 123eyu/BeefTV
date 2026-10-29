@@ -173,11 +173,32 @@ func requestGenerationPort(c *gin.Context, fallback *app.Service) localapp.Gener
 	return newServiceRuntimeAdapter(fallback)
 }
 
-func requestProviderConfig(c *gin.Context, fallback *app.Service) ProviderConfig {
+// modelConfigFallback supplies the unversioned model-config read and write
+// when a request has no injected provider port. *app.Service keeps the
+// existing runtime adapter, including its versioned methods.
+type modelConfigFallback interface {
+	ReadLocalModelConfig() ([]byte, error)
+	SaveLocalModelConfig([]byte) error
+}
+
+func requestProviderConfig(c *gin.Context, fallback modelConfigFallback) ProviderConfig {
 	if dependencies, ok := runtimeDependencies(c); ok && dependencies.ProviderConfig != nil {
 		return dependencies.ProviderConfig
 	}
-	return newServiceRuntimeAdapter(fallback)
+	if service, ok := fallback.(*app.Service); ok {
+		return newServiceRuntimeAdapter(service)
+	}
+	return modelConfigMethods{read: fallback.ReadLocalModelConfig, save: fallback.SaveLocalModelConfig}
+}
+
+type modelConfigMethods struct {
+	read func() ([]byte, error)
+	save func([]byte) error
+}
+
+func (m modelConfigMethods) ReadLocalModelConfig() ([]byte, error) { return m.read() }
+func (m modelConfigMethods) SaveLocalModelConfig(value []byte) error {
+	return m.save(value)
 }
 
 func requestModelCapability(c *gin.Context) localapp.ModelCapabilityPort {
@@ -187,11 +208,11 @@ func requestModelCapability(c *gin.Context) localapp.ModelCapabilityPort {
 	return modelcatalog.NewCapabilityNormalizer()
 }
 
-func requestTextReplay(c *gin.Context, fallback *app.Service) textReplayAPI {
+func requestTextReplay(c *gin.Context, fallback textReplayAPI) textReplayAPI {
 	if dependencies, ok := runtimeDependencies(c); ok && dependencies.TextReplay != nil {
 		return dependencies.TextReplay
 	}
-	return appTextReplayAPI{fallback}
+	return fallback
 }
 
 const runtimeDependenciesKey = "canvas.runtime-dependencies"

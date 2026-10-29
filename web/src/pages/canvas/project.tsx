@@ -44,8 +44,6 @@ import { CanvasProjectSidebar } from "@/components/canvas/canvas-project-sidebar
 import { CanvasCharacterReferenceNodeContent } from "@/components/canvas/canvas-character-reference-node";
 import { CanvasNodeToolbar } from "@/components/canvas/canvas-node-toolbar";
 import { useCanvasUpscaleBatch } from "./use-canvas-upscale-batch";
-import { createDefaultUpscaleSettings } from "@/lib/canvas/canvas-upscale";
-import { findAvailableGenerationGroupPosition } from "@/lib/canvas/canvas-generation-layout";
 import { CanvasVideoInlineTrimOverlay } from "@/components/canvas/canvas-video-inline-trim";
 import { syncNodeSubtitlesToTimeline } from "@/lib/timeline/timeline-build";
 import { CanvasNodeAnglePanel } from "@/components/canvas/canvas-node-angle-dialog";
@@ -63,15 +61,12 @@ import { STORYBOARD_HEADER_HEIGHT, STORYBOARD_ROW_HEIGHT, storyboardMinNodeHeigh
 import { CanvasDirectorNodePanel } from "@/components/canvas/director/canvas-director-node-panel";
 import { useFocusMode } from "@/hooks/use-focus-mode";
 import { connectCanvasTextMention } from "@/lib/canvas/canvas-text-mention";
-import { writeCanvasNodePrompt } from "@/lib/canvas/canvas-node-prompt";
 import {
     applyCanvasConnectionPromptSync,
     buildCanvasAgentMentionReferences,
-    buildCanvasNodeMentionReferenceMap,
     buildCanvasResourceReferences,
     getContextResourceNodes,
     reorderCanvasResourceConnections,
-    replaceCanvasReferenceMentions,
     type CanvasResourceReference,
 } from "@/lib/canvas/canvas-resource-references";
 import { CanvasConnectionCreateMenu, CanvasNodePanelOverlay, type PendingConnectionCreate } from "@/components/canvas/canvas-workspace-overlays";
@@ -121,6 +116,9 @@ import { useCanvasNodeEditor } from "./use-canvas-node-editor";
 import { useCanvasNodeOperations } from "./use-canvas-node-operations";
 import { useCanvasProjectMenu } from "./use-canvas-project-menu";
 import { buildLinkedFolderPreviewNodes } from "@/lib/canvas/canvas-linked-folder-previews";
+import { appendCanvasImport } from "@/lib/canvas/canvas-import-snapshot";
+import { replaceCanvasNodeReference } from "@/lib/canvas/canvas-reference-replace";
+import { planUpscaleProcessingNode } from "@/lib/canvas/canvas-upscale-processor";
 import { useCanvasProjectLifecycle } from "./use-canvas-project-lifecycle";
 import { useCanvasRenderModel } from "./use-canvas-render-model";
 import { useCanvasSelectionController } from "./use-canvas-selection-controller";
@@ -534,47 +532,32 @@ function InfiniteCanvasPage() {
         });
     }, [forceSaveCanvasProject, modal]);
 
-    const applyLibTVImport = useCallback(
-        async (importedNodes: CanvasNodeData[], importedConnections: CanvasConnection[]) => {
-            const previousNodes = nodesRef.current;
-            const previousConnections = connectionsRef.current;
-            const nextNodes = [...nodesRef.current, ...importedNodes];
-            const nextConnections = [...connectionsRef.current, ...importedConnections];
-            nodesRef.current = nextNodes;
-            connectionsRef.current = nextConnections;
-            setNodes(nextNodes);
-            setConnections(nextConnections);
+    const applyCanvasImport = useCallback(
+        async (importedNodes: CanvasNodeData[], importedConnections: CanvasConnection[], sourceLabel: string) => {
+            const previous = { nodes: nodesRef.current, connections: connectionsRef.current };
+            const next = appendCanvasImport(previous, importedNodes, importedConnections);
+            nodesRef.current = next.nodes;
+            connectionsRef.current = next.connections;
+            setNodes(next.nodes);
+            setConnections(next.connections);
             const saved = await saveCanvasProject({ requireRemote: false });
             if (!saved) {
-                nodesRef.current = previousNodes;
-                connectionsRef.current = previousConnections;
-                setNodes(previousNodes);
-                setConnections(previousConnections);
-                throw new Error("画布保存失败，已撤销本次 LibTV 导入");
+                nodesRef.current = previous.nodes;
+                connectionsRef.current = previous.connections;
+                setNodes(previous.nodes);
+                setConnections(previous.connections);
+                throw new Error(`画布保存失败，已撤销本次 ${sourceLabel} 导入`);
             }
         },
         [saveCanvasProject, setConnections, setNodes],
     );
+    const applyLibTVImport = useCallback(
+        (importedNodes: CanvasNodeData[], importedConnections: CanvasConnection[]) => applyCanvasImport(importedNodes, importedConnections, "LibTV"),
+        [applyCanvasImport],
+    );
     const applyTapNowImport = useCallback(
-        async (importedNodes: CanvasNodeData[], importedConnections: CanvasConnection[]) => {
-            const previousNodes = nodesRef.current;
-            const previousConnections = connectionsRef.current;
-            const nextNodes = [...nodesRef.current, ...importedNodes];
-            const nextConnections = [...connectionsRef.current, ...importedConnections];
-            nodesRef.current = nextNodes;
-            connectionsRef.current = nextConnections;
-            setNodes(nextNodes);
-            setConnections(nextConnections);
-            const saved = await saveCanvasProject({ requireRemote: false });
-            if (!saved) {
-                nodesRef.current = previousNodes;
-                connectionsRef.current = previousConnections;
-                setNodes(previousNodes);
-                setConnections(previousConnections);
-                throw new Error("画布保存失败，已撤销本次 TapNow 导入");
-            }
-        },
-        [saveCanvasProject, setConnections, setNodes],
+        (importedNodes: CanvasNodeData[], importedConnections: CanvasConnection[]) => applyCanvasImport(importedNodes, importedConnections, "TapNow"),
+        [applyCanvasImport],
     );
     const linkedProjectId = shortDramaEnabled ? currentProject?.projectId || "" : "";
     // 助手只接受属于当前画布的选中项：切画布那一帧仍可能残留旧 id，这里做硬约束，
@@ -1008,17 +991,11 @@ function InfiniteCanvasPage() {
             else message.warning("请先选择可读取的图片或视频");
             return;
         }
-        const selectedSources = selectedNodeIdsRef.current.has(source.id)
-            ? nodesRef.current.filter(node => selectedNodeIdsRef.current.has(node.id) && (node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video) && (node.metadata?.content || node.metadata?.storageKey))
-            : [source];
-        const settings = createDefaultUpscaleSettings();
-        const position = findAvailableGenerationGroupPosition(nodesRef.current, { x: source.position.x + source.width + 120, y: source.position.y }, { width: 420, height: 1000 });
-        const processor = createCanvasNode(CanvasNodeType.Upscale, { x: position.x + 210, y: position.y + 120 }, { upscale: settings, status: "idle" });
-        const nextConnections = [...connectionsRef.current, ...selectedSources.map(node => ({ id: nanoid(), fromNodeId: node.id, toNodeId: processor.id }))];
-        connectionsRef.current = nextConnections;
-        setConnections(nextConnections);
-        setNodes(current => [...current, processor]);
-        setSelectedNodeIds(new Set([processor.id]));
+        const plan = planUpscaleProcessingNode(nodesRef.current, connectionsRef.current, source, selectedNodeIdsRef.current);
+        connectionsRef.current = plan.connections;
+        setConnections(plan.connections);
+        setNodes(current => [...current, plan.processor]);
+        setSelectedNodeIds(new Set([plan.processor.id]));
         setDialogNodeId(null);
         setToolbarNodeId(null);
     }, [message, recoverAIUpscale, setConnections, setNodes]);
@@ -1141,51 +1118,13 @@ function InfiniteCanvasPage() {
 
     const handleReplaceNodeReference = useCallback(
         (targetNodeId: string, oldReference: { id: string; nodeId?: string; label?: string; title?: string }, sourceNodeId: string) => {
-            const sourceNode = nodesRef.current.find((n) => n.id === sourceNodeId);
-            if (!sourceNode || sourceNode.id === oldReference.nodeId) return;
-
-            const previousNodes = nodesRef.current;
-            const previousConnections = connectionsRef.current;
-
-            const configNodeId = previousConnections.find((c) => c.fromNodeId === targetNodeId && previousNodes.find((n) => n.id === c.toNodeId)?.type === CanvasNodeType.Config)?.toNodeId;
-            const receiverId = configNodeId || targetNodeId;
-
-            let rewired = false;
-            const nextConnections = previousConnections.map((c) => {
-                if (!rewired && c.fromNodeId === oldReference.nodeId && (c.toNodeId === targetNodeId || c.toNodeId === configNodeId)) {
-                    rewired = true;
-                    return { ...c, fromNodeId: sourceNodeId };
-                }
-                return c;
-            });
-
-            if (!rewired) {
-                nextConnections.push({
-                    id: nanoid(),
-                    fromNodeId: sourceNodeId,
-                    toNodeId: receiverId,
-                });
-            }
-
-            const nextReferencesMap = buildCanvasNodeMentionReferenceMap(previousNodes, nextConnections, previousNodes);
-            const targetNextReferences = nextReferencesMap.get(targetNodeId) || [];
-            const newRef = targetNextReferences.find((r) => r.nodeId === sourceNodeId);
-
-            const targetNode = previousNodes.find((n) => n.id === targetNodeId);
-            let nextNodes = previousNodes;
-            if (targetNode && newRef) {
-                const currentPrompt = targetNode.metadata?.composerContent ?? targetNode.metadata?.prompt ?? "";
-                const replacementToken = `@${newRef.label}`;
-                const updatedPrompt = replaceCanvasReferenceMentions(currentPrompt, oldReference, replacementToken, sourceNode.title ? sourceNode.title : newRef.label);
-
-                nextNodes = previousNodes.map((n) => (n.id === targetNodeId ? writeCanvasNodePrompt(n, updatedPrompt) : n));
-            }
-
-            nodesRef.current = nextNodes;
-            connectionsRef.current = nextConnections;
-            setNodes(nextNodes);
-            setConnections(nextConnections);
-            message.success(`已将参考图「${oldReference.label || "参考图"}」替换为「${sourceNode.title || "新图片"}」，提示词已同步更新`);
+            const result = replaceCanvasNodeReference(nodesRef.current, connectionsRef.current, targetNodeId, oldReference, sourceNodeId);
+            if (!result.notice) return;
+            nodesRef.current = result.nodes;
+            connectionsRef.current = result.connections;
+            setNodes(result.nodes);
+            setConnections(result.connections);
+            message.success(result.notice);
         },
         [connectionsRef, message, nodesRef, setConnections, setNodes],
     );
@@ -1372,6 +1311,7 @@ function InfiniteCanvasPage() {
         setBatchPrimary,
         toggleBatchExpanded,
         toggleFrameCollapsed,
+        handleFrameToggle,
         toggleNodeFreeResize,
     } = useCanvasNodeEditor({
         canvasId: projectId,
@@ -1384,6 +1324,7 @@ function InfiniteCanvasPage() {
         setDialogNodeId,
         setToolbarNodeId,
         setHoveredNodeId,
+        openProjectAssets,
     });
 
     const handleRemoveNodeReference = useCallback(
@@ -1443,19 +1384,6 @@ function InfiniteCanvasPage() {
             createFolder(projectAssetInsertPosition, { id: folder.id, projectId: linkedProjectId, title: folder.name, style, theme, createdAt: folder.createdAt });
         },
         [createFolder, linkedProjectId, linkedProjectQuery.data?.assetFolders, projectAssetInsertPosition],
-    );
-
-    const handleFrameToggle = useCallback(
-        (nodeId: string) => {
-            const node = nodesRef.current.find((item) => item.id === nodeId);
-            const linkedFolderId = node?.metadata?.folder?.assetFolderId;
-            if (linkedFolderId) {
-                openProjectAssets("all", node ? { x: node.position.x + node.width + 40, y: node.position.y } : undefined, "canvas", linkedFolderId);
-                return;
-            }
-            toggleFrameCollapsed(nodeId);
-        },
-        [nodesRef, openProjectAssets, toggleFrameCollapsed],
     );
 
     const linkedFolderPreviewNodesById = useMemo(() => buildLinkedFolderPreviewNodes(assets, linkedProjectQuery.data?.assets || []), [assets, linkedProjectQuery.data?.assets]);
@@ -2182,23 +2110,6 @@ function InfiniteCanvasPage() {
         },
         [closeConnectionCreateMenu, selectedNodeIdsRef, setContextMenu, setSelectedConnectionId, setSelectedNodeIds],
     );
-    const handleCancelImageCrop = useCallback(() => setCropNodeId(null), [setCropNodeId]);
-    const handleConfirmImageCrop = useCallback((node: CanvasNodeData, crop: Parameters<typeof cropImageNode>[1]) => cropImageNode(node, crop), [cropImageNode]);
-    const handleCancelAnnotation = useCallback(() => setAnnotationNodeId(null), [setAnnotationNodeId]);
-    const handleConfirmAnnotation = useCallback(
-        async (node: CanvasNodeData, dataUrl: string) => {
-            await saveAnnotatedImageNode(node, dataUrl);
-            setAnnotationNodeId(null);
-        },
-        [saveAnnotatedImageNode, setAnnotationNodeId],
-    );
-    const handleCancelMaskEdit = useCallback(() => setMaskEditNodeId(null), [setMaskEditNodeId]);
-    const handleConfirmMaskEdit = useCallback((node: CanvasNodeData, payload: Parameters<typeof maskEditImageNode>[1]) => maskEditImageNode(node, payload), [maskEditImageNode]);
-    const handleCancelVideoCrop = useCallback(() => setVideoCropNodeId(null), [setVideoCropNodeId]);
-    const handleConfirmVideoCrop = useCallback(
-        (node: CanvasNodeData, crop: Parameters<typeof cropVideoNode>[1], sourceDimensions: Parameters<typeof cropVideoNode>[2]) => cropVideoNode(node, crop, sourceDimensions),
-        [cropVideoNode],
-    );
     const openCanvasNodeVersions = useCallback((node: CanvasNodeData) => setVersionCompareRootId(node.metadata?.versionOfNodeId || node.id), []);
     const viewCanvasNodeImage = useCallback((node: CanvasNodeData) => setPreviewNodeId(node.id), []);
     // Overview nodes reuse the DOM card handlers; native events carry the
@@ -2510,18 +2421,18 @@ function InfiniteCanvasPage() {
                                                 onOpenDrawing={openDrawingNode}
                                                 onStartBatchConnection={startBatchConnection}
                                                 imageCropNodeId={cropNodeId}
-                                                onCancelImageCrop={handleCancelImageCrop}
-                                                onConfirmImageCrop={handleConfirmImageCrop}
+                                                onCancelImageCrop={() => setCropNodeId(null)}
+                                                onConfirmImageCrop={cropImageNode}
                                                 annotationNodeId={annotationNodeId}
-                                                onCancelAnnotation={handleCancelAnnotation}
-                                                onConfirmAnnotation={handleConfirmAnnotation}
+                                                onCancelAnnotation={() => setAnnotationNodeId(null)}
+                                                onConfirmAnnotation={saveAnnotatedImageNode}
                                                 maskEditNodeId={maskEditNodeId}
                                                 maskEditConfig={maskEditNode ? { ...effectiveConfig, model: maskEditNode.metadata?.model || effectiveConfig.model, imageModel: maskEditNode.metadata?.model || effectiveConfig.imageModel, size: maskEditNode.metadata?.size || effectiveConfig.size, quality: maskEditNode.metadata?.quality || effectiveConfig.quality, count: String(maskEditNode.metadata?.count || effectiveConfig.count) } : effectiveConfig}
-                                                onCancelMaskEdit={handleCancelMaskEdit}
-                                                onConfirmMaskEdit={handleConfirmMaskEdit}
+                                                onCancelMaskEdit={() => setMaskEditNodeId(null)}
+                                                onConfirmMaskEdit={maskEditImageNode}
                                                 videoCropNodeId={videoCropNodeId}
-                                                onCancelVideoCrop={handleCancelVideoCrop}
-                                                onConfirmVideoCrop={handleConfirmVideoCrop}
+                                                onCancelVideoCrop={() => setVideoCropNodeId(null)}
+                                                onConfirmVideoCrop={cropVideoNode}
                                             />
                                         </CanvasNodeGraphContext.Provider>
                                     </CanvasNodeActionContext.Provider>

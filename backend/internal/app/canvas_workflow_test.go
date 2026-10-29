@@ -220,7 +220,7 @@ func TestCanvasWorkflowCancelPreventsAdmission(t *testing.T) {
 
 func TestCanvasWorkflowPromptSubstitutionUsesOriginalOffsets(t *testing.T) {
 	svc, _, _ := workflowFixture(t)
-	recipe := workflowRecipe{Request: CreateTaskRequest{Input: map[string]any{"prompt": "AAA BBB"}}, Bindings: []workflowBinding{{NodeID: "a", Field: "prompt", Index: 0, Original: "AAA"}, {NodeID: "b", Field: "prompt", Index: 4, Original: "BBB"}}}
+	recipe := workflowRecipe{Request: cw.RecipeRequest{Input: map[string]any{"prompt": "AAA BBB"}}, Bindings: []workflowBinding{{NodeID: "a", Field: "prompt", Index: 0, Original: "AAA"}, {NodeID: "b", Field: "prompt", Index: 4, Original: "BBB"}}}
 	req, e := svc.materializeCanvasWorkflowRequest("owner", "op", recipe, nil, map[string]*cw.Step{"a": {Status: "succeeded", Text: "BBB"}, "b": {Status: "succeeded", Text: "new"}})
 	if e != nil || req.Prompt != "BBB new" {
 		t.Fatalf("prompt=%q err=%v", req.Prompt, e)

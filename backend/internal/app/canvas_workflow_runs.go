@@ -62,7 +62,8 @@ func (h workflowRunHost) Generate(user, op, cipher string, n cw.Node, nodes map[
 	if !ok {
 		return nil, workflowBad("生成配方缺失")
 	}
-	req, e := h.s.materializeCanvasWorkflowRequest(user, op, recipe, nodes, steps)
+	built, e := cw.Materialize(h.s.compileHost(), user, op, recipe, nodes, steps)
+	req := createTaskRequestFromRecipe(built)
 	var task *model.Task
 	if e == nil {
 		task, e = h.s.CreateTask(user, req)
@@ -87,7 +88,8 @@ func (h workflowRunHost) Generate(user, op, cipher string, n cw.Node, nodes map[
 }
 
 func (h workflowRunHost) Describe(user, op string, n cw.Node, resource string) (*model.Task, error) {
-	request, e := h.s.workflowDescribeRequest(n, resource, op)
+	built, e := cw.DescribeRequest(h.s.compileHost(), n, resource, op)
+	request := createTaskRequestFromRecipe(built)
 	if e != nil {
 		return nil, e
 	}
@@ -114,7 +116,7 @@ func (h workflowRunHost) RetryStep(row model.CanvasWorkflowRun, nodeID string, t
 	if generation.UpscaleMediaType(task.Model) != "" {
 		return h.s.RecoverMediaUpscale(context.Background(), row.UserID, task.ID)
 	}
-	input, e := h.s.prepareCanvasWorkflowRetryCredentials(row, nodeID, task)
+	input, e := cw.PrepareRetryCredentials(h.s.compileHost(), row, nodeID, task)
 	if e != nil {
 		return nil, e
 	}

@@ -196,7 +196,7 @@ func RegisterTaskRoutes(r *gin.RouterGroup, svc *app.Service, hostedProfile ...b
 		}
 		ok(c, task)
 	})
-	registerTaskTextReplayRoutes(r, svc)
+	registerTaskTextReplayRoutes(r, svc, svc.TextReplay())
 	r.POST("/tasks/:id/retry", func(c *gin.Context) {
 		if !requireTrustedDesktopWritePrincipal(c, "任务只能由当前桌面界面重试") {
 			return
