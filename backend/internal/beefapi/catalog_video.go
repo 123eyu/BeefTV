@@ -6,6 +6,25 @@ import (
 	"strings"
 )
 
+// A managed declaration needs a version and explicit counts for each media
+// kind. Missing counts must not turn into unsupported inputs after decoding.
+func NormalizeVersionedVideoCapability(raw json.RawMessage, version string) (map[string]any, bool) {
+	if strings.TrimSpace(version) == "" {
+		return nil, false
+	}
+	video, ok := NormalizeCatalogVideoCapability(raw)
+	if !ok {
+		return nil, false
+	}
+	refs := video["references"].(map[string]any)
+	for _, key := range []string{"maxImages", "maxVideos", "maxAudios"} {
+		if _, present := refs[key]; !present {
+			return nil, false
+		}
+	}
+	return video, true
+}
+
 // NormalizeCatalogVideoCapability copies a gateway video_capabilities object
 // using the existing BeefTV VideoCapabilityConfig field names and bounds.
 // Omitted nested limits stay omitted so callers do not persist implicit zeros.
@@ -94,6 +113,42 @@ func NormalizeCatalogVideoCapability(raw json.RawMessage) (map[string]any, bool)
 		"watermark":         watermark,
 		"operations":        operations,
 		"defaultOperation":  defaultOperation,
+	}
+	if raw, present := object["operationReferences"]; present {
+		byOperation, ok := raw.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		normalized := map[string]any{}
+		for operation, raw := range byOperation {
+			limits, ok := raw.(map[string]any)
+			if !ok || !containsCatalogString(operations, operation) {
+				return nil, false
+			}
+			counts := map[string]any{}
+			for _, key := range []string{"minImages", "maxImages", "maxVideos", "maxAudios"} {
+				count, present, valid := catalogIntField(limits, key)
+				if !valid || present && (count < 0 || count > 100) {
+					return nil, false
+				}
+				if present {
+					counts[key] = count
+				}
+			}
+			min, _ := catalogPresentInt(normalizedRefs, "minImages")
+			max, _ := catalogPresentInt(normalizedRefs, "maxImages")
+			if value, present := counts["minImages"].(int); present {
+				min = value
+			}
+			if value, present := counts["maxImages"].(int); present {
+				max = value
+			}
+			if min > max {
+				return nil, false
+			}
+			normalized[operation] = counts
+		}
+		video["operationReferences"] = normalized
 	}
 	if rawSupported, present := object["durationSupported"]; present {
 		supported, ok := rawSupported.(bool)

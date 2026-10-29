@@ -77,7 +77,7 @@ test("fresh generic OpenAI catalog entries retain real portrait quotes through r
     for (const item of catalog) {
         const profile = reloaded.channels[0]!.modelProfiles!.find((profile) => profile.model === item.id)!;
         expect(profile.capability).toBe("video");
-        expect(profile.protocol).toBe("newapi");
+        expect(profile.protocol).toBe("openai-videos");
         expect(profile.videoPricing).toEqual(item.videoPricing);
         expect(profile.videoCapabilitiesVersion).toBe(item.videoCapabilitiesVersion);
         expect(modelCompatibilityError(reloaded, `beefapi::${item.id}`, { capability: "video", input: { textCount: 1, imageCount: 1, videoCount: 0, audioCount: 0, characterCount: 0 } })).toBe("");
@@ -159,7 +159,7 @@ test("explicit zero limits stay zero for a server-sourced BeefAPI capability", (
     expect(modelCapabilityConfigFor(config, `beefapi::${model}`).video!.references.maxAudios).toBe(0);
 });
 
-test("legacy BeefAPI Seedance keeps backend-repaired unsigned profile limits", () => {
+test("legacy BeefAPI Seedance waits for a versioned server declaration", () => {
     const model = "seedance-2.0";
     const repaired = legacyZeroVideo(model);
     repaired.modelProfiles![0]!.capabilityConfig = {
@@ -176,8 +176,8 @@ test("legacy BeefAPI Seedance keeps backend-repaired unsigned profile limits", (
     };
     const config = normalizeConfigSnapshot({ config: { ...defaultConfig, channels: [repaired] } }).config;
     expect(config.channels[0]?.modelProfiles?.[0]?.videoCapabilitiesVersion).toBeUndefined();
-    expect(modelCapabilityConfigFor(config, `beefapi::${model}`).video!.references.maxVideos).toBe(3);
-    expect(modelCapabilityConfigFor(config, `beefapi::${model}`).video!.references.maxAudios).toBe(3);
+    expect(modelCapabilityConfigFor(config, `beefapi::${model}`).videoCapabilitiesUnavailable).toBe(true);
+    expect(modelCompatibilityError(config, `beefapi::${model}`, { capability: "video" })).toContain("刷新模型列表");
 });
 
 test("invalid or missing catalog video does not clear a good sourced profile", () => {

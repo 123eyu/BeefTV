@@ -29,7 +29,7 @@ function beefAPIConfig(connected: boolean): AiConfig {
         hasApiKey: connected,
         modelProfiles: [
             { model: image, capability: "image", protocol: "openai-image" },
-            { model: video, capability: "video", protocol: "openai-videos", capabilityConfig: videoCapability(video) },
+            { model: video, capability: "video", protocol: "openai-videos", capabilityConfig: videoCapability(video), videoCapabilitiesVersion: "fixture-v1" },
         ],
     });
     return {
@@ -104,7 +104,7 @@ describe("managed BeefAPI generation readiness", () => {
         const ready = useConfigStore.getState().isAiConfigReady;
         const sharedVideo = "seedance-2.0";
         const sharedAudio = "gpt-audio";
-        const videoProfile = { model: sharedVideo, capability: "video" as const, protocol: "openai-videos" as const, capabilityConfig: videoCapability(sharedVideo) };
+        const videoProfile = { model: sharedVideo, capability: "video" as const, protocol: "openai-videos" as const, capabilityConfig: videoCapability(sharedVideo), videoCapabilitiesVersion: "fixture-v1" };
         const audioProfile = { model: sharedAudio, capability: "audio" as const, protocol: "openai-audio" as const };
         for (const order of ["manual-first", "beef-first"] as const) {
             const manualEmpty = createModelChannel({

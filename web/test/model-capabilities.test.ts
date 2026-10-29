@@ -201,6 +201,7 @@ test("BeefAPI generic newapi Seedance accepts mixed image and video references w
                 capability: "video",
                 protocol: "newapi",
                 capabilityConfig: base,
+                videoCapabilitiesVersion: "server-v1",
                 billingMode: "fixed_request",
                 unitPriceMicrocredits: 0,
             }],

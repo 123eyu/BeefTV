@@ -68,6 +68,9 @@ func isSeedance25Model(modelName string) bool {
 const documentedSeedanceVideoMinPixels = 407696
 
 func applySeedanceDocumentedVideoPixelFloor(config TaskConfig, refs *VideoReferenceConfig) {
+	if hasServerVideoCapability(config) {
+		return
+	}
 	if refs == nil || refs.MinVideoPixels != officialSeedanceVideoMinPixels || refs.MaxVideoPixels != officialSeedanceVideoMaxPixels {
 		return
 	}
@@ -146,6 +149,9 @@ func tightenSeedanceDocumentedRouteLimits(config TaskConfig, value *VideoCapabil
 }
 
 func tightenedVideoCapability(config TaskConfig, profile *VideoCapabilityConfig) *VideoCapabilityConfig {
+	if hasServerVideoCapability(config) {
+		return profile
+	}
 	if profile == nil {
 		return nil
 	}
@@ -212,6 +218,10 @@ func tightenedVideoCapability(config TaskConfig, profile *VideoCapabilityConfig)
 	return &value
 }
 
+func hasServerVideoCapability(config TaskConfig) bool {
+	return config.VideoCapabilitiesVersion != nil && strings.TrimSpace(*config.VideoCapabilitiesVersion) != ""
+}
+
 func overlayOfficialSeedance2References(base VideoReferenceConfig, is25 bool) VideoReferenceConfig {
 	refs := base
 	if is25 {
@@ -253,26 +263,17 @@ func validateVideoReferenceMedia(profile *VideoCapabilityConfig, input TaskInput
 		return kernel.BadAuthRequest("当前视频模型能力参数无效")
 	}
 	profile = tightenedVideoCapability(input.Config, profile)
-	refs := profile.References
+	refs := videoReferencesForOperation(profile, metadataString(input.Metadata, "videoEditOperation"))
 	applySeedanceDocumentedVideoPixelFloor(input.Config, &refs)
-	if isNativeDreaminaSeedance(input.Config.InterfaceType, input.Config.Model) && isSeedance25Model(input.Config.Model) && metadataString(input.Metadata, "videoEditOperation") == "inpaint" && refs.MinVideoDuration < 4 {
+	if !hasServerVideoCapability(input.Config) && isNativeDreaminaSeedance(input.Config.InterfaceType, input.Config.Model) && isSeedance25Model(input.Config.Model) && metadataString(input.Metadata, "videoEditOperation") == "inpaint" && refs.MinVideoDuration < 4 {
 		refs.MinVideoDuration = 4
 	}
 
-	if len(input.ReferenceImages) > refs.MaxImages {
-		return kernel.BadAuthRequest(fmt.Sprintf("当前视频模型最多支持 %d 张参考图", refs.MaxImages))
-	}
-	if len(input.ReferenceVideos) > refs.MaxVideos {
-		return kernel.BadAuthRequest(fmt.Sprintf("当前视频模型最多支持 %d 个参考视频", refs.MaxVideos))
-	}
-	if len(input.ReferenceAudios) > refs.MaxAudios {
-		return kernel.BadAuthRequest(fmt.Sprintf("当前视频模型最多支持 %d 段参考音频", refs.MaxAudios))
+	if err := validateVideoReferenceCounts(refs, input); err != nil {
+		return err
 	}
 	if !videoCapabilityAllowsAudioOnly(profile) && len(input.ReferenceAudios) > 0 && len(input.ReferenceImages) == 0 && len(input.ReferenceVideos) == 0 {
 		return kernel.BadAuthRequest("当前视频模型不支持只用音频生成视频，请同时添加参考图片或参考视频")
-	}
-	if len(input.ReferenceImages) < refs.MinImages {
-		return kernel.BadAuthRequest(fmt.Sprintf("当前视频模型至少需要 %d 张参考图", refs.MinImages))
 	}
 	if input.DeferReferenceMetadata {
 		return nil

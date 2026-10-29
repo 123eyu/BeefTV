@@ -14,11 +14,23 @@ func managedLegacyVideoInput(input Input) beefapi.LegacyVideoInput {
 		resolution = NormalizeVideoResolution(input.Config.VQuality)
 	}
 	request := beefapi.LegacyVideoInput{Model: input.Config.Model, Prompt: WithSystemPrompt(input.Config, strings.TrimSpace(input.Prompt)), Seconds: input.Config.VideoSeconds, Resolution: resolution, AspectRatio: input.Config.Size, Metadata: input.Metadata}
-	if input.Config.VideoGenerateAudio != "" {
+	serverOwned := input.Config.VideoCapabilitiesVersion != nil && strings.TrimSpace(*input.Config.VideoCapabilitiesVersion) != "" && input.VideoCapability != nil
+	if serverOwned {
+		if input.VideoCapability.DurationSupported != nil && !*input.VideoCapability.DurationSupported {
+			request.Seconds = ""
+		}
+		if len(input.VideoCapability.Ratios) == 0 {
+			request.AspectRatio = ""
+		}
+		if len(input.VideoCapability.Resolutions) == 0 {
+			request.Resolution = ""
+		}
+	}
+	if input.Config.VideoGenerateAudio != "" && (!serverOwned || input.VideoCapability.GenerateAudio.Supported) {
 		value := ParseBool(input.Config.VideoGenerateAudio, true)
 		request.GenerateAudio = &value
 	}
-	if input.Config.VideoWatermark != "" {
+	if input.Config.VideoWatermark != "" && (!serverOwned || input.VideoCapability.Watermark.Supported) {
 		value := ParseBool(input.Config.VideoWatermark, false)
 		request.Watermark = &value
 	}

@@ -1,14 +1,15 @@
 import { expect, test } from "bun:test";
-import { defaultModelCapabilityConfig, modelCapabilityConfigFor } from "../src/lib/model-capabilities";
+import { managedVideoCatalogItem } from "./managed-video-fixture";
+import { modelCapabilityConfigFor } from "../src/lib/model-capabilities";
 import { videoSubmitNotice } from "../src/pages/create/creation-submit-guard";
 import { createModelChannel, defaultConfig } from "../src/stores/use-config-store";
 
 const model = "seedance-2.0";
-const capabilityConfig = defaultModelCapabilityConfig("newapi", model);
+const capabilityConfig = { version: 1, video: managedVideoCatalogItem(model).videoCapabilities! };
 const channel = createModelChannel({ id: "beefapi", name: "BeefAPI", scope: "user", interfaceType: "newapi", baseUrl: "https://enterprise.beefapi.com", models: [model] });
-channel.modelProfiles = [{ model, displayName: model, capability: "video", protocol: "newapi", capabilityConfig }];
+channel.modelProfiles = [{ model, displayName: model, capability: "video", protocol: "newapi", capabilityConfig, videoCapabilitiesVersion: "fixture-v1" }];
 const config = { ...defaultConfig, channels: [channel], model: `beefapi::${model}`, videoModel: `beefapi::${model}` };
-// 走真实读取路径：能力配置在读取时按官方下限收紧到 2 秒音频、4–15 秒输出。
+// 模拟服务端已下发的能力：2 秒音频、4–15 秒输出。
 const video = modelCapabilityConfigFor(config, `beefapi::${model}`).video!;
 
 const image = (id: string) => ({ id, name: id, type: "image/png", dataUrl: "", width: 512, height: 512 });
