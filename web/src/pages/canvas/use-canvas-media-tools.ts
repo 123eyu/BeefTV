@@ -159,6 +159,21 @@ export function useCanvasMediaTools({
     const [inlineTrimRunning, setInlineTrimRunning] = useState(false);
     const inlineTrimRunningRef = useRef(false);
     const [panoramaConfigNodeId, setPanoramaConfigNodeId] = useState<string | null>(null);
+    // 删除节点后，这些工具若还指向被删节点就一起关闭；状态归本 hook 所有，页面只调一次。
+    const clearDeletedNodes = useCallback((removedIds: Set<string>) => {
+        const clear = (current: string | null) => (current && removedIds.has(current) ? null : current);
+        setCropNodeId(clear);
+        setVideoCropNodeId(clear);
+        setAnnotationNodeId(clear);
+        setMaskEditNodeId(clear);
+        setUpscaleNodeId(clear);
+        setAngleNodeId(clear);
+        setLightingNodeId(clear);
+        setEmotionNodeId(clear);
+        setFrameDialogNodeId(clear);
+        setInlineTrimNodeId(clear);
+        setPanoramaConfigNodeId(clear);
+    }, []);
     const projectIdRef = useRef(projectId);
     const depthObserversRef = useRef(new Set<AbortController>());
     projectIdRef.current = projectId;
@@ -1389,6 +1404,7 @@ export function useCanvasMediaTools({
     }, [bindGenerationTask, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, nodesRef, persistMediaNodes, projectId, resolveImageEditStyle, setConnections, setDialogNodeId, setNodes, setRunningNodeId, setSelectedConnectionId, setSelectedNodeIds, startGenerationRequest]);
 
     return {
+        clearDeletedNodes,
         prepareUpscaleResource,
         recoverAIUpscale,
         observeAIUpscale,
