@@ -11,6 +11,7 @@ import (
 )
 
 func registerCanvasWorkflowRoutes(r *gin.RouterGroup, svc *app.Service) {
+	templates := svc.CanvasWorkflowTemplates()
 	// Every route resolves the current desktop owner; mutations additionally
 	// require the same trusted UI principal as manual generation.
 	owner := func(c *gin.Context, write bool) string {
@@ -51,7 +52,7 @@ func registerCanvasWorkflowRoutes(r *gin.RouterGroup, svc *app.Service) {
 			fail(c, http.StatusBadRequest, e)
 			return
 		}
-		prepared, e := svc.PrepareCanvasWorkflow(user, req.Definition, req.TemplateID, req.TemplateRevision)
+		prepared, e := templates.Prepare(user, req.Definition, req.TemplateID, req.TemplateRevision)
 		if e != nil {
 			failService(c, e)
 			return
@@ -72,7 +73,7 @@ func registerCanvasWorkflowRoutes(r *gin.RouterGroup, svc *app.Service) {
 			}
 			revision = n
 		}
-		v, e := svc.CanvasWorkflowEditor(user, c.Param("id"), revision)
+		v, e := templates.Editor(user, c.Param("id"), revision)
 		if e != nil {
 			failService(c, e)
 			return
@@ -90,7 +91,7 @@ func registerCanvasWorkflowRoutes(r *gin.RouterGroup, svc *app.Service) {
 			fail(c, http.StatusBadRequest, e)
 			return
 		}
-		v, e := svc.UpdateCanvasWorkflow(user, c.Param("id"), req)
+		v, e := templates.Update(user, c.Param("id"), req)
 		if e != nil {
 			failService(c, e)
 			return
@@ -102,7 +103,7 @@ func registerCanvasWorkflowRoutes(r *gin.RouterGroup, svc *app.Service) {
 		if user == "" {
 			return
 		}
-		v, e := svc.CanvasWorkflows(user)
+		v, e := templates.List(user)
 		if e != nil {
 			failService(c, e)
 			return
@@ -120,7 +121,7 @@ func registerCanvasWorkflowRoutes(r *gin.RouterGroup, svc *app.Service) {
 			fail(c, http.StatusBadRequest, e)
 			return
 		}
-		v, e := svc.CreateCanvasWorkflow(user, req)
+		v, e := templates.Create(user, req)
 		if e != nil {
 			failService(c, e)
 			return
@@ -132,7 +133,7 @@ func registerCanvasWorkflowRoutes(r *gin.RouterGroup, svc *app.Service) {
 		if user == "" {
 			return
 		}
-		v, e := svc.CanvasWorkflow(user, c.Param("id"))
+		v, e := templates.Get(user, c.Param("id"))
 		if e != nil {
 			failService(c, e)
 			return
@@ -144,7 +145,7 @@ func registerCanvasWorkflowRoutes(r *gin.RouterGroup, svc *app.Service) {
 		if user == "" {
 			return
 		}
-		if e := svc.DeleteCanvasWorkflow(user, c.Param("id")); e != nil {
+		if e := templates.Delete(user, c.Param("id")); e != nil {
 			failService(c, e)
 			return
 		}

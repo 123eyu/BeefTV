@@ -134,8 +134,7 @@ func (s *Service) StartCanvasWorkflow(user, id string, req cw.RunRequest) (cw.Ru
 		if e := tx.Create(&row).Error; e != nil {
 			return e
 		}
-		rows := workflowReferenceRows(row.ID, user, refs)
-		return persistWorkflowReferences(tx, rows)
+		return cw.PersistReferences(tx, row.ID, user, refs)
 	})
 	if e != nil {
 		return cw.Run{}, e
