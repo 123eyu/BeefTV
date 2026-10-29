@@ -121,6 +121,7 @@ import { useCanvasNodeEditor } from "./use-canvas-node-editor";
 import { useCanvasNodeOperations } from "./use-canvas-node-operations";
 import { useCanvasProjectMenu } from "./use-canvas-project-menu";
 import { buildLinkedFolderPreviewNodes } from "@/lib/canvas/canvas-linked-folder-previews";
+import { appendCanvasImport } from "@/lib/canvas/canvas-import-snapshot";
 import { useCanvasProjectLifecycle } from "./use-canvas-project-lifecycle";
 import { useCanvasRenderModel } from "./use-canvas-render-model";
 import { useCanvasSelectionController } from "./use-canvas-selection-controller";
@@ -534,47 +535,32 @@ function InfiniteCanvasPage() {
         });
     }, [forceSaveCanvasProject, modal]);
 
-    const applyLibTVImport = useCallback(
-        async (importedNodes: CanvasNodeData[], importedConnections: CanvasConnection[]) => {
-            const previousNodes = nodesRef.current;
-            const previousConnections = connectionsRef.current;
-            const nextNodes = [...nodesRef.current, ...importedNodes];
-            const nextConnections = [...connectionsRef.current, ...importedConnections];
-            nodesRef.current = nextNodes;
-            connectionsRef.current = nextConnections;
-            setNodes(nextNodes);
-            setConnections(nextConnections);
+    const applyCanvasImport = useCallback(
+        async (importedNodes: CanvasNodeData[], importedConnections: CanvasConnection[], sourceLabel: string) => {
+            const previous = { nodes: nodesRef.current, connections: connectionsRef.current };
+            const next = appendCanvasImport(previous, importedNodes, importedConnections);
+            nodesRef.current = next.nodes;
+            connectionsRef.current = next.connections;
+            setNodes(next.nodes);
+            setConnections(next.connections);
             const saved = await saveCanvasProject({ requireRemote: false });
             if (!saved) {
-                nodesRef.current = previousNodes;
-                connectionsRef.current = previousConnections;
-                setNodes(previousNodes);
-                setConnections(previousConnections);
-                throw new Error("画布保存失败，已撤销本次 LibTV 导入");
+                nodesRef.current = previous.nodes;
+                connectionsRef.current = previous.connections;
+                setNodes(previous.nodes);
+                setConnections(previous.connections);
+                throw new Error(`画布保存失败，已撤销本次 ${sourceLabel} 导入`);
             }
         },
         [saveCanvasProject, setConnections, setNodes],
     );
+    const applyLibTVImport = useCallback(
+        (importedNodes: CanvasNodeData[], importedConnections: CanvasConnection[]) => applyCanvasImport(importedNodes, importedConnections, "LibTV"),
+        [applyCanvasImport],
+    );
     const applyTapNowImport = useCallback(
-        async (importedNodes: CanvasNodeData[], importedConnections: CanvasConnection[]) => {
-            const previousNodes = nodesRef.current;
-            const previousConnections = connectionsRef.current;
-            const nextNodes = [...nodesRef.current, ...importedNodes];
-            const nextConnections = [...connectionsRef.current, ...importedConnections];
-            nodesRef.current = nextNodes;
-            connectionsRef.current = nextConnections;
-            setNodes(nextNodes);
-            setConnections(nextConnections);
-            const saved = await saveCanvasProject({ requireRemote: false });
-            if (!saved) {
-                nodesRef.current = previousNodes;
-                connectionsRef.current = previousConnections;
-                setNodes(previousNodes);
-                setConnections(previousConnections);
-                throw new Error("画布保存失败，已撤销本次 TapNow 导入");
-            }
-        },
-        [saveCanvasProject, setConnections, setNodes],
+        (importedNodes: CanvasNodeData[], importedConnections: CanvasConnection[]) => applyCanvasImport(importedNodes, importedConnections, "TapNow"),
+        [applyCanvasImport],
     );
     const linkedProjectId = shortDramaEnabled ? currentProject?.projectId || "" : "";
     // 助手只接受属于当前画布的选中项：切画布那一帧仍可能残留旧 id，这里做硬约束，
