@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "antd";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -9,6 +9,7 @@ import { recordConfirmedCanvasCommit } from "../../src/services/canvas-operation
 import { cacheResourceObjectUrl } from "../../src/services/resource-blob-cache";
 import { createModelChannel, defaultConfig, encodeChannelModel, useConfigStore } from "../../src/stores/use-config-store";
 import { useCanvasStore } from "../../src/stores/canvas/use-canvas-store";
+import { canvasPageUiStore } from "../../src/stores/canvas/use-canvas-page-ui-store";
 import { useUserStore } from "../../src/stores/use-user-store";
 import type { CanvasConnection, CanvasNodeData } from "../../src/types/canvas";
 import { customerGenerationProject, type CustomerGenerationScenario } from "./customer-generation-scenarios";
@@ -99,6 +100,9 @@ function Harness() {
         harness.nodes = next;
         useCanvasStore.getState().updateProject(project.id, { nodes: next });
         return next;
+    }), []);
+    useEffect(() => canvasPageUiStore(project.id).subscribe((state, previous) => {
+        if (state.dialogNodeId && state.dialogNodeId !== previous.dialogNodeId) setActiveNodeId(state.dialogNodeId);
     }), []);
     const nodeOperations = useCanvasNodeOperations({ projectId: project.id, defaultDrawingEngine: "excalidraw", nodesRef, connectionsRef, selectedNodeIdsRef,
         getCanvasCenter: () => ({ x: 400, y: 300 }), setNodes, setConnections, onNodesDeleted: noop });
