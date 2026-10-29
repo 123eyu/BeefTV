@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const CurrentSchemaVersion int64 = 26
+const CurrentSchemaVersion int64 = 27
 
 type localSchemaMigration struct {
 	Version   int64 `gorm:"primaryKey;autoIncrement:false"`
@@ -123,8 +123,11 @@ func canonicalLocalMigrations() []localMigration {
 			return migrateAssistantContinuationIntentFence(tx)
 		}},
 		{version: 26, name: "task-recovery-outcome", apply: func(tx *gorm.DB) error {
+			return ensureSQLiteColumn(tx, "tasks", "recovery_outcome", "TEXT")
+		}},
+		// v26 已随 v2.0.5 发布，已升级的库不会再执行它；结算原值列必须放在新版本里。
+		{version: 27, name: "task-beefapi-settlement", apply: func(tx *gorm.DB) error {
 			for _, col := range []struct{ name, def string }{
-				{"recovery_outcome", "TEXT"},
 				{"beef_usage_state", "TEXT"},
 				{"beef_billing_state", "TEXT"},
 				{"beef_reconcile_deadline", "TEXT"},
