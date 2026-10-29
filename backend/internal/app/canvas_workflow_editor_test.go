@@ -29,7 +29,7 @@ func TestCanvasWorkflowModelSelectionUsesCurrentChannelAndClearsOldRoute(t *test
 	if err := s.SaveLocalModelConfig([]byte(config)); err != nil {
 		t.Fatal(err)
 	}
-	r := workflowRecipe{Request: CreateTaskRequest{Model: "old", LogicalModelID: "old-route", Input: map[string]any{"mode": "video", "config": map[string]any{"model": "old", "apiKey": "old-key", "providerOptions": map[string]any{"old": true}, "videoSeconds": "5"}}}}
+	r := workflowRecipe{Request: cw.RecipeRequest{Model: "old", LogicalModelID: "old-route", Input: map[string]any{"mode": "video", "config": map[string]any{"model": "old", "apiKey": "old-key", "providerOptions": map[string]any{"old": true}, "videoSeconds": "5"}}}}
 	changed, err := s.selectWorkflowModel(cw.Node{MediaType: "video", Config: map[string]any{"modelOption": "custom::video-model"}}, &r)
 	if err != nil || !changed || r.Request.Model != "video-model" || r.Request.LogicalModelID != "" {
 		t.Fatalf("selection=%+v %v", r.Request, err)
