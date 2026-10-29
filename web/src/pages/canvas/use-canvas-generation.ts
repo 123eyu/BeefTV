@@ -452,6 +452,8 @@ export function useCanvasGeneration({ projectId, domainProjectId, projectLoaded,
                                                   ...(item.metadata?.taskClientOperationId
                                                       ? operationLookupFailed
                                                           ? {
+                                                                // 查询失败不能证明上次提交被拒绝；保留「待确认」，再次点击只会查原任务。
+                                                                generationSubmissionState: "unknown" as const,
                                                                 taskOutcome: { phase: "retrievable" as const, regenerate: "blocked" as const, reason: "submission_unknown" },
                                                                 taskStage: "提交结果待确认",
                                                                 errorDetails: "尚未查到上次提交的任务，请稍后重新打开画布查询，暂勿重新生成",
