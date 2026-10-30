@@ -88,7 +88,7 @@ func TestDreaminaOperationsValidateAndReachOfficialWireContract(t *testing.T) {
 		if err := (&Service{}).validateResolvedVideoCapability(&input); err != nil {
 			t.Fatalf("%s validation: %v", operation, err)
 		}
-		body := officialVideoCreateBody(t, input)
+		body := officialPluginCreateBody(t, input)
 		wantType, wantRatio, wantDuration := "reference", "16:9", float64(6)
 		if operation == "inpaint" {
 			wantType, wantRatio, wantDuration = "edit", "adaptive", -1

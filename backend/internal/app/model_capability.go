@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
 )
@@ -19,6 +20,13 @@ func (s *Service) ValidateTaskCapability(input map[string]any) error {
 	}
 	if taskInput.Mode != "image" && taskInput.Mode != "video" && taskInput.Mode != "audio" {
 		return nil
+	}
+	// Stamp only newly admitted commands. Frozen tasks without this marker keep
+	// their original execution protocol; resolving credentials must not upgrade it.
+	if taskInput.Config.CredentialRef == managedBeefAPIRef {
+		if config, ok := input["config"].(map[string]any); ok {
+			config["mediaProtocolVersion"] = beefapi.MediaProtocolVersion
+		}
 	}
 	if taskInput.Mode == "video" && taskInput.Config.CredentialRef == managedBeefAPIRef {
 		if err := s.resolveVideoCapability(context.Background(), &taskInput); err != nil {

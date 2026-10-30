@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/modelcatalog"
@@ -79,7 +80,12 @@ func (a taskCatalogAdapter) Select(userID string, req localtask.SelectRequest) (
 	}
 	config, _ := input["config"].(map[string]any)
 	name := stringValue(config["model"])
-	if kind := generation.UpscaleMediaType(name); kind != "" {
+	legacyKind := generation.UpscaleMediaType(name)
+	if input["upscale"] != nil || legacyKind != "" {
+		kind := stringValue(input["mode"])
+		if (kind != "image" && kind != "video") || (legacyKind != "" && kind != legacyKind) {
+			return localtask.SelectResult{}, BadAuthRequest("超分模型与任务类型不一致")
+		}
 		if req.Model != name || req.Type != "canvas_"+kind || stringValue(input["mode"]) != kind {
 			return localtask.SelectResult{}, BadAuthRequest("超分模型与任务类型不一致")
 		}
@@ -142,7 +148,10 @@ func (a taskCatalogAdapter) RequireCustomChannels(input map[string]any) error {
 
 func (a taskCatalogAdapter) ValidateCapability(input map[string]any) error {
 	config, _ := input["config"].(map[string]any)
-	if generation.UpscaleMediaType(stringValue(config["model"])) != "" {
+	if input["upscale"] != nil || generation.UpscaleMediaType(stringValue(config["model"])) != "" {
+		if stringValue(config["credentialRef"]) == managedBeefAPIRef {
+			config["mediaProtocolVersion"] = beefapi.MediaProtocolVersion
+		}
 		raw, err := json.Marshal(input)
 		if err != nil {
 			return err

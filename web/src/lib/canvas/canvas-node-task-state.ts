@@ -1,4 +1,4 @@
-import { normalizeTaskOutcome } from "@/lib/task-outcome";
+import { authoritativeNodeOutcome } from "@/lib/canvas/canvas-node-failure-state";
 import type { CanvasNodeData } from "@/types/canvas";
 
 /** A historical taskId is not a lock. Only live task states / submission are. */
@@ -6,7 +6,8 @@ export function isCanvasNodeGenerating(node: CanvasNodeData | undefined, running
     if (!node) return false;
     if (runningNodeId === node.id) return true;
     const meta = node.metadata;
-    const outcome = normalizeTaskOutcome(meta?.taskOutcome);
+    // A locally derived outcome only repeats old display rules; it is not a live task.
+    const outcome = authoritativeNodeOutcome(meta);
     if (outcome) {
         if (outcome.phase === "running" || outcome.phase === "fetching") return true;
         if (outcome.phase === "retrievable") return true;

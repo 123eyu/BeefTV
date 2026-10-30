@@ -3,7 +3,6 @@ package task
 import (
 	"strings"
 
-	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 )
 
@@ -71,10 +70,10 @@ func ComputeOutcome(task model.Task, resultState string, facts OutcomeFacts) Out
 			return out("failed", regenerate, "no_result")
 		}
 	}
-	if task.Type == "canvas_image" && generation.UpscaleMediaType(task.Model) == "" && (facts.HasImageReceipt || facts.ImageResponseAccepted || facts.SafeImageReplay || facts.DispatchState == "accepted" || facts.DispatchState == "submission_unknown" || task.Stage == "submission_unknown") {
+	if task.Type == "canvas_image" && !task.IsUpscale() && (facts.HasImageReceipt || facts.ImageResponseAccepted || facts.SafeImageReplay || facts.DispatchState == "accepted" || facts.DispatchState == "submission_unknown" || task.Stage == "submission_unknown") {
 		return out("retrievable", "blocked", "image_recovery_pending")
 	}
-	if task.ProviderRequestID != "" || ((task.Type == "canvas_video" || strings.HasPrefix(task.Type, "video_") || generation.UpscaleMediaType(task.Model) != "") && (facts.DispatchState == "submission_unknown" || task.Stage == "submission_unknown")) {
+	if task.ProviderRequestID != "" || ((task.Type == "canvas_video" || task.Type == "canvas_audio" || strings.HasPrefix(task.Type, "video_") || task.IsUpscale()) && (facts.DispatchState == "submission_unknown" || task.Stage == "submission_unknown")) {
 		return out("retrievable", "blocked", "provider_result_pending")
 	}
 	return out("failed", regenerate, "task_failed")
@@ -104,11 +103,12 @@ func computeBeefAPIOutcome(task model.Task) (Outcome, bool) {
 		deadline = strings.TrimSpace(*task.BeefReconcileDeadline)
 	}
 	terminalRecovery := task.RecoveryOutcome != nil && (*task.RecoveryOutcome == RecoveryNoResult || *task.RecoveryOutcome == RecoveryUnrecoverable)
+	if task.MediaSettlementPending() {
+		return Outcome{Phase: "failed", Regenerate: "blocked", Reason: ReasonSettlementPending, ReconcileDeadline: deadline}, true
+	}
 
 	if task.BeefUsageState != nil {
 		switch strings.ToLower(strings.TrimSpace(*task.BeefUsageState)) {
-		case "pending":
-			return Outcome{Phase: "failed", Regenerate: "blocked", Reason: ReasonSettlementPending, ReconcileDeadline: deadline}, true
 		case "completed":
 			if terminalRecovery {
 				return Outcome{Phase: "failed", Regenerate: "confirm", Reason: ReasonChargedResultUnrecoverable}, true
@@ -121,8 +121,6 @@ func computeBeefAPIOutcome(task model.Task) (Outcome, bool) {
 
 	if task.BeefBillingState != nil {
 		switch strings.ToLower(strings.TrimSpace(*task.BeefBillingState)) {
-		case "":
-			return Outcome{Phase: "failed", Regenerate: "blocked", Reason: ReasonSettlementPending, ReconcileDeadline: deadline}, true
 		case "settled":
 			if terminalRecovery {
 				return Outcome{Phase: "failed", Regenerate: "confirm", Reason: ReasonChargedResultUnrecoverable}, true

@@ -367,6 +367,8 @@ export type CanvasNodeMetadata = {
     taskId?: string;
     taskType?: string;
     taskOutcome?: import("@/lib/task-outcome").TaskOutcome;
+    taskOutcomeSource?: "local";
+    generationFailure?: import("@/lib/canvas/canvas-node-failure-state").CanvasFailureRecord;
     taskClientOperationId?: string;
     taskOutputIndex?: number;
     generationSubmissionState?: "submitting" | "unknown" | "accepted" | "rejected";

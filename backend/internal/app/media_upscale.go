@@ -99,7 +99,7 @@ func (s *Service) RecoverMediaUpscale(ctx context.Context, user, id string) (*mo
 	if err != nil {
 		return nil, err
 	}
-	if generation.UpscaleMediaType(task.Model) == "" {
+	if !task.IsUpscale() {
 		return nil, BadAuthRequest("此任务不是超分任务")
 	}
 	if task.Status == model.TaskStatusCancelled {
@@ -115,7 +115,11 @@ func (s *Service) RecoverMediaUpscale(ctx context.Context, user, id string) (*mo
 		return taskForOutput(*task), nil
 	}
 	s.hydrateTaskProviderRequestID(task)
-	if task.ProviderRequestID == "" {
+	_, managed, queryErr := s.managedTaskRecoveryQuery(ctx, *task)
+	if queryErr != nil {
+		return nil, queryErr
+	}
+	if task.ProviderRequestID == "" && !managed {
 		s.recordMissingVideoReceiptOutcome(task, user)
 		return nil, BadAuthRequest("原超分任务没有可恢复的上游回执，请根据任务结论重新生成")
 	}

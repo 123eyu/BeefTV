@@ -170,7 +170,7 @@ func (s *Service) deliveryMedia() taskdelivery.Media {
 	if s != nil && s.generationDeliveryMedia != nil {
 		return s.generationDeliveryMedia
 	}
-	if s == nil || (s.platform == nil && strings.TrimSpace(s.dataDir) == "") {
+	if s == nil || strings.TrimSpace(s.dataDir) == "" {
 		return nil
 	}
 	return generationDeliveryMediaAdapter{service: s}
@@ -367,14 +367,28 @@ func (a generationDeliveryMediaAdapter) decodeGenerationArtifact(userID, identit
 		if headerErr != nil {
 			return "", nil, "", "", 0, 0, 0, headerErr
 		}
-		result, downloadErr := outbound.DownloadResumable(ctx, artifactURL, outbound.ResumableOptions{
+		downloadOptions := outbound.ResumableOptions{
 			PartialPath: a.artifactDownloadPartialPath(userID, identity),
 			Headers:     headers,
 			MaxBytes:    maxBytes,
 			OnProgress: func(update outbound.ResumableProgress) {
 				progress.record(identity, deliveryProgressFromOutbound(identity, update))
 			},
-		})
+		}
+		result, downloadErr := outbound.DownloadResumable(ctx, artifactURL, downloadOptions)
+		if managed && downloadErr != nil {
+			freshURL, refreshed, refreshErr := a.refreshManagedArtifactURL(ctx, userID, identity, kind, downloadErr)
+			if refreshErr != nil {
+				return "", nil, "", "", 0, 0, 0, refreshErr
+			}
+			if refreshed {
+				downloadOptions.Headers, err = a.imageDownloadHeaders(userID, identity, kind, freshURL)
+				if err != nil {
+					return "", nil, "", "", 0, 0, 0, err
+				}
+				result, downloadErr = outbound.DownloadResumable(ctx, freshURL, downloadOptions)
+			}
+		}
 		progress.clear(identity)
 		if downloadErr != nil {
 			if errors.Is(downloadErr, outbound.ErrResourceTooLarge) {
@@ -383,6 +397,21 @@ func (a generationDeliveryMediaAdapter) decodeGenerationArtifact(userID, identit
 			return "", nil, "", "", 0, 0, 0, downloadErr
 		}
 		mimeType, data = result.MimeType, result.Data
+		if managed && kind == "audio" {
+			mimeType, err = generation.ValidateGeneratedAudio(mimeType, data, "")
+			if err != nil {
+				return "", nil, "", "", 0, 0, 0, err
+			}
+		}
+		if managed && kind == "video" {
+			if err := generation.ValidateVideoArtifact(data, mimeType); err != nil {
+				return "", nil, "", "", 0, 0, 0, err
+			}
+			data, err = a.restoreManagedUpscaleAudio(ctx, userID, identity, data)
+			if err != nil {
+				return "", nil, "", "", 0, 0, 0, err
+			}
+		}
 		if kind == "image" {
 			if validationErr := generation.ValidateImageArtifact(data, mimeType); validationErr != nil {
 				return "", nil, "", "", 0, 0, 0, validationErr

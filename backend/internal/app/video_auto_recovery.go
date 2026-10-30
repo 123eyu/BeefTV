@@ -82,8 +82,14 @@ func (s *Service) recoverFailedVideo(ctx context.Context, candidate model.Task) 
 	}
 	s.hydrateTaskProviderRequestID(task)
 	if strings.TrimSpace(task.ProviderRequestID) == "" {
-		s.recordMissingVideoReceiptOutcome(task, task.UserID)
-		return nil
+		_, managed, queryErr := s.managedTaskRecoveryQuery(ctx, *task)
+		if queryErr != nil {
+			return queryErr
+		}
+		if !managed {
+			s.recordMissingVideoReceiptOutcome(task, task.UserID)
+			return nil
+		}
 	}
 	if videoTaskPastRetentionWindow(*task, time.Now()) {
 		s.recordUnrecoverableVideoOutcome(task, task.UserID)
@@ -249,7 +255,7 @@ func classifyFailedVideoQueryOutcome(task model.Task, providerStatus string, err
 }
 
 func videoSettlementNeedsPolling(task model.Task) bool {
-	return task.BeefUsageState != nil && strings.EqualFold(strings.TrimSpace(*task.BeefUsageState), "pending")
+	return task.MediaSettlementPending()
 }
 
 func videoRecoveryNeedsPolling(task model.Task) bool {

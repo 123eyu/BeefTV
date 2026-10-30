@@ -469,7 +469,24 @@ func (c *MediaClient) UploadReference(ctx context.Context, ref LocalMediaReferen
 		if err != nil || parsed.Hostname() == "" || parsed.User != nil || parsed.Fragment != "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
 			return "", errors.New("参考素材需要可访问的 HTTPS 链接")
 		}
-		return ref.URL, nil
+		if ref.Kind == "image" && ref.Role != "source" {
+			return ref.URL, nil
+		}
+		// Measured video/audio and upscale sources must be finalized by the
+		// upload-ticket validator. Prefer the owned resource over a remote URL.
+		if ref.StorageKey != "" {
+			ref.URL = ""
+		} else {
+			body, mime, size, err := c.openRemoteReference(ctx, ref.URL, ref.MaxBytes)
+			if err != nil {
+				return "", err
+			}
+			defer body.Close()
+			copy := *c
+			copy.Open = func(context.Context, string) (io.ReadCloser, string, int64, error) { return body, mime, size, nil }
+			ref.URL, ref.StorageKey, ref.MIME = "", "remote-reference", mime
+			return copy.UploadReference(ctx, ref)
+		}
 	}
 	mime := ref.MIME
 	inline := ref.DataURL
@@ -578,4 +595,51 @@ func (c *MediaClient) UploadReference(ctx context.Context, ref LocalMediaReferen
 		c.ReferenceUploaded(ref, uploaded)
 	}
 	return uploaded.URL, nil
+}
+
+type mediaReferenceFile struct{ *os.File }
+
+func (f mediaReferenceFile) Close() error {
+	err := f.File.Close()
+	_ = os.Remove(f.Name())
+	return err
+}
+
+func (c *MediaClient) openRemoteReference(ctx context.Context, raw string, maxBytes int64) (mediaReferenceFile, string, int64, error) {
+	if maxBytes <= 0 {
+		return mediaReferenceFile{}, "", 0, errors.New("参考素材缺少下载大小限制")
+	}
+	ctx = c.networkContext(ctx)
+	if err := c.validURLContext(ctx, raw); err != nil {
+		return mediaReferenceFile{}, "", 0, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
+	if err != nil {
+		return mediaReferenceFile{}, "", 0, err
+	}
+	response, err := c.storageClient("参考素材重定向次数过多").Do(req)
+	if err != nil {
+		return mediaReferenceFile{}, "", 0, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK || response.ContentLength > maxBytes {
+		return mediaReferenceFile{}, "", 0, errors.New("参考素材无法下载或超过文件大小限制")
+	}
+	file, err := os.CreateTemp("", "beeftv-reference-*")
+	if err != nil {
+		return mediaReferenceFile{}, "", 0, err
+	}
+	result := mediaReferenceFile{file}
+	size, err := io.Copy(file, io.LimitReader(mediaContextReader{ctx, response.Body}, maxBytes+1))
+	if err == nil && size > maxBytes {
+		err = errors.New("参考素材超过文件大小限制")
+	}
+	if err == nil && size == 0 {
+		err = errors.New("参考素材为空")
+	}
+	if err != nil {
+		_ = result.Close()
+		return mediaReferenceFile{}, "", 0, err
+	}
+	return result, response.Header.Get("Content-Type"), size, nil
 }

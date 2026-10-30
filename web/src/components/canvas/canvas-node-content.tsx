@@ -6,9 +6,8 @@ import { CachedResourceImage } from "@/components/cached-resource-image";
 import { usesCanvasCustomNodeContent } from "@/lib/canvas/canvas-node-content-policy";
 import { GenerationFailureNotice } from "@/components/generation/generation-failure-notice";
 import { explainGenerationError } from "@/lib/generation-error";
-import { canvasNodeFailureExplanation, canRecoverOrRetryDepthCapture } from "@/lib/canvas/canvas-depth-capture";
-import { isGenerationTaskSubmissionUncertain } from "@/lib/generation-task-display";
-import { canReloadCanvasNodeResource, isNodeRegenerateBlocked } from "@/lib/task-outcome";
+import { canRecoverOrRetryDepthCapture } from "@/lib/canvas/canvas-depth-capture";
+import { canvasNodeFailureView } from "@/lib/canvas/canvas-node-failure-view";
 import { canvasNodeOperation } from "@/lib/operation-progress";
 import { useOperationProgress } from "@/stores/use-operation-progress";
 import { canvasRichTextHTML } from "@/lib/canvas/canvas-rich-text";
@@ -22,7 +21,6 @@ import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-refer
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
-import type { GenerationTask } from "@/services/api/task-center";
 import { cacheResourceImagePreviewObjectUrl, cacheResourceObjectUrl, getCachedResourceObjectUrl, peekCachedResourceObjectUrl, scheduleResourceBlobCache } from "@/services/resource-blob-cache";
 import { canvasImagePreviewSize } from "@/lib/canvas/canvas-image-preview-blob";
 import { resolveMediaUrl } from "@/services/file-storage";
@@ -195,21 +193,14 @@ function DrawingContent({ node, theme, drawingProjectId }: CanvasNodeContentProp
 }
 
 function ErrorContent({ node, theme, onRetry, onReloadResource, onOpenTaskDetails }: Pick<CanvasNodeContentProps, "node" | "theme" | "onRetry" | "onReloadResource" | "onOpenTaskDetails">) {
-    const explanation = canvasNodeFailureExplanation(node);
+    const failureView = canvasNodeFailureView(node);
+    const explanation = failureView.explanation;
     const batchChild = Boolean(node.metadata?.batchRootId);
     const localDepthAction = canRecoverOrRetryDepthCapture(node);
     const upscaleAction = Boolean(node.metadata?.workflowOperation?.id.endsWith(".ai-upscale"));
-    const canReload = canReloadCanvasNodeResource(node);
-    const retryBlocked = !localDepthAction && explanation.category !== "result_target_unavailable" && (canReload || isNodeRegenerateBlocked(node.metadata));
-    const errorDisplayTask = {
-        outcome: node.metadata?.taskOutcome,
-        provider: node.metadata?.taskProvider,
-        status: (node.metadata?.taskStatus || "failed") as GenerationTask["status"],
-        stage: node.metadata?.taskStage,
-        officialStatus: node.metadata?.taskOfficialStatus,
-        errorCode: node.metadata?.taskErrorCode || node.metadata?.generationErrorCode,
-    };
-    const submissionUncertain = isGenerationTaskSubmissionUncertain(errorDisplayTask) || explanation.uncertain;
+    const canReload = failureView.canReload;
+    const retryBlocked = failureView.retryBlocked;
+    const submissionUncertain = failureView.cardSubmissionUncertain;
     return (
         <div
             data-canvas-no-zoom

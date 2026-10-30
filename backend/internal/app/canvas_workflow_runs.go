@@ -8,7 +8,6 @@ import (
 
 	cw "infinite-canvas/backend/internal/canvasworkflow"
 	"infinite-canvas/backend/internal/editing"
-	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 	localtask "infinite-canvas/backend/internal/task"
 )
@@ -113,7 +112,7 @@ func (h workflowRunHost) TimelineRender(user, op string, project editing.Project
 }
 
 func (h workflowRunHost) RetryStep(row model.CanvasWorkflowRun, nodeID string, task *model.Task) (*model.Task, error) {
-	if generation.UpscaleMediaType(task.Model) != "" {
+	if task.IsUpscale() {
 		return h.s.RecoverMediaUpscale(context.Background(), row.UserID, task.ID)
 	}
 	input, e := cw.PrepareRetryCredentials(h.s.compileHost(), row, nodeID, task)

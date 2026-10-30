@@ -64,6 +64,14 @@ func runManagedImageTask(ctx context.Context, input Input) (map[string]any, erro
 	if len(refs) > 0 {
 		request.Operation = "edit"
 	}
+	return executeManagedMedia(ctx, client, request, refs)
+}
+
+func executeManagedMedia(ctx context.Context, client *beefapi.MediaClient, request beefapi.MediaRequest, refs []beefapi.LocalMediaReference) (map[string]any, error) {
+	runtime, _ := RuntimeFromContext(ctx)
+	if runtime.ManagedMedia == nil || request.TaskRef == "" {
+		return nil, RequestPreparationError{Cause: errors.New("媒体请求缺少持久化提交标识")}
+	}
 	result, err := client.Execute(ctx, request, refs)
 	if err != nil {
 		var terminal *beefapi.MediaTaskError

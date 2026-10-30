@@ -77,12 +77,27 @@ func RunProtocolAdapterTaskWithPolicy(ctx context.Context, input Input, adapter 
 		request.Extra["idempotencyKey"] = key
 		spec, err := adapter.BuildCreate(ctx, protocol.RequestContext{BaseURL: input.Config.BaseURL, Request: request})
 		if err != nil {
-			return nil, err
+			return nil, RequestPreparationError{Cause: err}
+		}
+		if input.Mode == "image" {
+			for index, image := range request.Images {
+				if image.DataURL == "" {
+					continue
+				}
+				mime, data, err := DecodeProviderDataURL(image.DataURL)
+				if err == nil {
+					err = ValidateImageArtifact(data, mime)
+				}
+				if err != nil {
+					return nil, RequestPreparationError{Cause: fmt.Errorf("参考图片 %d MIME 类型无效或内容不是图片：%w", index+1, err)}
+				}
+			}
 		}
 		if result, handled, streamErr := tryStreamingDeclarativeTextCreate(ctx, input, adapter, request, spec, policy); handled {
 			return result, streamErr
 		}
 		var body []byte
+		var responseType string
 		if input.Mode == "audio" {
 			var mime string
 			body, mime, err = ExecuteProtocolBinaryRequest(WithRequestKind(ctx, "create"), input.Config, spec)
@@ -93,7 +108,7 @@ func RunProtocolAdapterTaskWithPolicy(ctx context.Context, input Input, adapter 
 				_, err = ValidateGeneratedAudio(mime, body, input.Config.AudioFormat)
 			}
 		} else {
-			body, err = ExecuteProtocolRequest(WithRequestKind(ctx, "create"), input.Config, spec)
+			body, responseType, err = ExecuteProtocolBinaryRequest(WithRequestKind(ctx, "create"), input.Config, spec)
 		}
 		if err != nil {
 			if input.Mode == "video" {
@@ -101,7 +116,11 @@ func RunProtocolAdapterTaskWithPolicy(ctx context.Context, input Input, adapter 
 			}
 			return nil, err
 		}
-		created, err = adapter.ParseCreate(ctx, body)
+		if parser, ok := adapter.(protocol.CreateResponseParser); ok && input.Mode == "image" {
+			created, err = parser.ParseCreateResponse(ctx, body, responseType)
+		} else {
+			created, err = adapter.ParseCreate(ctx, body)
+		}
 		if err != nil {
 			if input.Mode == "video" {
 				return nil, SubmissionUnknownError{Cause: err}
@@ -308,18 +327,11 @@ func ProtocolRequestFromInput(input Input) protocol.GenerationRequest {
 		Operation:     firstNonEmpty(metadataString(input.Metadata, "videoEditOperation"), metadataString(input.Metadata, "videoOperation")),
 		Extra: map[string]any{
 			"videoSeconds": input.Config.VideoSeconds,
-			"audioVoice":   ResolvedAudioSpeechVoice(input.Config.Model, input.Config.AudioVoice),
+			"audioVoice":   strings.TrimSpace(input.Config.AudioVoice),
 			"audioFormat":  defaultString(input.Config.AudioFormat, "mp3"),
 			"audioSpeed":   defaultString(input.Config.AudioSpeed, "1"),
 			"count":        input.Config.Count,
 		},
-	}
-	if input.Mode == "audio" && strings.Contains(strings.ToLower(input.Config.Model), "minimax-music-") {
-		request.Extra["audioFormat"] = "mp3"
-		request.Extra["audioMetadata"] = map[string]any{"audio_setting": map[string]any{"sample_rate": 44100, "bitrate": 256000, "format": "mp3"}}
-		if isBeefAPIHostFromURL(input.Config.BaseURL) {
-			request.Extra["audioStreamFormat"] = "sse"
-		}
 	}
 	for _, message := range input.TextHistory {
 		role := strings.ToLower(strings.TrimSpace(message.Role))
@@ -347,6 +359,15 @@ func ProtocolRequestFromInput(input Input) protocol.GenerationRequest {
 		Count: request.ImageCount, Duration: request.Duration, AspectRatio: request.AspectRatio,
 		Resolution: request.Resolution, Quality: request.Quality, GenerateAudio: request.GenerateAudio,
 		Watermark: request.Watermark, Format: input.Config.AudioFormat,
+	}
+	if input.Mode == "image" {
+		// Project saved UI options without interpreting provider/model rules.
+		// Only the selected plugin decides which fields it accepts and sends.
+		request.Output.Options = map[string]any{
+			"mode": input.Config.SeedreamMode, "format": input.Config.SeedreamOutputFormat,
+			"watermark": input.Config.SeedreamWatermark, "optimize": input.Config.SeedreamOptimize,
+			"maxImages": input.Config.SeedreamMaxImages, "transparent": input.Config.TransparentBackground,
+		}
 	}
 	if instructions := strings.TrimSpace(input.Config.AudioInstructions); instructions != "" {
 		request.Extra["audioInstructions"] = instructions
@@ -491,7 +512,7 @@ func ExecuteProtocolBinaryRequest(ctx context.Context, config Config, spec proto
 
 func ExecuteProtocolBinaryRequestWithConsumer(ctx context.Context, config Config, spec protocol.RequestSpec, consume func(string, []byte)) ([]byte, string, error) {
 	if err := spec.Validate(); err != nil {
-		return nil, "", err
+		return nil, "", RequestPreparationError{Cause: err}
 	}
 	method := strings.ToUpper(strings.TrimSpace(spec.Method))
 	body, contentType, err := ProtocolRequestBody(ctx, config, spec)
@@ -500,11 +521,11 @@ func ExecuteProtocolBinaryRequestWithConsumer(ctx context.Context, config Config
 	}
 	requestURL, err := ProtocolRequestURL(config.BaseURL, spec)
 	if err != nil {
-		return nil, "", err
+		return nil, "", RequestPreparationError{Cause: err}
 	}
 	req, err := http.NewRequestWithContext(ctx, method, requestURL, body)
 	if err != nil {
-		return nil, "", err
+		return nil, "", RequestPreparationError{Cause: err}
 	}
 	if method == http.MethodPut && contentType == "application/octet-stream" && req.Body != nil {
 		req.Body = io.NopCloser(referenceUploadReader(ctx, req.Body))
@@ -519,7 +540,7 @@ func ExecuteProtocolBinaryRequestWithConsumer(ctx context.Context, config Config
 		}
 		outbound.ApplyOutboundHeaders(req, config.Headers)
 		if err := ApplyProtocolAuth(req, config, spec.Auth); err != nil {
-			return nil, "", err
+			return nil, "", RequestPreparationError{Cause: err}
 		}
 	}
 	applyBeefAPIVideoDeliveryHeader(ctx, config, req)
@@ -909,6 +930,9 @@ func ProtocolCredentialField(config Config, field string) string {
 
 func ProtocolRequestURL(baseURL string, spec protocol.RequestSpec) (string, error) {
 	if !spec.OriginPath {
+		if spec.DefaultPathPrefix != "" {
+			return AppendProtocolQuery(apiURLWithDefaultPrefix(baseURL, spec.Path, spec.DefaultPathPrefix), spec.Query)
+		}
 		return AppendProtocolQuery(APIURL(baseURL, spec.Path), spec.Query)
 	}
 	base, err := url.Parse(strings.TrimSpace(baseURL))
@@ -978,7 +1002,7 @@ func finishProtocolResult(ctx context.Context, config Config, mode string, taskI
 	}
 	items := make([]interface{}, 0, len(references))
 	for index, reference := range references {
-		if mode == "image" && strings.TrimSpace(reference.DataURL) == "" && strings.TrimSpace(reference.URL) != "" {
+		if mode == "image" && !reference.Ephemeral && strings.TrimSpace(reference.DataURL) == "" && strings.TrimSpace(reference.URL) != "" {
 			value := strings.TrimSpace(reference.URL)
 			if _, err := outbound.ValidateOutboundURL(value); err != nil {
 				return nil, err
@@ -1006,12 +1030,37 @@ func finishProtocolResult(ctx context.Context, config Config, mode string, taskI
 			return nil, err
 		}
 		mimeType = NormalizedMediaMIMEType(mimeType, data)
+		if mode == "image" {
+			if err := ValidateImageArtifact(data, mimeType); err != nil {
+				return nil, err
+			}
+		}
+		if mode == "audio" {
+			mimeType, err = ValidateGeneratedAudio(mimeType, data, config.AudioFormat)
+			if err != nil {
+				return nil, err
+			}
+		}
 		item := map[string]interface{}{"dataUrl": DataURL(mimeType, data), "mimeType": mimeType}
 		items = append(items, item)
 	}
 	switch mode {
 	case "image":
 		output := map[string]interface{}{"mode": "image", "images": items}
+		layers := make([]map[string]any, 0)
+		for index, reference := range references {
+			if metadata, ok := reference.Metadata["layer"].(map[string]any); ok && len(metadata) > 0 {
+				layer := make(map[string]any, len(metadata)+1)
+				for key, value := range metadata {
+					layer[key] = value
+				}
+				layer["imageIndex"] = index
+				layers = append(layers, layer)
+			}
+		}
+		if len(layers) > 0 {
+			output["imageLayers"] = layers
+		}
 		if result.Usage != nil {
 			output["usage"] = result.Usage
 		}

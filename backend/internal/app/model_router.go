@@ -41,6 +41,13 @@ func (s *Service) beginTaskRouteAttempt(task *model.Task) (*model.RouteAttempt, 
 	if len(attempts) > 0 {
 		existing := &attempts[len(attempts)-1]
 		if managedTaskConnection(*task) || existing.ChannelID == beefapi.ChannelID {
+			managedReceipt := false
+			if task.Type != "canvas_image" && existing.DispatchState != "not_sent" {
+				if row, err := s.repo.ImageSubmission(existing.ID, task.ID, task.UserID); err == nil {
+					query, managed, queryErr := s.managedTaskQuery(context.Background(), *task, row)
+					managedReceipt = queryErr == nil && managed && !query.Legacy
+				}
+			}
 			if task.Type == "canvas_image" && existing.DispatchState != "not_sent" {
 				if _, err := s.repo.ImageSubmission(existing.ID, task.ID, task.UserID); err != nil {
 					return nil, imageRecoveryError{errors.New("原任务发送信息暂不可用，尚未确认结果")}
@@ -48,7 +55,7 @@ func (s *Service) beginTaskRouteAttempt(task *model.Task) (*model.RouteAttempt, 
 			}
 			// Restarting an authorized attempt never authorizes a new paid one.
 			// The existing executor/query path owns this original identity.
-			if existing.DispatchState == "not_sent" || existing.ProviderRequestID != "" || (task.Type == "canvas_image" && (existing.DispatchState == "accepted" || existing.DispatchState == "submission_unknown")) {
+			if existing.DispatchState == "not_sent" || existing.ProviderRequestID != "" || managedReceipt || (task.Type == "canvas_image" && (existing.DispatchState == "accepted" || existing.DispatchState == "submission_unknown")) {
 				if task.ProviderRequestID == "" && existing.ProviderRequestID != "" {
 					task.ProviderRequestID = existing.ProviderRequestID
 					if err := s.repo.UpdateTaskProviderState(task.ID, task.ProviderRequestID, task.PollStage, task.NextPollAt); err != nil {

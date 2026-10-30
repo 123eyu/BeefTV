@@ -289,7 +289,19 @@ type ExtractedFields = {
     taskId: string;
 };
 
+const normalizedFailures = new WeakMap<Error, GenerationFailureExplanation>();
+
+export function preserveGenerationFailure(error: Error, explanation: GenerationFailureExplanation) {
+    normalizedFailures.set(error, explanation);
+}
+
 export function explainGenerationError(error: unknown, context: GenerationFailureContext = {}): GenerationFailureExplanation {
+    const saved = error instanceof Error ? normalizedFailures.get(error) : undefined;
+    if (saved) {
+        const taskId = saved.taskId || context.taskId;
+        const requestId = saved.requestId || context.providerRequestId;
+        return { ...saved, taskId, requestId, message: joinSentences(saved.reason, saved.action, debugIdLine(taskId, requestId)) || DEFAULT_GENERATION_ERROR_MESSAGE };
+    }
     const classified = classifyUnknown(error, context);
     const copy = explanationCopy(classified);
     const message = joinSentences(copy.reason, copy.action, debugIdLine(classified.taskId || context.taskId, classified.requestId || context.providerRequestId));

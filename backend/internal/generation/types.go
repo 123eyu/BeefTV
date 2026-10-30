@@ -77,6 +77,7 @@ type TextMessage struct {
 type Config struct {
 	ChannelID                string                    `json:"channelId"`
 	CredentialRef            string                    `json:"credentialRef,omitempty"`
+	MediaProtocolVersion     string                    `json:"mediaProtocolVersion,omitempty"`
 	ChannelModelKey          string                    `json:"channelModelKey,omitempty"`
 	VariantID                string                    `json:"variantId,omitempty"`
 	ProviderModelKey         string                    `json:"providerModelKey,omitempty"`
