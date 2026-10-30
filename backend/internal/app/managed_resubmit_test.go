@@ -108,8 +108,17 @@ func TestManagedImageMissingSubmissionResubmitsOnlyOnManualRecovery(t *testing.T
 		t.Fatalf("background recovery resubmitted or concluded: submits=%d task=%+v", submits.count(), latest)
 	}
 
-	// 用户点「继续取回」：用原 Key、原编号、原内容补交一次，并很快再查。
+	// 不经过「继续取回」入口（没有手动标记）的恢复调用也只查询。
 	if _, err := svc.RecoverTask(base, task.UserID, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if submits.count() != 0 {
+		t.Fatalf("recovery without the manual mark resubmitted: %d", submits.count())
+	}
+
+	// 用户点「继续取回」：用原 Key、原编号、原内容补交一次，并很快再查。
+	manual := localtask.WithManualRecovery(base)
+	if _, err := svc.RecoverTask(manual, task.UserID, task.ID); err != nil {
 		t.Fatal(err)
 	}
 	latest, _ = svc.repo.Task(task.ID)
@@ -125,7 +134,7 @@ func TestManagedImageMissingSubmissionResubmitsOnlyOnManualRecovery(t *testing.T
 	}
 
 	// BeefAPI 已有这个编号：再点也只查询，不会再补交。
-	if _, err := svc.RecoverTask(base, task.UserID, task.ID); err != nil {
+	if _, err := svc.RecoverTask(manual, task.UserID, task.ID); err != nil {
 		t.Fatal(err)
 	}
 	if submits.count() != 1 {
@@ -143,6 +152,12 @@ func TestManagedImageResubmissionResponseDecidesOutcome(t *testing.T) {
 	}{
 		{"key-taken-by-other-request", http.StatusConflict, `{"error":{"code":"idempotency_conflict","message":"different request"}}`, localtask.RecoveryUnrecoverable},
 		{"rejected", http.StatusBadRequest, `{"error":{"code":"invalid_request","category":"input","message":"bad"}}`, localtask.RecoveryNoResult},
+		{"invalid-params", http.StatusUnprocessableEntity, `{"error":{"code":"invalid_request","category":"input","message":"bad"}}`, localtask.RecoveryNoResult},
+		{"insufficient-balance", http.StatusPaymentRequired, `{"error":{"code":"insufficient_quota","message":"no money"}}`, localtask.RecoveryNoResult},
+		// 补交本身失败（Key 失效、无权限、地址不存在）不能证明原请求没执行。
+		{"key-revoked", http.StatusUnauthorized, `{"error":{"code":"invalid_api_key","message":"revoked"}}`, localtask.RecoveryUnrecoverable},
+		{"forbidden", http.StatusForbidden, `{"error":{"code":"forbidden","message":"no"}}`, localtask.RecoveryUnrecoverable},
+		{"submit-route-missing", http.StatusNotFound, `{"error":{"code":"not_found","message":"no route"}}`, localtask.RecoveryUnrecoverable},
 		{"failed-projection", http.StatusOK, `{"task_ref":"original-ref-0001","media_type":"image","status":"failed","outputs":[],"error":{"code":"media_generation_failed","category":"upstream","message":"failed"}}`, localtask.RecoveryNoResult},
 		{"unavailable", http.StatusServiceUnavailable, `{"error":{"code":"media_task_unavailable","message":"retry"}}`, ""},
 	}
@@ -162,7 +177,7 @@ func TestManagedImageResubmissionResponseDecidesOutcome(t *testing.T) {
 			defer server.Close()
 			svc, _, task, _ := managedMissingImageFixture(t, server.URL)
 			ctx := generation.WithEndpoints(context.Background(), generation.Endpoints{BeefAPIVideoBaseURL: server.URL})
-			if _, err := svc.RecoverTask(ctx, task.UserID, task.ID); err != nil {
+			if _, err := svc.RecoverTask(localtask.WithManualRecovery(ctx), task.UserID, task.ID); err != nil {
 				t.Fatal(err)
 			}
 			latest, _ := svc.repo.Task(task.ID)
@@ -172,6 +187,17 @@ func TestManagedImageResubmissionResponseDecidesOutcome(t *testing.T) {
 			}
 			if submits.count() != 1 || got != tc.want {
 				t.Fatalf("submits=%d outcome=%q, want 1 and %q", submits.count(), got, tc.want)
+			}
+			// 下了结论之后，后台复查仍查不到原编号时结论保持，节点不会来回跳。
+			background, cancel := context.WithTimeout(ctx, time.Second)
+			_ = svc.recoverFailedImage(background, *latest)
+			cancel()
+			again, _ := svc.repo.Task(task.ID)
+			if tc.want != "" && (again.RecoveryOutcome == nil || *again.RecoveryOutcome != tc.want) {
+				t.Fatalf("conclusion %q not kept after background recheck: %+v", tc.want, again.RecoveryOutcome)
+			}
+			if submits.count() != 1 {
+				t.Fatalf("background recheck resubmitted: %d", submits.count())
 			}
 		})
 	}
@@ -196,16 +222,27 @@ func TestManagedImageMissingSubmissionWaitsWhenBeefAPIRecordedSettlement(t *test
 		t.Fatal(err)
 	}
 	ctx := generation.WithEndpoints(context.Background(), generation.Endpoints{BeefAPIVideoBaseURL: server.URL})
-	_, _ = svc.RecoverTask(ctx, task.UserID, task.ID)
+	_, _ = svc.RecoverTask(localtask.WithManualRecovery(ctx), task.UserID, task.ID)
 	latest, _ := svc.repo.Task(task.ID)
 	if submits.count() != 0 || latest.RecoveryOutcome != nil {
 		t.Fatalf("submission known to BeefAPI was resubmitted or concluded: submits=%d task=%+v", submits.count(), latest)
 	}
 }
 
-func TestManagedVideoLostSubmissionResubmitsOnlyOnManualRecovery(t *testing.T) {
+// managedLostVideo 模拟托管视频「原请求发出后回复丢失，BeefAPI 也没留下记录」。
+// resubmit 决定之后的补交怎么回应：nil 表示正常受理。
+type managedLostVideo struct {
+	svc     *Service
+	db      *gorm.DB
+	task    model.Task
+	base    context.Context
+	submits *managedSubmitLog
+}
+
+func newManagedLostVideo(t *testing.T, resubmit func(http.ResponseWriter) bool) managedLostVideo {
+	t.Helper()
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
-	var submits managedSubmitLog
+	submits := &managedSubmitLog{}
 	var known sync.Map
 	var lost sync.Once
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -224,6 +261,9 @@ func TestManagedVideoLostSubmissionResubmitsOnlyOnManualRecovery(t *testing.T) {
 				_ = conn.Close()
 				return
 			}
+			if resubmit != nil && resubmit(w) {
+				return
+			}
 			known.Store(r.Header.Get("Idempotency-Key"), true)
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(map[string]any{"task_ref": r.Header.Get("Idempotency-Key"), "media_type": "video", "status": "queued", "outputs": []any{}})
@@ -239,10 +279,10 @@ func TestManagedVideoLostSubmissionResubmitsOnlyOnManualRecovery(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 	path, dir := filepath.Join(t.TempDir(), "workspace.db"), t.TempDir()
 	svc, db := newManagedImageDirectService(t, path, dir)
-	defer closeDB(t, db)
+	t.Cleanup(func() { closeDB(t, db) })
 	input := generation.Input{Mode: "video", Prompt: "fixture", Config: generation.Config{CredentialRef: beefapi.CredentialRef, MediaProtocolVersion: beefapi.MediaProtocolVersion, APIKey: "fixture", BaseURL: server.URL, Model: "opaque-video-2030", VideoSeconds: "4", VideoGenerateAudio: "false"}}
 	raw, _ := json.Marshal(input)
 	expires := time.Now().Add(time.Hour)
@@ -265,27 +305,91 @@ func TestManagedVideoLostSubmissionResubmitsOnlyOnManualRecovery(t *testing.T) {
 	if err := db.Save(&task).Error; err != nil {
 		t.Fatal(err)
 	}
-	base := generation.WithEndpoints(context.Background(), generation.Endpoints{BeefAPIVideoBaseURL: server.URL})
+	return managedLostVideo{svc: svc, db: db, task: task, base: generation.WithEndpoints(context.Background(), generation.Endpoints{BeefAPIVideoBaseURL: server.URL}), submits: submits}
+}
 
-	if err := svc.recoverFailedVideos(base, 8); err != nil {
-		t.Logf("background pass: %v", err)
-	}
-	if submits.count() != 1 {
-		t.Fatalf("background recovery resubmitted: %d", submits.count())
-	}
-
-	if _, err := svc.RecoverTask(base, task.UserID, task.ID); err != nil {
+func (v managedLostVideo) outcome(t *testing.T) string {
+	t.Helper()
+	latest, err := v.svc.repo.Task(v.task.ID)
+	if err != nil {
 		t.Fatal(err)
 	}
-	latest, _ := svc.repo.Task(task.ID)
-	if submits.count() != 2 {
-		t.Fatalf("manual recovery submits=%d, want original + one resubmission", submits.count())
+	if latest.RecoveryOutcome == nil {
+		return ""
 	}
-	if submits.headers[1].Get("Idempotency-Key") != submits.headers[0].Get("Idempotency-Key") || submits.headers[1].Get("Authorization") != submits.headers[0].Get("Authorization") || !bytes.Equal(submits.bodies[1], submits.bodies[0]) {
+	return *latest.RecoveryOutcome
+}
+
+func TestManagedVideoLostSubmissionResubmitsOnlyOnManualRecovery(t *testing.T) {
+	v := newManagedLostVideo(t, nil)
+	if err := v.svc.recoverFailedVideos(v.base, 8); err != nil {
+		t.Logf("background pass: %v", err)
+	}
+	if v.submits.count() != 1 {
+		t.Fatalf("background recovery resubmitted: %d", v.submits.count())
+	}
+	if _, err := v.svc.RecoverTask(localtask.WithManualRecovery(v.base), v.task.UserID, v.task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if v.submits.count() != 2 {
+		t.Fatalf("manual recovery submits=%d, want original + one resubmission", v.submits.count())
+	}
+	if v.submits.headers[1].Get("Idempotency-Key") != v.submits.headers[0].Get("Idempotency-Key") || v.submits.headers[1].Get("Authorization") != v.submits.headers[0].Get("Authorization") || !bytes.Equal(v.submits.bodies[1], v.submits.bodies[0]) {
 		t.Fatal("resubmission differs from the original request")
 	}
-	if latest.RecoveryOutcome != nil {
-		t.Fatalf("resubmitted video was concluded: %+v", latest)
+	if got := v.outcome(t); got != "" {
+		t.Fatalf("resubmitted video was concluded: %q", got)
+	}
+}
+
+func TestManagedVideoResubmissionRejectedConcludesNoResult(t *testing.T) {
+	v := newManagedLostVideo(t, func(w http.ResponseWriter) bool {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"code":"invalid_request","category":"input","message":"bad"}}`))
+		return true
+	})
+	if _, err := v.svc.RecoverTask(localtask.WithManualRecovery(v.base), v.task.UserID, v.task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if v.submits.count() != 2 || v.outcome(t) != localtask.RecoveryNoResult {
+		t.Fatalf("submits=%d outcome=%q, want 2 and no_result", v.submits.count(), v.outcome(t))
+	}
+}
+
+// 视频原请求超过 23 小时保存期、原 Key 仍查不到原编号：不补交，结论为「无法取回」。
+// 它先于「无结算记录的托管视频等 7 天」生效，见 docs/architecture/unconfirmed-submission.md 第 5.1 节。
+func TestManagedVideoExpiredMissingSubmissionConcludesWithoutResubmit(t *testing.T) {
+	v := newManagedLostVideo(t, nil)
+	if err := v.db.Model(&model.ImageSubmission{}).Where("task_id = ?", v.task.ID).Update("created_at", time.Now().Add(-25*time.Hour)).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.svc.RecoverTask(localtask.WithManualRecovery(v.base), v.task.UserID, v.task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if v.submits.count() != 1 || v.outcome(t) != localtask.RecoveryUnrecoverable {
+		t.Fatalf("submits=%d outcome=%q, want no resubmission and unrecoverable", v.submits.count(), v.outcome(t))
+	}
+	if err := v.svc.recoverFailedVideos(v.base, 8); err != nil {
+		t.Logf("background pass: %v", err)
+	}
+	if v.submits.count() != 1 || v.outcome(t) != localtask.RecoveryUnrecoverable {
+		t.Fatalf("background pass changed the conclusion: submits=%d outcome=%q", v.submits.count(), v.outcome(t))
+	}
+}
+
+// 配音节点在提交结果不明时会显示「继续取回」，点了要进入媒体恢复，不能报「不支持」。
+func TestRecoverTaskRoutesFailedAudio(t *testing.T) {
+	svc, db, _, _ := creationTestService(t)
+	task := model.Task{ID: "audio-unknown", UserID: "user", Type: "canvas_audio", Status: model.TaskStatusFailed, Stage: "submission_unknown", InputJSON: `{"mode":"audio","config":{"baseUrl":"https://audio.example.invalid","apiKey":"enc:unread"}}`}
+	if err := db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RecoverTask(localtask.WithManualRecovery(context.Background()), task.UserID, task.ID); err != nil {
+		t.Fatalf("audio recovery refused: %v", err)
+	}
+	latest, _ := svc.repo.Task(task.ID)
+	if latest.RecoveryOutcome == nil || *latest.RecoveryOutcome != localtask.RecoveryUnrecoverable {
+		t.Fatalf("audio without a receipt was not concluded: %+v", latest.RecoveryOutcome)
 	}
 }
 

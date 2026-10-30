@@ -82,8 +82,9 @@ func ImageRecoveryNeedsPolling(task model.Task) bool {
 	return task.RecoveryOutcome == nil || *task.RecoveryOutcome == "" || imageSettlementNeedsPolling(task)
 }
 
-// Earlier clients could conclude that an API task was unrecoverable from its
-// local request age. Only the API can now confirm that conclusion.
+// 托管任务的「无法取回」会定期向 BeefAPI 复查：早期客户端曾只凭本地请求时长下这个结论；
+// 现在本地只在「原 Key 查不到原编号、冻结原请求也已过期」时下（ResolveMissingManagedSubmission），
+// BeefAPI 之后能查到这次提交时，复查会按它的结论纠正。
 func (s *Service) ManagedImageNeedsRecheck(task model.Task) bool {
 	if task.RecoveryOutcome == nil || *task.RecoveryOutcome != localtask.RecoveryUnrecoverable {
 		return false
@@ -373,7 +374,7 @@ func (s *Service) FailedImageResultWith(ctx context.Context, task model.Task, se
 	if err != nil {
 		return nil, "", err
 	}
-	if row.RequestCipher == "" || time.Since(row.CreatedAt) >= RecoveryLifetime {
+	if FrozenRequestExpired(row) {
 		return nil, localtask.RecoveryUnrecoverable, nil
 	}
 	safe, err := s.SafeFrozenImageReplay(task, attempt, row)

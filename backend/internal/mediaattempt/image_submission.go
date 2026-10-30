@@ -22,6 +22,13 @@ import (
 
 const MaxSends = 12
 const RecoveryLifetime = 23 * time.Hour
+
+// FrozenRequestExpired 表示发出前冻结的完整原请求已不可用：已被清理，或超过 23 小时
+// 保存期（比 BeefAPI 24 小时回执保留期早一小时，留出余量）。之后既不能按原字节重发，也不能补交。
+func FrozenRequestExpired(row *model.ImageSubmission) bool {
+	return row == nil || row.RequestCipher == "" || time.Since(row.CreatedAt) >= RecoveryLifetime
+}
+
 const RecoveryWait = 10 * time.Minute
 const MaxRequestBytes = 64 << 20
 
@@ -184,7 +191,7 @@ func (s *Service) ShouldDeferImageRecovery(task model.Task, taskErr error, provi
 	if err == nil && (ManagedTaskConnection(task) || attempt.ChannelID == beefapi.ChannelID || row.QueryCipher != "") {
 		return true
 	}
-	if err != nil || row.RequestCipher == "" || time.Since(row.CreatedAt) >= RecoveryLifetime {
+	if err != nil || FrozenRequestExpired(row) {
 		return false
 	}
 	if row.ResponseAccepted {
@@ -373,7 +380,7 @@ func (s *Service) SendImageSubmissionWithMode(ctx context.Context, task model.Ta
 	if row.TaskID != task.ID || row.UserID != task.UserID {
 		return nil, "", imageRecoveryError{errors.New("图片任务归属不一致")}
 	}
-	if row.RequestCipher == "" || time.Since(row.CreatedAt) >= RecoveryLifetime || (!singleReplay && !row.ResponseAccepted && row.SendCount >= MaxSends) {
+	if FrozenRequestExpired(row) || (!singleReplay && !row.ResponseAccepted && row.SendCount >= MaxSends) {
 		return nil, "", imageRecoveryError{errors.New("图片结果恢复等待已结束")}
 	}
 	wire, err := s.ImageSubmissionWire(row)

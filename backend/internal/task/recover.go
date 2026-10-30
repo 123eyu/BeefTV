@@ -28,9 +28,13 @@ func ManualRecovery(ctx context.Context) bool {
 	return manual
 }
 
-// RecoverTask performs a free recovery pass (delivery resume, accepted image
-// replay, or upstream video/upscale status query) after resetting any poll
-// backoff. Structurally, it never references Store.Retry, Store.CreateWithLimit,
+// RecoverTask performs a recovery pass (delivery resume, accepted image
+// replay, or upstream video/upscale/audio status query) after resetting any poll
+// backoff. It never creates a new task. When the caller marks the context with
+// WithManualRecovery (only the user's 继续取回, POST /api/tasks/:id/recover),
+// a managed submission BeefAPI never received may be resubmitted once with its
+// original key, reference and body; BeefAPI deduplicates it, so the original
+// generation is charged at most once. Structurally, it never references Store.Retry, Store.CreateWithLimit,
 // Persistence.CreateAdmitted, or Service.Retry.
 func (s *Service) RecoverTask(ctx context.Context, userID, id string) (*model.Task, error) {
 	if s.store == nil {
@@ -56,7 +60,6 @@ func (s *Service) RecoverTask(ctx context.Context, userID, id string) (*model.Ta
 		return nil, kernel.BadAuthRequest(RetiredAgentBoundaryMessage)
 	}
 	s.hydrateProviderRequestID(task)
-	ctx = WithManualRecovery(ctx)
 
 	switch task.Status {
 	case model.TaskStatusQueued, model.TaskStatusRunning:
@@ -78,7 +81,7 @@ func (s *Service) RecoverTask(ctx context.Context, userID, id string) (*model.Ta
 		switch {
 		case task.Type == "canvas_image" && !task.IsUpscale():
 			recovered, err = s.deps.Recovery.RecoverImage(ctx, userID, task.ID)
-		case task.Type == "canvas_video" || strings.HasPrefix(task.Type, "video_") || task.IsUpscale():
+		case task.Type == "canvas_video" || task.Type == "canvas_audio" || strings.HasPrefix(task.Type, "video_") || task.IsUpscale():
 			recovered, err = s.deps.Recovery.RecoverVideoOrUpscale(ctx, userID, task.ID)
 		default:
 			return nil, kernel.BadAuthRequest(RecoverUnsupportedTypeText)

@@ -109,11 +109,20 @@ func IsDefiniteMediaRejection(err error) bool {
 	return httpErr.StatusCode >= 400 && httpErr.StatusCode < 500
 }
 
-// IsMediaTaskNotFound 表示用这把 Key 查不到这个编号的提交记录（404）。
-// BeefAPI 说明它不能单独证明「没提交过」：记录存在但当前不可见时也会返回 404。
+// MediaTaskMissingError 是查询原编号得到的 404：用这把 Key 查不到这个编号的提交记录。
+// BeefAPI 说明它不能单独证明「没提交过」（记录存在但当前不可见时也会返回 404），
+// 所以它不是 MediaHTTPError，不会被当成「明确被拒」。提交时的 404 仍是 MediaHTTPError。
+type MediaTaskMissingError struct {
+	Code      string
+	RequestID string
+}
+
+func (e *MediaTaskMissingError) Error() string { return "BeefAPI 查不到这个编号的提交记录" }
+
+// IsMediaTaskNotFound 表示查询原编号时 BeefAPI 查不到这次提交。
 func IsMediaTaskNotFound(err error) bool {
-	var httpErr *MediaHTTPError
-	return errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusNotFound
+	var missing *MediaTaskMissingError
+	return errors.As(err, &missing)
 }
 
 // IsIdempotencyConflict 表示这个编号已被内容不同的另一次提交占用。
@@ -480,6 +489,9 @@ func (c *MediaClient) Query(ctx context.Context, ref, kind string) (MediaTask, e
 	q.Set("media_type", kind)
 	req.URL.RawQuery = q.Encode()
 	data, _, err := c.send(req, 4<<20)
+	if httpErr := (*MediaHTTPError)(nil); errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusNotFound {
+		return MediaTask{}, &MediaTaskMissingError{Code: httpErr.TaskError.Code, RequestID: httpErr.RequestID}
+	}
 	if err != nil {
 		return MediaTask{}, err
 	}

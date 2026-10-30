@@ -379,7 +379,9 @@ func VideoTaskPastRetentionWindow(task model.Task, now time.Time) bool {
 }
 
 // 托管视频结论由 BeefAPI 给出；无结算记录的旧任务若回查已被 400/422 拒绝（isUnreportedManagedInvalidQuery）则立即按无结果终结，
-// 若仅遇 404/5xx 等暂态或未知响应则保留 7 天（覆盖跨周末异步对账窗口，参见 TestManagedVideoDoesNotInferSettlementOrExpiry），超期再本地终结。
+// 若仅遇 5xx 等暂态或未知响应则保留 7 天（覆盖跨周末异步对账窗口，参见 TestManagedVideoDoesNotInferSettlementOrExpiry），超期再本地终结。
+// 例外：原 Key 查不到原编号（404）且冻结原请求已过 23 小时保存期时，由 ResolveMissingManagedSubmission 先判「无法取回」，
+// 不再等满 7 天（BeefAPI 收到的提交 30 分钟内就会结案，查不到说明它没有这条记录）。
 func BeefAPIOwnsVideoConclusion(task model.Task, now time.Time) bool {
 	if !ManagedTaskConnection(task) {
 		return false

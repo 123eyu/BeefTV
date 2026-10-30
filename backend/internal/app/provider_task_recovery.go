@@ -158,6 +158,9 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 			case outcome != "":
 				_ = s.repo.FinishFailedVideoRecovery(*task, &outcome, nil)
 				task.RecoveryOutcome = &outcome
+				projected := taskForOutput(*task)
+				s.attachTaskDelivery(projected)
+				return &ProviderTaskQueryResult{Task: projected, Recovered: false}, nil
 			case resubmitted:
 				projection, queryErr = managedQuery.Client.Query(queryCtx, managedQuery.Key, managedQuery.Kind)
 			case resolveErr != nil:

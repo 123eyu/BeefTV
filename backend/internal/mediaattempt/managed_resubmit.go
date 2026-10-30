@@ -3,6 +3,7 @@ package mediaattempt
 import (
 	"context"
 	"errors"
+	"net/http"
 	"time"
 
 	"infinite-canvas/backend/internal/beefapi"
@@ -30,6 +31,10 @@ func (s *Service) ResolveMissingManagedSubmission(ctx context.Context, task mode
 	if task.BeefUsageState != nil || task.BeefBillingState != nil || task.BeefReconcileDeadline != nil {
 		return "", false, nil
 	}
+	// 已下过的「无法取回」保持不变：复查仍查不到时不能把它清掉，否则节点会在锁住和解锁之间来回跳。
+	if task.RecoveryOutcome != nil && *task.RecoveryOutcome == localtask.RecoveryUnrecoverable {
+		return localtask.RecoveryUnrecoverable, false, nil
+	}
 	attempt, err := s.repo.LatestRouteAttempt(task.ID)
 	if err != nil || attempt == nil || attempt.RouteRun != task.RouteRun {
 		return "", false, err
@@ -38,7 +43,7 @@ func (s *Service) ResolveMissingManagedSubmission(ctx context.Context, task mode
 	if err != nil {
 		return "", false, err
 	}
-	if row.RequestCipher == "" || time.Since(row.CreatedAt) >= RecoveryLifetime {
+	if FrozenRequestExpired(row) {
 		return localtask.RecoveryUnrecoverable, false, nil
 	}
 	if !localtask.ManualRecovery(ctx) {
@@ -63,9 +68,25 @@ func (s *Service) ResolveMissingManagedSubmission(ctx context.Context, task mode
 		return "", true, nil
 	case beefapi.IsIdempotencyConflict(err):
 		return localtask.RecoveryUnrecoverable, false, nil
-	case beefapi.IsDefiniteMediaRejection(err) || beefapi.IsTerminalMediaTaskError(err):
+	case beefapi.IsTerminalMediaTaskError(err):
 		return localtask.RecoveryNoResult, false, nil
+	case beefapi.IsDefiniteMediaRejection(err):
+		return resubmitRejectionOutcome(err), false, nil
 	default:
 		return "", false, err
 	}
+}
+
+// resubmitRejectionOutcome 区分补交被拒的原因。BeefAPI 拒绝了请求内容或余额不足：这次补交没有执行，
+// 原请求也从没被收到，结论是「没有结果」。Key 失效、无权限、地址不存在、编号被别的内容占用：
+// 只说明补交本身失败，不能证明原请求没执行，结论是「无法取回」，重新生成前要确认。
+func resubmitRejectionOutcome(err error) string {
+	var httpErr *beefapi.MediaHTTPError
+	if errors.As(err, &httpErr) {
+		switch httpErr.StatusCode {
+		case http.StatusBadRequest, http.StatusPaymentRequired, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity:
+			return localtask.RecoveryNoResult
+		}
+	}
+	return localtask.RecoveryUnrecoverable
 }
