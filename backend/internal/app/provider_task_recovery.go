@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/protocol"
@@ -151,6 +152,18 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	if unified {
 		queryCtx = context.WithValue(queryCtx, imageTaskContext{}, *task)
 		projection, queryErr := managedQuery.Client.Query(queryCtx, managedQuery.Key, managedQuery.Kind)
+		if beefapi.IsMediaTaskNotFound(queryErr) {
+			outcome, resubmitted, resolveErr := s.mediaAttempts().ResolveMissingManagedSubmission(queryCtx, *task)
+			switch {
+			case outcome != "":
+				_ = s.repo.FinishFailedVideoRecovery(*task, &outcome, nil)
+				task.RecoveryOutcome = &outcome
+			case resubmitted:
+				projection, queryErr = managedQuery.Client.Query(queryCtx, managedQuery.Key, managedQuery.Kind)
+			case resolveErr != nil:
+				queryErr = resolveErr
+			}
+		}
 		err, providerStatus = queryErr, projection.Status
 		if err == nil {
 			if projection.BillingState != nil {

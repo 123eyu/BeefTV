@@ -14,6 +14,20 @@ const (
 	RecoverUnsupportedTypeText   = "该任务类型不支持免费结果取回"
 )
 
+type manualRecoveryKey struct{}
+
+// WithManualRecovery 标记这次恢复由用户手动发起（继续取回）。只有手动恢复才允许
+// 把冻结的原请求按原编号补交；后台恢复只查询，避免几小时后突然开始生成、扣费。
+func WithManualRecovery(ctx context.Context) context.Context {
+	return context.WithValue(ctx, manualRecoveryKey{}, true)
+}
+
+// ManualRecovery 报告这次恢复是否由用户手动发起。
+func ManualRecovery(ctx context.Context) bool {
+	manual, _ := ctx.Value(manualRecoveryKey{}).(bool)
+	return manual
+}
+
 // RecoverTask performs a free recovery pass (delivery resume, accepted image
 // replay, or upstream video/upscale status query) after resetting any poll
 // backoff. Structurally, it never references Store.Retry, Store.CreateWithLimit,
@@ -42,6 +56,7 @@ func (s *Service) RecoverTask(ctx context.Context, userID, id string) (*model.Ta
 		return nil, kernel.BadAuthRequest(RetiredAgentBoundaryMessage)
 	}
 	s.hydrateProviderRequestID(task)
+	ctx = WithManualRecovery(ctx)
 
 	switch task.Status {
 	case model.TaskStatusQueued, model.TaskStatusRunning:

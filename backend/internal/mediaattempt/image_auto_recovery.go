@@ -153,13 +153,23 @@ func (s *Service) RecoverFailedImage(ctx context.Context, candidate model.Task) 
 	if outcome == "" || imageSettlementNeedsPolling(*task) || (task.ImageJobID != "" && task.BeefBillingState == nil && settlementErr != nil) {
 		// 暂时失败或对账未完成时继续轮询。发送次数只影响退避，不再把 12 次当成结果丢失。
 		delay := 30 * time.Second
-		if a, loadErr := s.repo.LatestRouteAttempt(task.ID); loadErr == nil {
+		if errors.Is(recoveryErr, ErrManagedResubmitted) {
+			delay = 15 * time.Second
+		} else if a, loadErr := s.repo.LatestRouteAttempt(task.ID); loadErr == nil {
 			if row, loadErr := s.repo.ImageSubmission(a.ID, task.ID, task.UserID); loadErr == nil {
 				delay = min(15*time.Minute, 30*time.Second*time.Duration(1<<min(row.SendCount, 5)))
 			}
 		}
 		at := time.Now().Add(delay)
 		next = &at
+	} else if concluded := *task; outcome == localtask.RecoveryUnrecoverable {
+		// 托管图片的「无法取回」仍会定期向 BeefAPI 复查（ManagedImageNeedsRecheck），
+		// 留出间隔，避免每轮扫描都查一次。
+		concluded.RecoveryOutcome = &outcome
+		if s.ManagedImageNeedsRecheck(concluded) {
+			at := time.Now().Add(time.Hour)
+			next = &at
+		}
 	}
 	if err := s.repo.FinishFailedImageRecovery(*task, conclusion, next); err != nil {
 		return err
@@ -294,8 +304,23 @@ func (s *Service) FailedImageResultWith(ctx context.Context, task model.Task, se
 			return nil, "", loadErr
 		}
 		queryCtx := context.WithValue(s.runtime.ForTask(ctx, task), TaskContext{}, task)
+		// 原任务仍在生成时 Collect 会一直等；手动取回的请求不能因此一直挂着，到时照常返回「还在确认中」，后台接着跟进。
+		queryCtx, cancelQuery := context.WithTimeout(queryCtx, managedRecoveryCollectWait)
+		defer cancelQuery()
 		if recovered, managed, collectErr := s.CollectManagedImage(queryCtx, task, row); managed {
 			if collectErr != nil {
+				if beefapi.IsMediaTaskNotFound(collectErr) {
+					outcome, resubmitted, resolveErr := s.ResolveMissingManagedSubmission(queryCtx, task)
+					switch {
+					case outcome != "":
+						return nil, outcome, nil
+					case resubmitted:
+						return nil, "", imageRecoveryError{ErrManagedResubmitted}
+					case resolveErr != nil:
+						return nil, "", resolveErr
+					}
+					return nil, "", imageRecoveryError{collectErr}
+				}
 				if beefapi.IsTerminalMediaTaskError(collectErr) {
 					return nil, localtask.RecoveryNoResult, nil
 				}

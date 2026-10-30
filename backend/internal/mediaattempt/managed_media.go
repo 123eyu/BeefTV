@@ -250,7 +250,10 @@ func (s *Service) CollectManagedImage(ctx context.Context, task model.Task, row 
 	if err != nil || !managed {
 		return nil, managed, err
 	}
-	result, err := query.Client.Wait(ctx, query.Key, query.Kind, query.Legacy)
+	result, err := query.Client.Collect(ctx, query.Key, query.Kind, query.Legacy)
+	if beefapi.IsMediaTaskNotFound(err) {
+		return nil, true, err
+	}
 	if err != nil {
 		return nil, true, imageRecoveryError{err}
 	}
