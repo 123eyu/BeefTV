@@ -540,7 +540,10 @@ describe("owned canvas persist and recover callbacks", () => {
     });
     test("canvas media tools persist and recover through the owned helpers", () => {
         const here = dirname(fileURLToPath(import.meta.url));
-        const tools = readFileSync(join(here, "../src/pages/canvas/use-canvas-media-tools.ts"), "utf8");
+        const tools = [
+            readFileSync(join(here, "../src/pages/canvas/use-canvas-media-tools.ts"), "utf8"),
+            readFileSync(join(here, "../src/pages/canvas/use-canvas-video-tools.ts"), "utf8"),
+        ].join("\n");
         expect(tools).toContain("persistOwnedCanvasMediaNodes(");
         expect(tools).toContain("recoverOwnedDepthCaptureNodes(");
         expect(tools).toContain("taskClientOperationInput");
