@@ -43,6 +43,8 @@
 
 ## Recent updates
 
+- **[v2.0.5](https://github.com/glanderness/BeefTV/releases/tag/v2.0.5)** — Add collapsible assistant reasoning, improve Mac canvas performance, fix video retrieval, and recover results from some failed image tasks.
+- **[v2.0.4](https://github.com/glanderness/BeefTV/releases/tag/v2.0.4)** — Optimize large-canvas zooming and dragging; improve reference validation, generation status synchronization, and save and authorization checks for assistant actions.
 - **[v2.0.3](https://github.com/glanderness/BeefTV/releases/tag/v2.0.3)** — Improve video prompt and reference validation, restore saved parameters on retry, and improve upscaling request reliability.
 - **[v2.0.2](https://github.com/glanderness/BeefTV/releases/tag/v2.0.2)** — Add Seedream layer splitting and related image sets; improve Agent multi-image checks, task recovery, and reference uploads.
 - **[v2.0.1](https://github.com/glanderness/BeefTV/releases/tag/v2.0.1)** — Add reusable workflows and Topaz upscaling, with fixed-version skill installation, rollback, and private adaptations.
