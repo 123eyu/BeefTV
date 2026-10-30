@@ -57,8 +57,6 @@
   <video src="https://github.com/user-attachments/assets/da4081e0-26bc-424e-b20c-124f92ce6538" controls preload="metadata" playsinline></video>
 </div>
 
-New product demo · About 45 seconds.
-
 ## Workflows
 
 **Save the steps that work for your next creation.**
@@ -107,10 +105,6 @@ In the local example **The Last Bottle of Water**, the user specified the produc
 - **Execute:** Create nodes and reference connections, then generate characters, scenes, shots, and narration after confirmation.
 - **Inspect and continue:** Read actual outputs, check designs and first frames, preserve successful assets and failure states, and continue refining.
 
-[Listen to the opening narration](assets/readme/beeftv-agent-drama-narration-opening.mp3) · [Production record](docs/content/docs/overview/examples.mdx#agent聊天驱动的短剧制作) (Chinese)
-
-This example has 3 character images, 2 scene images, 5 shot first frames, 3 video clips, and 2 narration clips. Final editing, subtitles, and audiovisual acceptance remain unfinished. Generation requires configured model providers; audiovisual review also requires a supported multimodal model. Human review is still needed.
-
 ## Skills
 
 **Keep your creative methods ready to use.**
@@ -124,8 +118,6 @@ Give the creative assistant methods, steps, and requirements for specific tasks.
 | Two-shot text storyboard | Coffee short: two 4-second shots, with visuals, sound, and items to confirm. |
 | Interview outline | Community bookstore: three open questions, follow-ups, supporting footage, and permissions. |
 | Media inventory | Coffee video + dawn photo: purposes, stated permissions, and duration and sound gaps. |
-
-Captured from the installed 2.0.1 app. These runs used private local copies of the official 1.0.0 skill files. The marketplace still labels their results as unverified. [See all three inputs and results](docs/content/docs/overview/examples.mdx#skills三个文字任务) (Chinese).
 
 - **Use what you need:** Enable or disable installed skills in your library.
 - **Manage versions:** Check for updates or return to a previously installed version.
