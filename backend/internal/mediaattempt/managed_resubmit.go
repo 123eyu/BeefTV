@@ -3,7 +3,6 @@ package mediaattempt
 import (
 	"context"
 	"errors"
-	"strings"
 	"time"
 
 	"infinite-canvas/backend/internal/beefapi"
@@ -49,7 +48,7 @@ func (s *Service) ResolveMissingManagedSubmission(ctx context.Context, task mode
 	if err != nil {
 		return "", false, err
 	}
-	if !strings.Contains(wire.URL, "/media/tasks") {
+	if wire.ReplayProtocol != beefapi.MediaProtocolVersion {
 		return "", false, errors.New("原请求不是托管媒体提交，不能补交")
 	}
 	query, managed, err := s.ManagedTaskQuery(ctx, task, row)

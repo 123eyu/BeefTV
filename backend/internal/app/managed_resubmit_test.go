@@ -288,3 +288,31 @@ func TestManagedVideoLostSubmissionResubmitsOnlyOnManualRecovery(t *testing.T) {
 		t.Fatalf("resubmitted video was concluded: %+v", latest)
 	}
 }
+
+// 生成过程中（含重启后接着跟进）查不到原编号时，原请求可能还在路上：
+// 只能继续等，不能判成「明确被拒、可直接重新生成」，否则原请求之后到达照样扣费。
+func TestManagedImageGenerationResumeKeepsWaitingWhenSubmissionMissing(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	var submits managedSubmitLog
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			submits.add(r)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		managedNotFound(w)
+	}))
+	defer server.Close()
+	svc, _, task, _ := managedMissingImageFixture(t, server.URL)
+	attempt, _ := svc.repo.LatestRouteAttempt(task.ID)
+	ctx, cancel := context.WithTimeout(generation.WithEndpoints(context.Background(), generation.Endpoints{BeefAPIVideoBaseURL: server.URL}), 300*time.Millisecond)
+	defer cancel()
+	ctx = context.WithValue(ctx, imageAttemptContext{}, attempt.ID)
+	_, handled, err := svc.recoverImageSubmission(ctx, task)
+	if !handled || err == nil || submits.count() != 0 {
+		t.Fatalf("handled=%v err=%v submits=%d", handled, err, submits.count())
+	}
+	if imageTaskEnded(err) {
+		t.Fatalf("missing submission during generation was treated as a definite rejection: %v", err)
+	}
+}

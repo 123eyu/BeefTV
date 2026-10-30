@@ -304,10 +304,10 @@ func (s *Service) FailedImageResultWith(ctx context.Context, task model.Task, se
 			return nil, "", loadErr
 		}
 		queryCtx := context.WithValue(s.runtime.ForTask(ctx, task), TaskContext{}, task)
-		// 原任务仍在生成时 Collect 会一直等；手动取回的请求不能因此一直挂着，到时照常返回「还在确认中」，后台接着跟进。
+		// 原任务仍在生成时会一直等；手动取回的请求不能因此一直挂着，到时照常返回「还在确认中」，后台接着跟进。
 		queryCtx, cancelQuery := context.WithTimeout(queryCtx, managedRecoveryCollectWait)
 		defer cancelQuery()
-		if recovered, managed, collectErr := s.CollectManagedImage(queryCtx, task, row); managed {
+		if recovered, managed, collectErr := s.RecoverManagedImage(queryCtx, task, row); managed {
 			if collectErr != nil {
 				if beefapi.IsMediaTaskNotFound(collectErr) {
 					outcome, resubmitted, resolveErr := s.ResolveMissingManagedSubmission(queryCtx, task)

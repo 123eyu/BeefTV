@@ -438,6 +438,7 @@ func decodeMediaTask(data []byte, ref, kind string) (MediaTask, error) {
 	}
 	return task, nil
 }
+
 // Resubmit 把发出前冻结的原始提交请求原样再发一次：同一地址、同一请求头
 // （原 Key 与 Idempotency-Key）、同一请求体。BeefAPI 按编号去重，收到过就返回
 // 原任务，没收到才第一次执行，所以不会产生第二次付费生成。

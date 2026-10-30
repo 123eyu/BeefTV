@@ -245,7 +245,23 @@ func (s *Service) ManagedTaskQuery(ctx context.Context, task model.Task, row *mo
 	return Query{Client: client, Key: key, Kind: kind, Legacy: wire.ReplayProtocol != beefapi.MediaProtocolVersion}, true, nil
 }
 
+// CollectManagedImage 在生成过程中（含重启后接着跟进）等待原任务结果。查不到编号也继续等：
+// 原请求可能还在路上，这时下「被拒」的结论会让用户重新生成而原请求之后照样扣费。
 func (s *Service) CollectManagedImage(ctx context.Context, task model.Task, row *model.ImageSubmission) (map[string]any, bool, error) {
+	query, managed, err := s.ManagedTaskQuery(ctx, task, row)
+	if err != nil || !managed {
+		return nil, managed, err
+	}
+	result, err := query.Client.Wait(ctx, query.Key, query.Kind, query.Legacy)
+	if err != nil {
+		return nil, true, imageRecoveryError{err}
+	}
+	return result, true, nil
+}
+
+// RecoverManagedImage 在失败任务的恢复里取原任务结果。查不到原编号时立即返回 404，
+// 交给 ResolveMissingManagedSubmission 决定补交还是下结论；其余错误按暂时失败处理。
+func (s *Service) RecoverManagedImage(ctx context.Context, task model.Task, row *model.ImageSubmission) (map[string]any, bool, error) {
 	query, managed, err := s.ManagedTaskQuery(ctx, task, row)
 	if err != nil || !managed {
 		return nil, managed, err
