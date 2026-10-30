@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import type { MediaCapabilities } from "@/lib/media-capabilities";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
@@ -382,6 +383,8 @@ export type ModelChannel = {
         capabilityConfig?: ModelCapabilityConfig;
         imageCapabilitiesVersion?: string;
         videoCapabilitiesVersion?: string;
+        mediaCapabilities?: MediaCapabilities;
+        mediaCapabilitiesVersion?: string;
         videoPricing?: VideoPriceQuote | null;
         logicalModelId?: string;
         logicalCapabilitySpec?: CapabilitySpec;

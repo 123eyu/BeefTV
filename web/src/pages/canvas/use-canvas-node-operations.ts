@@ -13,7 +13,9 @@ import { preferredMediaGeneratorMetadata } from "@/lib/canvas/canvas-generation-
 import { canOpenCanvasNodePromptPanel } from "@/lib/canvas/canvas-node-semantics";
 import { getCanvasNodeCreationDisabledReason } from "@/lib/canvas/canvas-feature-availability";
 import { CanvasNodeType, type CanvasConnection, type CanvasFolderStyle, type CanvasFolderTheme, type CanvasNodeData, type CanvasNodeMetadata, type CanvasNodeTypeId, type Position } from "@/types/canvas";
-import { cloneCanvasDrawing } from "@/lib/canvas/canvas-drawing-storage";
+import { cloneCanvasDrawing, removeCanvasDrawing } from "@/lib/canvas/canvas-drawing-storage";
+import { isLocalWorkspaceMode } from "@/services/workspace-mode";
+import { syncLocalCanvasSnapshot } from "@/services/local-workspace-sync";
 import type { CanvasDrawingEngine } from "@/lib/canvas/canvas-drawing-engine";
 import { useEffectiveConfig } from "@/stores/use-config-store";
 import { workflowProviderPluginEnabled } from "@/lib/plugins/builtin/workflows";
@@ -403,8 +405,22 @@ export function useCanvasNodeOperations({
         commitNodes(nextNodes);
         commitConnections(nextConnections);
         selectNodes(new Set());
+        pageUi.getState().clearRemovedNodes(result.removedIds);
         onNodesDeleted(result.removedIds, nextNodes, removedNodes);
-    }, [commitConnections, commitNodes, connectionsRef, nodesRef, onNodesDeleted, selectNodes]);
+        const scope = captureUserScope();
+        const context = deletionContext.current;
+        const drawingIds = removedNodes.flatMap(node => node.type === CanvasNodeType.Drawing && node.metadata?.drawingId ? [node.metadata.drawingId] : []);
+        if (drawingIds.length) {
+            void Promise.all(drawingIds.map(id => removeCanvasDrawing(projectId, id))).catch(() => {
+                if (mounted.current && deletionContext.current === context && userScopeMatches(scope)) message.warning("绘图节点已删除，但本地绘图缓存清理失败");
+            });
+        }
+        // Persist the exact deletion before an external refresh can restore an older graph.
+        if (isLocalWorkspaceMode()) {
+            void syncLocalCanvasSnapshot(projectId, { nodes: nextNodes, connections: nextConnections }, scope)
+                .catch(error => console.error("删除节点后的本地后端同步失败", error));
+        }
+    }, [pageUi, projectId, message, commitConnections, commitNodes, connectionsRef, nodesRef, onNodesDeleted, selectNodes]);
 
     const deleteNodes = useCallback((ids: Set<string>) => {
         if (!ids.size || deleteConfirmation.current || !mounted.current) return;

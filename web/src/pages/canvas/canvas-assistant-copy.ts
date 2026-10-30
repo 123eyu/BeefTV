@@ -4,6 +4,7 @@ import type { AgentLifecycleEvent, AgentToolCall, AssistantGenerationProposal, A
 import { estimateVideoTargetPrice, seedancePortraitLabel, type VideoTargetPriceEstimate } from "@/lib/seedance-portrait";
 import { modelOptionName, resolveModelChannel, type AiConfig } from "@/stores/use-config-store";
 import type { CanvasNodeData } from "@/types/canvas";
+import { authoritativeNodeOutcome } from "@/lib/canvas/canvas-node-failure-state";
 
 export type AssistantStatusAction = "model-settings" | "retry";
 
@@ -251,7 +252,7 @@ export function assistantProposalProgress(proposal: AssistantGenerationProposal,
     let complete = 0, failed = 0, pending = planned, retrieving = 0;
     for (const node of outputs.values()) {
         const meta = node.metadata || {};
-        const phase = (meta as typeof meta & { taskOutcome?: { phase?: string } }).taskOutcome?.phase;
+        const phase = authoritativeNodeOutcome(meta)?.phase;
         const bound = meta.status === "success" && Boolean(meta.content || meta.storageKey);
         if (phase === "running" || phase === "fetching" || phase === "retrievable") {
             pending++;

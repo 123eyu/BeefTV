@@ -4,6 +4,7 @@ import type { ModelChannel } from "@/stores/use-config-store";
 import { isBeefAPIEndpoint } from "@/lib/beefapi-video-contracts";
 import { beefAPIImageContract } from "@/lib/beefapi-image-contracts";
 import { sanitizeVideoPriceQuote, seedancePortraitModel, type VideoPriceQuote } from "@/lib/seedance-portrait";
+import { sanitizeMediaCapabilities, type MediaCapabilities } from "@/lib/media-capabilities";
 
 export type ChannelModelCatalogOption = { value: string; label?: string };
 
@@ -30,6 +31,8 @@ export type ChannelModelCatalogItem = {
     videoCapabilities?: VideoCapabilityConfig;
     videoCapabilitiesVersion?: string;
     videoPricing?: VideoPriceQuote | null;
+    mediaCapabilities?: MediaCapabilities;
+    mediaCapabilitiesVersion?: string;
 };
 
 type ChannelModelProfile = NonNullable<ModelChannel["modelProfiles"]>[number];
@@ -70,11 +73,12 @@ export function sanitizeChannelModelCatalogItem(value: unknown): ChannelModelCat
         minImages: nonNegativeInteger(record.minImages),
         maxImages: nonNegativeInteger(record.maxImages),
         ...catalogVideoFields(record),
+        ...catalogMediaFields(record),
     });
 }
 
 export function catalogModelMapping(
-    item: Pick<ChannelModelCatalogItem, "id" | "modelType" | "supportedEndpointTypes">,
+    item: Pick<ChannelModelCatalogItem, "id" | "modelType" | "supportedEndpointTypes" | "mediaCapabilities" | "mediaCapabilitiesVersion">,
     options: { providerNameFallback?: boolean } = {},
 ): {
     capability?: ChannelModelProfile["capability"];
@@ -86,6 +90,7 @@ export function catalogModelMapping(
         .trim()
         .toLowerCase();
     const endpoints = (item.supportedEndpointTypes || []).map((value) => value.trim().toLowerCase()).filter(Boolean);
+    if (item.mediaCapabilitiesVersion && item.mediaCapabilities?.audio) return { capability: "audio", protocol: "openai-audio" };
     const imageContract = options.providerNameFallback ? beefAPIImageContract(id) : undefined;
     if (imageContract) return { capability: "image", protocol: imageContract.protocol };
     if (endpoints.some((endpoint) => endpoint === "audio.transcriptions" || endpoint === "audio-transcriptions" || endpoint === "transcriptions")) {
@@ -221,7 +226,13 @@ export function mergeFetchedChannelModelProfiles(channel: ModelChannel, catalog:
             ...(sourcedVideo ? { videoCapabilitiesVersion: item.videoCapabilitiesVersion ?? "" } : {}),
         });
     }
-    return next;
+    if (channel.id !== "beefapi" && channel.credentialRef !== "beefapi-enterprise") return next;
+    const byModel = new Map(catalog.map(item => [item.id, item]));
+    return next.map(profile => {
+        const fields = catalogMediaFields(byModel.get(profile.model) as Record<string, unknown> | undefined);
+        const { mediaCapabilities: _oldCapabilities, mediaCapabilitiesVersion: _oldVersion, ...rest } = profile;
+        return { ...rest, ...fields };
+    });
 }
 
 function protocolTemplateForNewCatalogModel(capability: ChannelModelProfile["capability"] | undefined, channelProtocol: ModelProtocol | undefined): ModelProtocol | undefined {
@@ -311,6 +322,7 @@ function compactCatalogItem(item: ChannelModelCatalogItem): ChannelModelCatalogI
         ...(item.maxImages !== undefined ? { maxImages: item.maxImages } : {}),
         ...(item.imageCapabilities ? { imageCapabilities: item.imageCapabilities, imageCapabilitiesVersion: item.imageCapabilitiesVersion } : {}),
         ...(item.videoCapabilities ? { videoCapabilities: item.videoCapabilities, videoCapabilitiesVersion: item.videoCapabilitiesVersion ?? "" } : {}),
+        ...catalogMediaFields(item as Record<string, unknown>),
     };
 }
 
@@ -322,6 +334,13 @@ function catalogVideoFields(record: Record<string, unknown>): Pick<ChannelModelC
         videoCapabilities: video,
         videoCapabilitiesVersion: version,
     };
+}
+
+function catalogMediaFields(record?: Record<string, unknown>): Pick<ChannelModelCatalogItem, "mediaCapabilities" | "mediaCapabilitiesVersion"> {
+    if (!record) return {};
+    const version = stringValue(record.mediaCapabilitiesVersion);
+    const capabilities = sanitizeMediaCapabilities(record.mediaCapabilities);
+    return version && capabilities ? { mediaCapabilities: capabilities, mediaCapabilitiesVersion: version } : {};
 }
 
 function objectValue(value: unknown) {

@@ -24,6 +24,7 @@ const definitions = readFileSync(resolve(import.meta.dir, "../src/lib/canvas/too
 const project = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/project.tsx"), "utf8");
 const orchestration = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/canvas-generation-orchestration.ts"), "utf8");
 const orchestrationHook = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/use-canvas-generation-orchestration.ts"), "utf8");
+const editorDialogs = readFileSync(resolve(import.meta.dir, "../src/pages/canvas/canvas-project-editor-dialogs.tsx"), "utf8");
 const localHistory = readFileSync(resolve(import.meta.dir, "../src/lib/local-task-history.ts"), "utf8");
 const taskSync = readFileSync(resolve(import.meta.dir, "../src/lib/canvas/canvas-generation-task-sync.ts"), "utf8");
 
@@ -314,7 +315,7 @@ describe("LibTV generation history picker", () => {
         expect(definitions).toContain('id: "generation-history"');
         expect(definitions).toContain("onOpenGenerationHistory");
         expect(orchestration).toContain("applyGenerationTaskResultToNodes");
-        expect(project).toContain("insertGenerationHistoryTask");
+        expect(editorDialogs).toContain("generation.insertGenerationHistoryTask");
         expect(localHistory).toContain("localResultJson");
         expect(localHistory).toContain("resultJson");
         expect(localHistory).toContain("storageKey");
@@ -351,7 +352,7 @@ describe("LibTV generation history picker", () => {
         expect(insert.indexOf("runOwnedCanvasHistoryInsert")).toBeLessThan(insert.indexOf('message.success("已从生成历史插入到画布")'));
         expect(insert.indexOf("flushCanvasStorePersistence")).toBe(-1);
         expect(insert.indexOf("saveCanvasProject")).toBe(-1);
-        expect(project).toContain("insertGenerationHistoryTask");
+        expect(editorDialogs).toContain("generation.insertGenerationHistoryTask");
     });
 
     test("does not use audio or video file URLs as card image sources", () => {

@@ -14,7 +14,7 @@ import { imageMetadata } from "@/lib/canvas/canvas-generation-task-sync";
 import { ensureMediaNodeMinimumSize } from "@/lib/canvas/canvas-node-size";
 import { repairOverlappingImageBatches } from "@/lib/canvas/canvas-generation-layout";
 import { interruptFileUpload } from "@/lib/canvas/canvas-file-upload";
-import { isDepthCaptureResultNode } from "@/lib/canvas/canvas-depth-capture";
+import { canvasNodeFailureView } from "@/lib/canvas/canvas-node-failure-view";
 import { isCanvasWorkflowProvider } from "@/lib/canvas/canvas-workflow";
 import type { CanvasNodeGenerationMode } from "@/components/canvas/canvas-node-prompt-panel";
 import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, type CanvasImageGenerationType, type CanvasNodeData, type CanvasNodeMetadata, type CanvasVideoEditOperation } from "@/types/canvas";
@@ -235,6 +235,7 @@ export function generationTaskMetadata(task: GenerationTask): CanvasNodeMetadata
         taskId: task.id,
         taskType: task.type,
         taskOutcome: task.outcome,
+        taskOutcomeSource: undefined,
         taskClientOperationId: task.clientOperationId,
         generationSubmissionState: "accepted",
         retryOf: task.retryOf,
@@ -553,17 +554,11 @@ export function supportsVideoReferenceAudio(config: AiConfig) {
     return interfaceType === "newapi-channel-1" || interfaceType === "newapi-channel-2" || isSeedanceVideoConfig(config);
 }
 
-const LEGACY_INTERRUPTED_GENERATION_DETAILS = "页面刷新后生成已中断，请重新生成。";
 export const MISSING_GENERATION_TASK_IDENTITY_DETAILS = "上次提交缺少任务标识，暂时无法确认是否已生成。请先在生成历史中核对结果，避免重复扣费。";
 
 /** 节点是否还要和任务中心对账。首次打开画布和之后才载入的快照共用这一条判定。 */
 export function canvasNodeNeedsGenerationRecovery(node: CanvasNodeData) {
-    const metadata = node.metadata;
-    if (!metadata || metadata.generationErrorCode === "result_target_unavailable" || metadata.fileUpload === "uploading" || isDepthCaptureResultNode(node)) return false;
-    const pendingAgentContinuation = metadata.agentGenerationContinuation?.status === "pending";
-    const aggregateBatchRoot = metadata.isBatchRoot && metadata.batchChildIds?.length && !metadata.taskId;
-    if (aggregateBatchRoot && !pendingAgentContinuation) return false;
-    return pendingAgentContinuation || ["submitting", "unknown"].includes(metadata.generationSubmissionState || "") || metadata.status === "loading" || metadata.errorDetails === LEGACY_INTERRUPTED_GENERATION_DETAILS || Boolean(metadata.taskId && (metadata.status !== "success" || (metadata.taskStatus === "succeeded" && !metadata.content && !metadata.storageKey)));
+    return canvasNodeFailureView(node).needsRecovery;
 }
 
 // 快照恢复交给任务对账的节点，在 metadata 上挂一个只存在于本页面内存里的记号（symbol 键）。
