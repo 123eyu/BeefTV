@@ -274,7 +274,7 @@ func ClassifyError(err error) Failure {
 		if _, supported := categoryCopies[category]; !supported {
 			category = CategoryUnknown
 		}
-		uncertain := category == CategorySubmissionUncertain || managed.Code == "media_result_unknown" || managed.Code == "media_delivery_pending"
+		uncertain := category == CategorySubmissionUncertain || managed.Pending()
 		return normalizeFailure(Failure{Category: category, Uncertain: uncertain, TaskID: sanitizeDebugID(managed.TaskID), ProviderCode: sanitizeProviderCode(managed.Code), ProviderMessage: DiagnosticSummary(managed.Message), Structured: true, FromCode: true})
 	}
 	var managedHTTP *beefapi.MediaHTTPError

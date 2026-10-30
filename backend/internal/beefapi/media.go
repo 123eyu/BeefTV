@@ -82,6 +82,33 @@ type MediaTaskError struct {
 
 func (e *MediaTaskError) Error() string { return e.Message }
 
+// Pending 表示 BeefAPI 还没有给出这次提交的结论（结果未确认或仍在保存），
+// 只能继续按同一个 task_ref 查询。其余任务错误都是 BeefAPI 对这次提交的最终结论。
+// 判断托管媒体错误是否终态只读这里，不在调用方另列错误码。
+func (e *MediaTaskError) Pending() bool {
+	return e.Code == "media_result_unknown" || e.Code == "media_delivery_pending"
+}
+
+// IsTerminalMediaTaskError 表示 BeefAPI 已对这次提交给出最终的失败结论。
+func IsTerminalMediaTaskError(err error) bool {
+	var task *MediaTaskError
+	return errors.As(err, &task) && !task.Pending()
+}
+
+// IsDefiniteMediaRejection 表示 BeefAPI 明确拒绝了这次请求：4xx，
+// 但超时、冲突、过早和限流除外（这几种只代表暂时没处理，原请求仍可能成立）。
+func IsDefiniteMediaRejection(err error) bool {
+	var httpErr *MediaHTTPError
+	if !errors.As(err, &httpErr) {
+		return false
+	}
+	switch httpErr.StatusCode {
+	case http.StatusRequestTimeout, http.StatusConflict, http.StatusTooEarly, http.StatusTooManyRequests:
+		return false
+	}
+	return httpErr.StatusCode >= 400 && httpErr.StatusCode < 500
+}
+
 type MediaTask struct {
 	TaskRef           string          `json:"task_ref"`
 	MediaType         string          `json:"media_type"`
@@ -373,25 +400,13 @@ func (c *MediaClient) Execute(ctx context.Context, request MediaRequest, refs []
 			if decodeErr == nil && task.Status == "failed" {
 				return nil, task.failure()
 			}
-		} else if isTerminalMediaSendError(sendErr) {
+		} else if IsDefiniteMediaRejection(sendErr) {
 			return nil, sendErr
 		}
 		// Any dispatched result, including 429 or a lost response, is observed by
 		// GET thereafter. Never automatically create another request/key here.
 	}
 	return c.Wait(ctx, request.TaskRef, request.MediaType, false)
-}
-
-func isTerminalMediaSendError(err error) bool {
-	var httpErr *MediaHTTPError
-	if !errors.As(err, &httpErr) {
-		return false
-	}
-	switch httpErr.StatusCode {
-	case http.StatusRequestTimeout, http.StatusConflict, http.StatusTooEarly, http.StatusTooManyRequests:
-		return false
-	}
-	return httpErr.StatusCode >= 400 && httpErr.StatusCode < 500
 }
 
 func mediaStringMember(values []string, value string) bool {

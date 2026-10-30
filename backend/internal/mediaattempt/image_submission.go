@@ -201,23 +201,12 @@ func ImageTaskEnded(err error) bool {
 
 func imageTaskEnded(err error) bool {
 	var media *beefapi.MediaTaskError
-	var rejected *beefapi.MediaHTTPError
 	var preparation generation.RequestPreparationError
 	var notSent generation.RequestNotSentError
 	if errors.As(err, &media) {
-		return media.Code != "media_result_unknown" && media.Code != "media_delivery_pending"
+		return !media.Pending()
 	}
-	if errors.As(err, &preparation) || errors.As(err, &notSent) {
-		return true
-	}
-	if errors.As(err, &rejected) {
-		switch rejected.StatusCode {
-		case http.StatusRequestTimeout, http.StatusConflict, http.StatusTooEarly, http.StatusTooManyRequests:
-			return false
-		}
-		return rejected.StatusCode >= 400 && rejected.StatusCode < 500
-	}
-	return false
+	return errors.As(err, &preparation) || errors.As(err, &notSent) || beefapi.IsDefiniteMediaRejection(err)
 }
 
 func (s *Service) DeferImageRecovery(task model.Task) error {

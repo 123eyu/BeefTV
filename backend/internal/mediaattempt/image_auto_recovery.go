@@ -296,8 +296,7 @@ func (s *Service) FailedImageResultWith(ctx context.Context, task model.Task, se
 		queryCtx := context.WithValue(s.runtime.ForTask(ctx, task), TaskContext{}, task)
 		if recovered, managed, collectErr := s.CollectManagedImage(queryCtx, task, row); managed {
 			if collectErr != nil {
-				var terminal *beefapi.MediaTaskError
-				if errors.As(collectErr, &terminal) && terminal.Code != "media_result_unknown" && terminal.Code != "media_delivery_pending" {
+				if beefapi.IsTerminalMediaTaskError(collectErr) {
 					return nil, localtask.RecoveryNoResult, nil
 				}
 				return nil, "", collectErr

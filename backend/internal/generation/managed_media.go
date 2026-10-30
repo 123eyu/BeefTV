@@ -75,14 +75,14 @@ func executeManagedMedia(ctx context.Context, client *beefapi.MediaClient, reque
 	}
 	result, err := client.Execute(ctx, request, refs)
 	if err != nil {
-		var terminal *beefapi.MediaTaskError
-		if errors.As(err, &terminal) {
-			if terminal.Code != "media_result_unknown" && terminal.Code != "media_delivery_pending" {
+		var task *beefapi.MediaTaskError
+		if errors.As(err, &task) {
+			if !task.Pending() {
 				return nil, err
 			}
 			return nil, SubmissionUnknownError{Cause: err}
 		}
-		if isTerminalMediaHTTPError(err) {
+		if beefapi.IsDefiniteMediaRejection(err) {
 			return nil, err
 		}
 		if sent, lookupErr := runtime.ManagedMedia.Sent(ctx); lookupErr == nil && sent {
@@ -93,17 +93,6 @@ func executeManagedMedia(ctx context.Context, client *beefapi.MediaClient, reque
 	return result, nil
 }
 
-func isTerminalMediaHTTPError(err error) bool {
-	var httpErr *beefapi.MediaHTTPError
-	if !errors.As(err, &httpErr) {
-		return false
-	}
-	switch httpErr.StatusCode {
-	case http.StatusRequestTimeout, http.StatusConflict, http.StatusTooEarly, http.StatusTooManyRequests:
-		return false
-	}
-	return httpErr.StatusCode >= 400 && httpErr.StatusCode < 500
-}
 func managedReference(media Media, role string) beefapi.LocalMediaReference {
 	return beefapi.LocalMediaReference{MediaReference: beefapi.MediaReference{Kind: "image", Role: role, URL: media.URL}, StorageKey: media.StorageKey, DataURL: media.DataURL, MIME: media.MimeType, Bytes: media.Bytes}
 }

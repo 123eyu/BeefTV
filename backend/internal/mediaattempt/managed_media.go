@@ -287,16 +287,10 @@ func ManagedFailureInfo(err error) (statusCode int, explicitRejection, terminalF
 	var managedHTTP *beefapi.MediaHTTPError
 	if errors.As(err, &managedHTTP) {
 		statusCode = managedHTTP.StatusCode
-		if managedHTTP.StatusCode >= 400 && managedHTTP.StatusCode < 500 &&
-			managedHTTP.StatusCode != http.StatusRequestTimeout &&
-			managedHTTP.StatusCode != http.StatusConflict &&
-			managedHTTP.StatusCode != http.StatusTooEarly &&
-			managedHTTP.StatusCode != http.StatusTooManyRequests {
-			explicitRejection = true
-		}
+		explicitRejection = beefapi.IsDefiniteMediaRejection(err)
 	}
 	var managedTask *beefapi.MediaTaskError
-	if errors.As(err, &managedTask) && managedTask.Code != "media_result_unknown" && managedTask.Code != "media_delivery_pending" {
+	if errors.As(err, &managedTask) && !managedTask.Pending() {
 		if managedTask.Code == "media_submission_rejected" && strings.TrimSpace(managedTask.TaskID) == "" {
 			explicitRejection = true
 		} else {
