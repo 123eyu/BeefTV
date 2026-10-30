@@ -153,8 +153,8 @@ func TestManagedImageResubmissionResponseDecidesOutcome(t *testing.T) {
 		{"key-taken-by-other-request", http.StatusConflict, `{"error":{"code":"idempotency_conflict","message":"different request"}}`, localtask.RecoveryUnrecoverable},
 		{"rejected", http.StatusBadRequest, `{"error":{"code":"invalid_request","category":"input","message":"bad"}}`, localtask.RecoveryNoResult},
 		{"invalid-params", http.StatusUnprocessableEntity, `{"error":{"code":"invalid_request","category":"input","message":"bad"}}`, localtask.RecoveryNoResult},
-		{"insufficient-balance", http.StatusPaymentRequired, `{"error":{"code":"insufficient_quota","message":"no money"}}`, localtask.RecoveryNoResult},
-		// 补交本身失败（Key 失效、无权限、地址不存在）不能证明原请求没执行。
+		// 补交本身失败（余额不足、Key 失效、无权限、地址不存在）只反映补交当时的状态，不能证明原请求没执行。
+		{"insufficient-balance", http.StatusPaymentRequired, `{"error":{"code":"insufficient_quota","message":"no money"}}`, localtask.RecoveryUnrecoverable},
 		{"key-revoked", http.StatusUnauthorized, `{"error":{"code":"invalid_api_key","message":"revoked"}}`, localtask.RecoveryUnrecoverable},
 		{"forbidden", http.StatusForbidden, `{"error":{"code":"forbidden","message":"no"}}`, localtask.RecoveryUnrecoverable},
 		{"submit-route-missing", http.StatusNotFound, `{"error":{"code":"not_found","message":"no route"}}`, localtask.RecoveryUnrecoverable},
@@ -226,6 +226,21 @@ func TestManagedImageMissingSubmissionWaitsWhenBeefAPIRecordedSettlement(t *test
 	latest, _ := svc.repo.Task(task.ID)
 	if submits.count() != 0 || latest.RecoveryOutcome != nil {
 		t.Fatalf("submission known to BeefAPI was resubmitted or concluded: submits=%d task=%+v", submits.count(), latest)
+	}
+	// 若已有「无法取回」且存在已结算记录，后台复查遇到 404 时仍保持「无法取回」并投影为 charged_result_unrecoverable。
+	unrec := localtask.RecoveryUnrecoverable
+	latest.RecoveryOutcome = &unrec
+	if err := db.Save(latest).Error; err != nil {
+		t.Fatal(err)
+	}
+	background, cancel := context.WithTimeout(ctx, time.Second)
+	_ = svc.recoverFailedImage(background, *latest)
+	cancel()
+	afterRecheck, _ := svc.repo.Task(task.ID)
+	projected := taskForOutput(*afterRecheck)
+	svc.attachTaskDelivery(projected)
+	if afterRecheck.RecoveryOutcome == nil || *afterRecheck.RecoveryOutcome != localtask.RecoveryUnrecoverable || projected.Outcome == nil || projected.Outcome.Reason != localtask.ReasonChargedResultUnrecoverable {
+		t.Fatalf("settled unrecoverable task lost its conclusion after 404 recheck: outcome=%+v projected=%+v", afterRecheck.RecoveryOutcome, projected.Outcome)
 	}
 }
 
@@ -353,6 +368,23 @@ func TestManagedVideoResubmissionRejectedConcludesNoResult(t *testing.T) {
 	}
 	if v.submits.count() != 2 || v.outcome(t) != localtask.RecoveryNoResult {
 		t.Fatalf("submits=%d outcome=%q, want 2 and no_result", v.submits.count(), v.outcome(t))
+	}
+}
+
+func TestManagedVideoResubmissionInsufficientBalanceConcludesUnrecoverableAndBlocksDirectRetry(t *testing.T) {
+	v := newManagedLostVideo(t, func(w http.ResponseWriter) bool {
+		w.WriteHeader(http.StatusPaymentRequired)
+		_, _ = w.Write([]byte(`{"error":{"code":"insufficient_quota","message":"no money"}}`))
+		return true
+	})
+	if _, err := v.svc.RecoverTask(localtask.WithManualRecovery(v.base), v.task.UserID, v.task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if v.submits.count() != 2 || v.outcome(t) != localtask.RecoveryUnrecoverable {
+		t.Fatalf("submits=%d outcome=%q, want 2 and unrecoverable", v.submits.count(), v.outcome(t))
+	}
+	if _, err := v.svc.RetryTask(v.task.UserID, v.task.ID); err == nil {
+		t.Fatal("direct RetryTask succeeded after 402 on submission_unknown video; want blocked")
 	}
 }
 

@@ -28,12 +28,12 @@ var ErrManagedResubmitted = errors.New("已用原编号补交原请求，正在�
 //
 // 方案见 docs/architecture/unconfirmed-submission.md。
 func (s *Service) ResolveMissingManagedSubmission(ctx context.Context, task model.Task) (string, bool, error) {
-	if task.BeefUsageState != nil || task.BeefBillingState != nil || task.BeefReconcileDeadline != nil {
-		return "", false, nil
-	}
 	// 已下过的「无法取回」保持不变：复查仍查不到时不能把它清掉，否则节点会在锁住和解锁之间来回跳。
 	if task.RecoveryOutcome != nil && *task.RecoveryOutcome == localtask.RecoveryUnrecoverable {
 		return localtask.RecoveryUnrecoverable, false, nil
+	}
+	if task.BeefUsageState != nil || task.BeefBillingState != nil || task.BeefReconcileDeadline != nil {
+		return "", false, nil
 	}
 	attempt, err := s.repo.LatestRouteAttempt(task.ID)
 	if err != nil || attempt == nil || attempt.RouteRun != task.RouteRun {
@@ -77,14 +77,14 @@ func (s *Service) ResolveMissingManagedSubmission(ctx context.Context, task mode
 	}
 }
 
-// resubmitRejectionOutcome 区分补交被拒的原因。BeefAPI 拒绝了请求内容或余额不足：这次补交没有执行，
-// 原请求也从没被收到，结论是「没有结果」。Key 失效、无权限、地址不存在、编号被别的内容占用：
-// 只说明补交本身失败，不能证明原请求没执行，结论是「无法取回」，重新生成前要确认。
+// resubmitRejectionOutcome 区分补交被拒的原因。BeefAPI 拒绝了请求内容（400/413/422）：这次补交没有执行，
+// 相同请求体的原请求也不会被受理，结论是「没有结果」。余额不足（402）、Key 失效、无权限、地址不存在、
+// 编号被别的内容占用：只反映补交当时的状态，不能证明原请求没执行，结论是「无法取回」，重新生成前要确认。
 func resubmitRejectionOutcome(err error) string {
 	var httpErr *beefapi.MediaHTTPError
 	if errors.As(err, &httpErr) {
 		switch httpErr.StatusCode {
-		case http.StatusBadRequest, http.StatusPaymentRequired, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity:
+		case http.StatusBadRequest, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity:
 			return localtask.RecoveryNoResult
 		}
 	}

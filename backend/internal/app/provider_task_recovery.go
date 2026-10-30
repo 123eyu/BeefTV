@@ -156,7 +156,9 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 			outcome, resubmitted, resolveErr := s.mediaAttempts().ResolveMissingManagedSubmission(queryCtx, *task)
 			switch {
 			case outcome != "":
-				_ = s.repo.FinishFailedVideoRecovery(*task, &outcome, nil)
+				if err := s.repo.FinishFailedVideoRecovery(*task, &outcome, nil); err != nil {
+					return nil, err
+				}
 				task.RecoveryOutcome = &outcome
 				projected := taskForOutput(*task)
 				s.attachTaskDelivery(projected)
@@ -183,10 +185,9 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 				result, err = managedQuery.Client.Result(queryCtx, projection, false)
 			}
 			if projection.Status == "failed" {
+				err = errors.New("原媒体任务未成功，请核对原任务结算")
 				if projection.Error != nil {
 					err = projection.Error
-				} else {
-					err = errors.New("原媒体任务未成功，请核对原任务结算")
 				}
 			}
 		}
@@ -199,10 +200,8 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 			task.BeefUsageState = &normalized
 		}
 		if settlement.ReconcileDeadline != nil {
-			trimmed := strings.TrimSpace(*settlement.ReconcileDeadline)
-			if trimmed == "" {
-				task.BeefReconcileDeadline = nil
-			} else {
+			task.BeefReconcileDeadline = nil
+			if trimmed := strings.TrimSpace(*settlement.ReconcileDeadline); trimmed != "" {
 				task.BeefReconcileDeadline = &trimmed
 			}
 		} else if settlement.UsageState != nil && !strings.EqualFold(strings.TrimSpace(*settlement.UsageState), "pending") {
