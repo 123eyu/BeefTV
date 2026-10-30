@@ -29,18 +29,6 @@ func doJSON(req *http.Request, target interface{}) error {
 	return generation.DoJSON(withHTTPRequestRuntime(req), target)
 }
 
-func grokImageRequestBody(input canvasGenerationInput) (grokImageRequest, string, error) {
-	return generation.GrokImageRequestBody(input)
-}
-
-func normalizeGrokImageResolution(quality string) string {
-	return generation.NormalizeGrokImageResolution(quality)
-}
-
-func normalizeGrokImageAspectRatio(size string) string {
-	return generation.NormalizeGrokImageAspectRatio(size)
-}
-
 func volcengineArkImageDataURLs(ctx context.Context, config providerConfig, payload imageResponse) ([]map[string]string, error) {
 	return generation.MaterializeImageDataURLs(ctx, config, payload)
 }
