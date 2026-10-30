@@ -1,6 +1,6 @@
 import { test, expect } from 'bun:test';
 import crypto from 'node:crypto';
-import { mediaToolResult, adaptMediaRequest, mediaCapabilityContext } from './media-content.mjs';
+import { mediaToolResult, adaptMediaRequest, mediaCapabilityContext, attachmentContent } from './media-content.mjs';
 
 const model = { api: 'openai-completions', modelId: 'gemini-3.8-flash' };
 function part(mimeType = 'audio/wav') {
@@ -92,4 +92,35 @@ test('combined evidence shares the existing total media size limit', () => {
   const bytes = Buffer.alloc(4 * 1024 * 1024 + 1, 1);
   const large = mimeType => ({ ...part(mimeType), data: bytes.toString('base64'), sha256: crypto.createHash('sha256').update(bytes).digest('hex') });
   expect(() => mediaToolResult({ result: { content: [large('audio/wav'), large('video/mp4')] } }, 'media.overview', model)).toThrow('media_content_too_large');
+});
+
+test('an unreadable attached image is reported to the model instead of ending the turn', async () => {
+  const requests = [];
+  const opsRequest = async (method, path) => {
+    requests.push(path);
+    const error = new Error('precondition_failed: 无法检查媒体');
+    error.reason = 'media_probe_failed';
+    throw error;
+  };
+  const content = await attachmentContent({ canvasId: 'c1', message: '看看这张图', attachments: [{ kind: 'image', nodeId: 'n1', resourceId: 'r1' }] }, 't1', opsRequest);
+  expect(requests).toEqual(['/ops/media.overview']);
+  expect(content.some(part => part.type === 'image')).toBe(false);
+  expect(content.at(-1).text).toContain('这张图片没有读取成功（media_probe_failed）');
+});
+
+test('attachment authorization failures still end the turn', async () => {
+  const opsRequest = async () => {
+    const error = new Error('scope_denied: 不能读取其他画布');
+    error.reason = 'scope_denied';
+    throw error;
+  };
+  await expect(attachmentContent({ canvasId: 'c1', attachments: [{ kind: 'image', nodeId: 'n1', resourceId: 'r1' }] }, 't1', opsRequest)).rejects.toThrow('scope_denied');
+});
+
+test('a readable attached image reaches the model as image content', async () => {
+  const opsRequest = async (method, path) => path === '/ops/media.overview'
+    ? { result: { source: { version: 'v1' }, image: { view: 'original' }, content: [] } }
+    : { result: { source: { version: 'v1' }, image: { view: 'original', width: 64, height: 48 }, content: [{ type: 'image', data: 'AAAA', mimeType: 'image/png' }] } };
+  const content = await attachmentContent({ canvasId: 'c1', attachments: [{ kind: 'image', nodeId: 'n1', resourceId: 'r1' }] }, 't1', opsRequest);
+  expect(content.filter(part => part.type === 'image')).toEqual([{ type: 'image', data: 'AAAA', mimeType: 'image/png' }]);
 });

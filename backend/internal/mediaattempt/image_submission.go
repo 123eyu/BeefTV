@@ -173,7 +173,7 @@ func (s *Service) RetryRejectedImageAttempt(task *model.Task, previous *model.Ro
 // A worker timeout and a local result-save failure do not end the upstream
 // request. Release this lease so another bounded execution can collect it.
 func (s *Service) ShouldDeferImageRecovery(task model.Task, taskErr error, providerSucceeded bool) bool {
-	if task.Type != "canvas_image" || errors.Is(taskErr, context.Canceled) {
+	if task.Type != "canvas_image" || errors.Is(taskErr, context.Canceled) || imageTaskEnded(taskErr) {
 		return false
 	}
 	attempt, err := s.repo.LatestRouteAttempt(task.ID)
@@ -191,6 +191,33 @@ func (s *Service) ShouldDeferImageRecovery(task model.Task, taskErr error, provi
 		return providerSucceeded || errors.Is(taskErr, context.DeadlineExceeded) || RetrySameImageSubmission(taskErr) || DefiniteImageThrottle(taskErr)
 	}
 	return row.SendCount < MaxSends && IsImageRecoveryError(taskErr) && errors.Is(taskErr, context.DeadlineExceeded)
+}
+
+// ImageTaskEnded 表示没有可继续取回的结果：BeefAPI 已给出终态失败、请求在发出前就失败，
+// 或提交被明确拒绝（4xx，超时、冲突和限流除外）。这些任务直接按失败结束，不进入恢复轮询。
+func ImageTaskEnded(err error) bool {
+	return imageTaskEnded(err)
+}
+
+func imageTaskEnded(err error) bool {
+	var media *beefapi.MediaTaskError
+	var rejected *beefapi.MediaHTTPError
+	var preparation generation.RequestPreparationError
+	var notSent generation.RequestNotSentError
+	if errors.As(err, &media) {
+		return media.Code != "media_result_unknown" && media.Code != "media_delivery_pending"
+	}
+	if errors.As(err, &preparation) || errors.As(err, &notSent) {
+		return true
+	}
+	if errors.As(err, &rejected) {
+		switch rejected.StatusCode {
+		case http.StatusRequestTimeout, http.StatusConflict, http.StatusTooEarly, http.StatusTooManyRequests:
+			return false
+		}
+		return rejected.StatusCode >= 400 && rejected.StatusCode < 500
+	}
+	return false
 }
 
 func (s *Service) DeferImageRecovery(task model.Task) error {

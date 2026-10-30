@@ -27,6 +27,10 @@ func isImageRecoveryError(err error) bool {
 	return mediaattempt.IsImageRecoveryError(err)
 }
 
+func imageTaskEnded(err error) bool {
+	return mediaattempt.ImageTaskEnded(err)
+}
+
 func (s *Service) retryRejectedImageAttempt(task *model.Task, previous *model.RouteAttempt, taskErr error) (*model.RouteAttempt, error) {
 	return s.mediaAttempts().RetryRejectedImageAttempt(task, previous, taskErr)
 }

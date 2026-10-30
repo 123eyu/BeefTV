@@ -37,12 +37,12 @@ func RunVideoTaskWithPolicy(ctx context.Context, input Input, pollPolicy VideoPo
 	// protocol adapters so stale persisted channel metadata cannot select an
 	// incompatible legacy multipart or flat request shape.
 	if managedConnection(input.Config) || IsBeefAPIVideoConfig(ctx, input.Config) {
-		unified, err := useManagedMediaEnvelope(ctx, input.Config)
+		client, unified, err := useManagedMediaEnvelope(ctx, input.Config, "video")
 		if err != nil {
 			return nil, err
 		}
 		if unified {
-			return runManagedVideoTask(ctx, input)
+			return runManagedVideoTask(ctx, client, input)
 		}
 		return runManagedLegacyVideo(ctx, input, pollPolicy)
 	}

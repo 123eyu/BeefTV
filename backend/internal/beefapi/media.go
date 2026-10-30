@@ -373,11 +373,25 @@ func (c *MediaClient) Execute(ctx context.Context, request MediaRequest, refs []
 			if decodeErr == nil && task.Status == "failed" {
 				return nil, task.failure()
 			}
+		} else if isTerminalMediaSendError(sendErr) {
+			return nil, sendErr
 		}
 		// Any dispatched result, including 429 or a lost response, is observed by
 		// GET thereafter. Never automatically create another request/key here.
 	}
 	return c.Wait(ctx, request.TaskRef, request.MediaType, false)
+}
+
+func isTerminalMediaSendError(err error) bool {
+	var httpErr *MediaHTTPError
+	if !errors.As(err, &httpErr) {
+		return false
+	}
+	switch httpErr.StatusCode {
+	case http.StatusRequestTimeout, http.StatusConflict, http.StatusTooEarly, http.StatusTooManyRequests:
+		return false
+	}
+	return httpErr.StatusCode >= 400 && httpErr.StatusCode < 500
 }
 
 func mediaStringMember(values []string, value string) bool {

@@ -17,7 +17,7 @@ import { budgetError, spendModelRequest } from './request-budget.mjs';
 import { createDurableRequestBudget } from './durable-request-budget.mjs';
 import { createOperationBridge } from './operation-bridge.mjs';
 import { createLegacyHistory } from './session-owner.mjs';
-import { adaptMediaRequest, trustedMediaSources, mediaCapabilityContext } from './media-content.mjs';
+import { adaptMediaRequest, attachmentContent, trustedMediaSources, mediaCapabilityContext } from './media-content.mjs';
 import {nativeSourceKey} from './native-history.mjs';
 import { createNativePartStore } from './native-part-store.mjs';
 import { fetchModelWithProgressIdle } from './model-stream-idle.mjs';
@@ -287,23 +287,6 @@ async function waitForDurableProjection(entry) {
   } finally { clearTimeout(timer); }
 }
 
-async function attachmentContent(body, turnId) {
-  const content = [{type:'text',text:body.message || '请分析所提供的素材，并说明适合如何使用。'}];
-  for (const attachment of body.attachments || []) {
-    content.push({type:'text',text:`用户提供素材：${JSON.stringify(attachment)}。使用 media.inspect 读取实际画面或音频后再判断；片段秒数转换为 startMs/endMs。`});
-    if (attachment.kind === 'image') {
-      const reference = {canvasId:body.canvasId,
-        ...(attachment.nodeId ? {nodeId:attachment.nodeId}:{assetId:attachment.assetId}),resourceId:attachment.resourceId};
-      const overview = await ops.opsRequest('POST','/ops/media.overview',{params:reference},undefined,turnId);
-      const data = overview.result.image?.view === 'preview' ? overview : await ops.opsRequest('POST','/ops/media.inspect',{params:{...reference,
-        expectedVersion:overview.result.source.version,mode:'frames'}},undefined,turnId);
-      if (data.result.image) content.push({type:'text',text:JSON.stringify({image:data.result.image,note:data.result.note,source:data.result.source})});
-      content.push(...data.result.content.filter(part=>part.type==='image').map(part=>({type:'image',data:part.data,mimeType:part.mimeType})));
-    }
-  }
-  return content;
-}
-
 function sendLine(res, payload) { res.write(JSON.stringify(payload) + '\n'); }
 
 function instanceProof() {
@@ -545,7 +528,7 @@ const server = http.createServer(async (req, res) => {
       }
       const pending = durable.beginPendingInput(entry);
       try {
-        const content = await attachmentContent(body,entry.turn.turnId);
+        const content = await attachmentContent(body,entry.turn.turnId,ops.opsRequest);
         await durable.supplement(entry,{requestId:body.requestId || crypto.randomUUID(),content,input:body});
         pending.resolve();
         respond(res,202,{accepted:true}); return;
@@ -592,7 +575,7 @@ const server = http.createServer(async (req, res) => {
         ? await durable.ensureSession(canvasId,chosen)
         : chosen ? await durable.handoffSession(canvasId, legacy.readHandoffNote(canvasId,chosen), chosen)
           : await durable.ensureSession(canvasId);
-      const content = await attachmentContent(body,turnId);
+      const content = await attachmentContent(body,turnId,ops.opsRequest);
       content[0].text = `${turnContextPrefix(body)}\n${mediaCapabilityContext({ api: MODEL_API, modelId: MODEL_ID })}\n${toolCallCapabilityContext({ api: MODEL_API, modelId: MODEL_ID })}\n${content[0].text}`;
       const submission = await durable.submit(entry,{...body,content,userText,revisionBefore,requestId});
       res.durableTurn = true;

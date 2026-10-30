@@ -3,22 +3,19 @@ package app
 import (
 	"context"
 	"errors"
-	"net/http"
 	"strings"
 	"time"
 
-	"infinite-canvas/backend/internal/generation"
+	"infinite-canvas/backend/internal/mediaattempt"
 	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/outbound"
 	"infinite-canvas/backend/internal/repository"
 	localtask "infinite-canvas/backend/internal/task"
 )
 
 const (
-	videoRecoveryBatch           = 4
-	videoRecoveryPassTimeout     = 30 * time.Second
-	videoRecoveryRetentionWindow = 24 * time.Hour
-	videoRecoveryDefaultBackoff  = 30 * time.Second
+	videoRecoveryBatch          = 4
+	videoRecoveryPassTimeout    = 30 * time.Second
+	videoRecoveryDefaultBackoff = 30 * time.Second
 )
 
 // 每次交付恢复循环最多挂一个短视频/超分恢复批次；慢上游不阻塞下载或画布绑定。
@@ -179,15 +176,10 @@ func (s *Service) withFailedVideoRecoveryLease(task *model.Task, claimUserID str
 	if err := s.repo.ClaimFailedTaskProviderRecovery(task.ID, claimUserID, owner, providerTaskRecoveryLeaseDuration); err != nil {
 		return err
 	}
-	defer func() {
-		_ = s.repo.ReleaseTaskProviderRecovery(task.ID, owner)
-	}()
+	defer func() { _ = s.repo.ReleaseTaskProviderRecovery(task.ID, owner) }()
 	current, err := s.repo.Task(task.ID)
-	if err != nil {
+	if err != nil || current.LeaseOwner != owner || current.Status != model.TaskStatusFailed || !videoRecoveryNeedsPolling(*current) {
 		return err
-	}
-	if current.LeaseOwner != owner || current.Status != model.TaskStatusFailed || !videoRecoveryNeedsPolling(*current) {
-		return nil
 	}
 	if task.ProviderRequestID != "" && current.ProviderRequestID == "" {
 		current.ProviderRequestID = task.ProviderRequestID
@@ -196,109 +188,44 @@ func (s *Service) withFailedVideoRecoveryLease(task *model.Task, claimUserID str
 }
 
 func (s *Service) recordMissingVideoReceiptOutcome(task *model.Task, claimUserID string) {
-	if task == nil {
-		return
-	}
-	if managedTaskConnection(*task) {
-		s.deferManagedVideoQuery(task, claimUserID)
-		return
-	}
 	outcome := localtask.RecoveryUnrecoverable
-	if attempt, err := s.repo.LatestRouteAttempt(task.ID); err == nil && attempt != nil && attempt.RouteRun == task.RouteRun {
-		if attempt.DispatchState == "not_sent" || attempt.DispatchState == "rejected_no_job" {
+	if task != nil {
+		if attempt, err := s.repo.LatestRouteAttempt(task.ID); err == nil && attempt != nil && attempt.RouteRun == task.RouteRun && (attempt.DispatchState == "not_sent" || attempt.DispatchState == "rejected_no_job") {
 			outcome = localtask.RecoveryNoResult
 		}
 	}
-	_ = s.withFailedVideoRecoveryLease(task, claimUserID, func(leased *model.Task) error {
-		return s.repo.FinishFailedVideoRecovery(*leased, &outcome, nil)
-	})
-	task.RecoveryOutcome = &outcome
+	s.recordFailedVideoRecoveryOutcome(task, claimUserID, outcome)
 }
 
 func (s *Service) recordUnrecoverableVideoOutcome(task *model.Task, claimUserID string) {
+	s.recordFailedVideoRecoveryOutcome(task, claimUserID, localtask.RecoveryUnrecoverable)
+}
+
+func (s *Service) recordFailedVideoRecoveryOutcome(task *model.Task, claimUserID, outcome string) {
 	if task == nil {
 		return
 	}
-	if managedTaskConnection(*task) {
+	if beefAPIOwnsVideoConclusion(*task, time.Now()) {
 		s.deferManagedVideoQuery(task, claimUserID)
 		return
 	}
-	outcome := localtask.RecoveryUnrecoverable
-	_ = s.withFailedVideoRecoveryLease(task, claimUserID, func(leased *model.Task) error {
-		return s.repo.FinishFailedVideoRecovery(*leased, &outcome, nil)
-	})
+	_ = s.withFailedVideoRecoveryLease(task, claimUserID, func(leased *model.Task) error { return s.repo.FinishFailedVideoRecovery(*leased, &outcome, nil) })
 	task.RecoveryOutcome = &outcome
 }
 
 func classifyFailedVideoQueryOutcome(task model.Task, providerStatus string, err error) string {
-	if managedTaskConnection(task) {
-		if isTerminalVideoProviderStatus(providerStatus) && (task.BeefUsageState != nil || task.BeefBillingState != nil) {
-			return localtask.RecoveryNoResult
-		}
-		return ""
-	}
-	var dns *outbound.DNSResolutionError
-	if errors.As(err, &dns) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return ""
-	}
-	if isTerminalVideoProviderStatus(providerStatus) {
-		return localtask.RecoveryNoResult
-	}
-	var payloadErr generation.PayloadError
-	if errors.As(err, &payloadErr) {
-		return localtask.RecoveryNoResult
-	}
-	if isUnrecoverableVideoQueryError(err) || videoTaskPastRetentionWindow(task, time.Now()) {
-		return localtask.RecoveryUnrecoverable
-	}
-	return ""
+	return mediaattempt.ClassifyFailedVideoQueryOutcome(task, providerStatus, err, time.Now())
 }
-
-func videoSettlementNeedsPolling(task model.Task) bool {
-	return task.MediaSettlementPending()
-}
-
+func videoSettlementNeedsPolling(task model.Task) bool { return task.MediaSettlementPending() }
 func videoRecoveryNeedsPolling(task model.Task) bool {
 	return task.RecoveryOutcome == nil || *task.RecoveryOutcome == "" || videoSettlementNeedsPolling(task)
 }
-
-func isTerminalVideoProviderStatus(status string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "failed", "failure", "error", "cancelled", "canceled", "expired":
-		return true
-	default:
-		return false
-	}
-}
-
-func isUnrecoverableVideoQueryError(err error) bool {
-	if err == nil {
-		return false
-	}
-	var upstream providerHTTPError
-	if errors.As(err, &upstream) && (upstream.StatusCode == http.StatusUnauthorized || upstream.StatusCode == http.StatusForbidden) {
-		return true
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "该任务的请求协议不支持安全查询上游状态") ||
-		strings.Contains(msg, "上游返回的任务 ID 与原视频任务不一致") ||
-		strings.Contains(msg, "RunningHub 返回的任务 ID 与原请求不一致") ||
-		strings.Contains(msg, "超分回执与原任务不一致") ||
-		strings.Contains(msg, "任务输入解析失败") ||
-		strings.Contains(msg, "该任务没有可恢复的上游任务 ID")
-}
-
 func videoTaskPastRetentionWindow(task model.Task, now time.Time) bool {
-	if managedTaskConnection(task) {
-		return false
-	}
-	anchor := task.CreatedAt
-	if task.StartedAt != nil && !task.StartedAt.IsZero() {
-		anchor = *task.StartedAt
-	}
-	return !anchor.IsZero() && now.Sub(anchor) >= videoRecoveryRetentionWindow
+	return mediaattempt.VideoTaskPastRetentionWindow(task, now)
 }
-
+func beefAPIOwnsVideoConclusion(task model.Task, now time.Time) bool {
+	return mediaattempt.BeefAPIOwnsVideoConclusion(task, now)
+}
 func (s *Service) deferManagedVideoQuery(task *model.Task, user string) {
 	next := time.Now().Add(videoRecoveryPollBackoff(*task))
 	_ = s.withFailedVideoRecoveryLease(task, user, func(leased *model.Task) error { return s.repo.FinishFailedVideoRecovery(*leased, nil, &next) })
@@ -306,15 +233,11 @@ func (s *Service) deferManagedVideoQuery(task *model.Task, user string) {
 }
 
 func videoRecoveryPollBackoff(task model.Task) time.Duration {
-	anchor := task.CreatedAt
-	if task.StartedAt != nil && !task.StartedAt.IsZero() {
-		anchor = *task.StartedAt
-	}
+	anchor := mediaattempt.VideoTaskAnchor(task)
 	if anchor.IsZero() {
 		return videoRecoveryDefaultBackoff
 	}
-	age := time.Since(anchor)
-	switch {
+	switch age := time.Since(anchor); {
 	case age < 10*time.Minute:
 		return 15 * time.Second
 	case age < time.Hour:

@@ -439,7 +439,7 @@ func RegisterAgentProxyRoutes(r gin.IRouter, svc *app.Service, clients *agentops
 		payload.ProposalID = c.Param("proposalId")
 		result, err := svc.ConfirmAssistantProduction(c.GetString("agentUserId"), c.Param("turnId"), payload)
 		if err != nil {
-			failService(c, err)
+			failAssistantProposal(c, err)
 			return
 		}
 		ok(c, result)
@@ -837,4 +837,24 @@ func settleAssistantTurn(turnID string, svc *app.Service) {
 	if err := svc.FinalizeAssistantTurn(turnID); err != nil {
 		log.Printf("assistant_turn_settle_failed turn=%q error_type=%T", turnID, err)
 	}
+}
+
+// failAssistantProposal 投影确认生成方案时的失败：回合不存在或已变化（404/409）、
+// 方案已变化、已撤销或参数无效（操作层 409/412/400）都不是服务内部错误。
+func failAssistantProposal(c *gin.Context, err error) {
+	var turnErr *app.AssistantTurnError
+	if errors.As(err, &turnErr) {
+		status := http.StatusConflict
+		if turnErr.Reason == app.AssistantTurnReasonNotFound {
+			status = http.StatusNotFound
+		}
+		c.JSON(status, gin.H{"code": status, "reason": turnErr.Reason, "msg": turnErr.Error()})
+		return
+	}
+	var opErr *agentops.Error
+	if errors.As(err, &opErr) {
+		failAgentOps(c, err)
+		return
+	}
+	failService(c, err)
 }

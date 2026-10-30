@@ -21,10 +21,10 @@ func RunAudioTask(ctx context.Context, input Input) (map[string]interface{}, err
 			return nil, RequestPreparationError{Cause: errors.New("角色配音缺少已解析的声音绑定")}
 		}
 	}
-	if unified, err := useManagedMediaEnvelope(ctx, input.Config); err != nil {
+	if client, unified, err := useManagedMediaEnvelope(ctx, input.Config, "audio"); err != nil {
 		return nil, err
 	} else if unified {
-		return runManagedAudioTask(ctx, input)
+		return runManagedAudioTask(ctx, client, input)
 	}
 	if managedConnection(input.Config) {
 		return runLegacyManagedAudio(ctx, input)

@@ -10,8 +10,7 @@ import (
 	"infinite-canvas/backend/internal/beefapi"
 )
 
-func runManagedAudioTask(ctx context.Context, input Input) (map[string]any, error) {
-	client := managedMediaClient(ctx, input.Config)
+func runManagedAudioTask(ctx context.Context, client *beefapi.MediaClient, input Input) (map[string]any, error) {
 	request := beefapi.MediaRequest{TaskRef: SubmissionKeyFromContext(ctx), MediaType: "audio", Model: input.Config.Model}
 	runtime, _ := RuntimeFromContext(ctx)
 	if runtime.ManagedMedia == nil || request.TaskRef == "" {

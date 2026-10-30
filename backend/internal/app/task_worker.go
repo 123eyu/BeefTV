@@ -182,7 +182,13 @@ func (w *taskWorkerCoordinator) executeClaimed(session taskruntime.Session) task
 		if errors.Is(err, context.DeadlineExceeded) && !errors.As(err, &imageRecovery) {
 			err = errors.New(taskTimeoutMessage(task.Type))
 		}
-		return executionFailureOutcome(terminal, task, err, providerSucceeded, providerAccepted, channelSlotFailedBeforeRequest)
+		outcome := executionFailureOutcome(terminal, task, err, providerSucceeded, providerAccepted, channelSlotFailedBeforeRequest)
+		if outcome.Applied && task.Type == "canvas_image" && !task.IsUpscale() && task.RecoveryOutcome != nil {
+			failed := *task
+			failed.LeaseOwner = ""
+			_ = s.repo.FinishFailedImageRecovery(failed, task.RecoveryOutcome, nil)
+		}
+		return outcome
 	}
 	latest, err := s.repo.Task(task.ID)
 	if err != nil {
@@ -245,6 +251,10 @@ func leaseLostOutcome(session taskruntime.Session, providerAccepted bool) taskru
 }
 
 func executionFailureOutcome(terminal *taskTerminalCoordinator, task *model.Task, err error, providerSucceeded, providerAccepted, channelSlotFailedBeforeRequest bool) taskruntime.Outcome {
+	if task != nil && task.Type == "canvas_image" && !task.IsUpscale() && imageTaskEnded(err) {
+		noResult := "no_result"
+		task.RecoveryOutcome = &noResult
+	}
 	termErr := terminal.HandleExecutionFailure(task, err, providerSucceeded, channelSlotFailedBeforeRequest)
 	if errors.Is(err, context.Canceled) && termErr == nil {
 		return taskruntime.Outcome{Kind: taskruntime.KindCancelled, Applied: true, ProviderAccepted: providerAccepted}

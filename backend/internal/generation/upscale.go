@@ -176,12 +176,12 @@ func RunUpscaleTask(ctx context.Context, input Input) (map[string]any, error) {
 	if !managedConnection(input.Config) && !IsBeefAPIVideoConfig(ctx, input.Config) {
 		return nil, RequestPreparationError{Cause: errors.New("AI 超分需要连接官方算力账号")}
 	}
-	unified, err := useManagedMediaEnvelope(ctx, input.Config)
+	client, unified, err := useManagedMediaEnvelope(ctx, input.Config, "upscale")
 	if err != nil {
 		return nil, err
 	}
 	if unified {
-		return runManagedUpscaleTask(ctx, input)
+		return runManagedUpscaleTask(ctx, client, input)
 	}
 	id := ResumedProviderRequestID(ctx)
 	if id == "" {
@@ -211,7 +211,7 @@ func RunUpscaleTask(ctx context.Context, input Input) (map[string]any, error) {
 	})
 }
 
-func runManagedUpscaleTask(ctx context.Context, input Input) (map[string]any, error) {
+func runManagedUpscaleTask(ctx context.Context, client *beefapi.MediaClient, input Input) (map[string]any, error) {
 	runtime, _ := RuntimeFromContext(ctx)
 	if runtime.ManagedMedia == nil {
 		return nil, RequestPreparationError{Cause: errors.New("超分请求缺少持久化提交标识")}
@@ -244,7 +244,6 @@ func runManagedUpscaleTask(ctx context.Context, input Input) (map[string]any, er
 		options["H264_output"] = true
 	}
 	request := beefapi.MediaRequest{TaskRef: SubmissionKeyFromContext(ctx), MediaType: "upscale", Model: input.Config.Model, Operation: "upscale", Options: options}
-	client := managedMediaClient(ctx, input.Config)
 	client.ExpectedOutputKind = input.Mode
 	return executeManagedMedia(ctx, client, request, []beefapi.LocalMediaReference{ref})
 }
