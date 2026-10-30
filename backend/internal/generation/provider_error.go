@@ -261,10 +261,27 @@ func ClassifyError(err error) Failure {
 	var managed *beefapi.MediaTaskError
 	if errors.As(err, &managed) {
 		category := FailureCategory(managed.Category)
+		switch strings.ToLower(strings.TrimSpace(managed.Category)) {
+		case "input":
+			category = CategoryInvalidParams
+		case "authorization":
+			category = CategoryAuth
+		case "upstream":
+			category = CategoryAsyncFailed
+		case "unknown":
+			category = CategorySubmissionUncertain
+		}
 		if _, supported := categoryCopies[category]; !supported {
 			category = CategoryUnknown
 		}
-		return normalizeFailure(Failure{Category: category, TaskID: sanitizeDebugID(managed.TaskID), ProviderCode: sanitizeProviderCode(managed.Code), ProviderMessage: DiagnosticSummary(managed.Message), Structured: true, FromCode: true})
+		uncertain := category == CategorySubmissionUncertain || managed.Code == "media_result_unknown" || managed.Code == "media_delivery_pending"
+		return normalizeFailure(Failure{Category: category, Uncertain: uncertain, TaskID: sanitizeDebugID(managed.TaskID), ProviderCode: sanitizeProviderCode(managed.Code), ProviderMessage: DiagnosticSummary(managed.Message), Structured: true, FromCode: true})
+	}
+	var managedHTTP *beefapi.MediaHTTPError
+	if errors.As(err, &managedHTTP) {
+		failure := classifyHTTPErrorCause(legacyMediaError(err))
+		failure.RequestID = firstNonEmpty(sanitizeDebugID(managedHTTP.RequestID), failure.RequestID)
+		return failure
 	}
 	var protocolPreparation ProtocolPreparationError
 	if errors.As(err, &protocolPreparation) {

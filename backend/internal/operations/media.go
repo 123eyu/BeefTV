@@ -282,7 +282,9 @@ func runMedia(opCtx *Context, operation string, raw json.RawMessage) (any, error
 	if resource == nil || resource.Size > maxMediaSourceBytes {
 		return nil, PreconditionFailed("media_too_large", "当前媒体检查支持 256 MiB 以内的素材", nil)
 	}
-	if args.ImageCrop != nil && !strings.HasPrefix(resource.MimeType, "image/") {
+	isImage := strings.HasPrefix(resource.MimeType, "image/") || strings.EqualFold(resource.Kind, "image")
+	genericMime := resource.MimeType == "" || resource.MimeType == "application/octet-stream"
+	if args.ImageCrop != nil && !isImage && !genericMime {
 		return nil, InvalidArg("invalid_image_crop", "局部图片检查仅适用于图片素材")
 	}
 	opener, ok := opCtx.Domain.(MediaSourceOpener)
@@ -332,6 +334,14 @@ func runMedia(opCtx *Context, operation string, raw json.RawMessage) (any, error
 	if !selfContainedMedia(input) {
 		return nil, Unsupported("media_format_unsupported", "当前检查支持常见图片、MP4、WebM、WAV、MP3、OGG 和 FLAC 文件")
 	}
+	if !isImage && genericMime {
+		if _, _, cfgErr := imageConfig(input); cfgErr == nil || cfgErr == errImageTooManyPixels {
+			isImage = true
+		}
+	}
+	if args.ImageCrop != nil && !isImage {
+		return nil, InvalidArg("invalid_image_crop", "局部图片检查仅适用于图片素材")
+	}
 	version := hex.EncodeToString(hash.Sum(nil))
 	if operation != "media.overview" && args.ExpectedVersion == "" {
 		return nil, InvalidArg("media_version_required", "先读取 overview，再提供 expectedVersion")
@@ -339,11 +349,17 @@ func runMedia(opCtx *Context, operation string, raw json.RawMessage) (any, error
 	if args.ExpectedVersion != "" && args.ExpectedVersion != version {
 		return nil, Conflict("stale_media_version", "素材内容已变化，请重新读取 overview", map[string]any{"currentVersion": version})
 	}
-	facts, err := editing.Probe(ctx, input)
+	facts, err := probeMediaFacts(ctx, input, isImage)
 	if err != nil {
+		if err == errImageTooManyPixels {
+			return nil, PreconditionFailed("media_too_large", "图片像素超过 3200 万上限", nil)
+		}
+		if isImage {
+			return nil, Unsupported("media_format_unsupported", "当前图片检查支持 PNG、JPEG、WebP、GIF、BMP 和 TIFF 文件")
+		}
 		return nil, PreconditionFailed("media_probe_failed", "无法检查媒体，请确认 ffprobe 已安装且素材可读取", nil)
 	}
-	prepared := preparedMedia{input: input, directory: dir, source: MediaSource{CanvasID: args.CanvasID, NodeID: args.NodeID, AssetID: args.AssetID, ResourceID: resourceID, Version: version}, facts: facts, image: strings.HasPrefix(resource.MimeType, "image/")}
+	prepared := preparedMedia{input: input, directory: dir, source: MediaSource{CanvasID: args.CanvasID, NodeID: args.NodeID, AssetID: args.AssetID, ResourceID: resourceID, Version: version}, facts: facts, image: isImage}
 	if args.Evidence == nil {
 		return prepared.read(ctx, operation, args)
 	}
@@ -418,6 +434,9 @@ func (p preparedMedia) read(ctx context.Context, operation string, args mediaArg
 	source := p.source
 	source.StartMs, source.EndMs = args.StartMs, args.EndMs
 	result := MediaResult{Source: source, DurationMs: facts.DurationMs, HasVideo: facts.HasVideo, HasAudio: facts.HasAudio, Content: []MediaPart{}}
+	if image {
+		return p.readImage(ctx, operation, args, result)
+	}
 	bin, err := editing.ResolveFFmpegBinary()
 	if err != nil {
 		return MediaResult{}, PreconditionFailed("media_ffmpeg_unavailable", "媒体检查需要 ffmpeg", nil)
@@ -452,9 +471,6 @@ func (p preparedMedia) read(ctx context.Context, operation string, args mediaArg
 	if mode == "frames" {
 		if !facts.HasVideo {
 			return MediaResult{}, InvalidArg("media_no_video", "这个素材没有画面")
-		}
-		if image {
-			return p.readImage(ctx, bin, operation, args, result)
 		}
 		count := 4
 		if operation == "media.overview" {
@@ -567,7 +583,7 @@ func selfContainedMedia(path string) bool {
 	buf := make([]byte, 12)
 	n, _ := file.Read(buf)
 	buf = buf[:n]
-	for _, magic := range [][]byte{{0xff, 0xd8, 0xff}, {0x89, 'P', 'N', 'G'}, []byte("GIF8"), {0x1a, 0x45, 0xdf, 0xa3}, []byte("OggS"), []byte("fLaC"), []byte("ID3")} {
+	for _, magic := range [][]byte{{0xff, 0xd8, 0xff}, {0x89, 'P', 'N', 'G'}, []byte("GIF8"), []byte("II*\x00"), []byte("MM\x00*"), []byte("BM"), {0x1a, 0x45, 0xdf, 0xa3}, []byte("OggS"), []byte("fLaC"), []byte("ID3")} {
 		if len(buf) >= len(magic) && string(buf[:len(magic)]) == string(magic) {
 			return true
 		}

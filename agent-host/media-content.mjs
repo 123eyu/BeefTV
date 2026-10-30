@@ -178,3 +178,26 @@ export function adaptMediaRequest(payload, { api, modelId, nativePartStore }, ex
   flush();
   return { ...payload, messages };
 }
+
+// 用户附带的图片先读成画面再交给模型。素材本身读不出来时（格式、大小、解码等 media_* 原因），
+// 明确告诉模型这张图没有看到，整轮对话继续；鉴权、权限等其他错误照常抛出。
+export async function attachmentContent(body, turnId, opsRequest) {
+  const content = [{type:'text',text:body.message || '请分析所提供的素材，并说明适合如何使用。'}];
+  for (const attachment of body.attachments || []) {
+    content.push({type:'text',text:`用户提供素材：${JSON.stringify(attachment)}。使用 media.inspect 读取实际画面或音频后再判断；片段秒数转换为 startMs/endMs。`});
+    if (attachment.kind !== 'image') continue;
+    const reference = {canvasId:body.canvasId,
+      ...(attachment.nodeId ? {nodeId:attachment.nodeId}:{assetId:attachment.assetId}),resourceId:attachment.resourceId};
+    try {
+      const overview = await opsRequest('POST','/ops/media.overview',{params:reference},undefined,turnId);
+      const data = overview.result.image?.view === 'preview' ? overview : await opsRequest('POST','/ops/media.inspect',{params:{...reference,
+        expectedVersion:overview.result.source.version,mode:'frames'}},undefined,turnId);
+      if (data.result.image) content.push({type:'text',text:JSON.stringify({image:data.result.image,note:data.result.note,source:data.result.source})});
+      content.push(...data.result.content.filter(part=>part.type==='image').map(part=>({type:'image',data:part.data,mimeType:part.mimeType})));
+    } catch (error) {
+      if (!String(error?.reason || '').startsWith('media_')) throw error;
+      content.push({type:'text',text:`这张图片没有读取成功（${error.reason}）。不要根据文件名或描述猜测画面内容；告诉用户这张图没有看到，可以换成 PNG 或 JPEG 后重新发送。`});
+    }
+  }
+  return content;
+}

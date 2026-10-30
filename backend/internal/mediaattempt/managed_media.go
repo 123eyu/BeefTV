@@ -9,6 +9,8 @@ import (
 	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/outbound"
+	localtask "infinite-canvas/backend/internal/task"
 	"net/http"
 	"strings"
 	"time"
@@ -215,11 +217,14 @@ func (s *Service) ManagedTaskQuery(ctx context.Context, task model.Task, row *mo
 	runtime, _ := generation.RuntimeFromContext(ctx)
 	client.AllowHTTPTest = runtime.Endpoints.BeefAPIVideoBaseURL != ""
 	client.Project = managedMediaPort{service: s}.Project
+	startedAt := time.Now()
 	client.Observe = func(req *http.Request, resp *http.Response, body []byte, callErr error) {
+		started := startedAt
+		startedAt = time.Now()
 		if runtime.Receipts == nil {
 			return
 		}
-		observation := generation.TransportObservation{Request: req, Body: body, Err: callErr, Dispatched: true}
+		observation := generation.TransportObservation{Request: req, Body: body, Err: callErr, StartedAt: started, Dispatched: true}
 		if resp != nil {
 			observation.StatusCode = resp.StatusCode
 			observation.HTTPStatus = resp.StatusCode
@@ -271,4 +276,115 @@ func (s *Service) ManagedTaskRecoveryQuery(ctx context.Context, task model.Task)
 		return Query{}, false, err
 	}
 	return s.ManagedTaskQuery(ctx, task, row)
+}
+
+const (
+	videoRecoveryRetentionWindow = 24 * time.Hour
+	managedVideoUnreportedAge    = 7 * 24 * time.Hour
+)
+
+func ManagedFailureInfo(err error) (statusCode int, explicitRejection, terminalFailure bool) {
+	var managedHTTP *beefapi.MediaHTTPError
+	if errors.As(err, &managedHTTP) {
+		statusCode = managedHTTP.StatusCode
+		if managedHTTP.StatusCode >= 400 && managedHTTP.StatusCode < 500 &&
+			managedHTTP.StatusCode != http.StatusRequestTimeout &&
+			managedHTTP.StatusCode != http.StatusConflict &&
+			managedHTTP.StatusCode != http.StatusTooEarly &&
+			managedHTTP.StatusCode != http.StatusTooManyRequests {
+			explicitRejection = true
+		}
+	}
+	var managedTask *beefapi.MediaTaskError
+	if errors.As(err, &managedTask) && managedTask.Code != "media_result_unknown" && managedTask.Code != "media_delivery_pending" {
+		if managedTask.Code == "media_submission_rejected" && strings.TrimSpace(managedTask.TaskID) == "" {
+			explicitRejection = true
+		} else {
+			terminalFailure = true
+		}
+	}
+	return statusCode, explicitRejection, terminalFailure
+}
+
+func ClassifyFailedVideoQueryOutcome(task model.Task, providerStatus string, err error, now time.Time) string {
+	if mediaErr := (*beefapi.MediaTaskError)(nil); (errors.As(err, &mediaErr) && mediaErr.Code == "media_submission_rejected") || isUnreportedManagedInvalidQuery(task, providerStatus, err) {
+		return localtask.RecoveryNoResult
+	}
+	if BeefAPIOwnsVideoConclusion(task, now) {
+		if isTerminalVideoProviderStatus(providerStatus) && (task.BeefUsageState != nil || task.BeefBillingState != nil) {
+			return localtask.RecoveryNoResult
+		}
+		return ""
+	}
+	if dns := (*outbound.DNSResolutionError)(nil); errors.As(err, &dns) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return ""
+	}
+	if payloadErr := (generation.PayloadError{}); isTerminalVideoProviderStatus(providerStatus) || errors.As(err, &payloadErr) {
+		return localtask.RecoveryNoResult
+	}
+	if isUnrecoverableVideoQueryError(err) || VideoTaskPastRetentionWindow(task, now) {
+		return localtask.RecoveryUnrecoverable
+	}
+	return ""
+}
+
+func isUnreportedManagedInvalidQuery(task model.Task, providerStatus string, err error) bool {
+	if !ManagedTaskConnection(task) || task.BeefUsageState != nil || task.BeefBillingState != nil || task.BeefReconcileDeadline != nil || (strings.TrimSpace(providerStatus) != "" && !isTerminalVideoProviderStatus(providerStatus)) {
+		return false
+	}
+	httpErr, mediaHTTP := generation.HTTPError{}, (*beefapi.MediaHTTPError)(nil)
+	return (errors.As(err, &httpErr) && (httpErr.StatusCode == http.StatusBadRequest || httpErr.StatusCode == http.StatusUnprocessableEntity)) ||
+		(errors.As(err, &mediaHTTP) && (mediaHTTP.StatusCode == http.StatusBadRequest || mediaHTTP.StatusCode == http.StatusUnprocessableEntity))
+}
+
+func isTerminalVideoProviderStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "failed", "failure", "error", "cancelled", "canceled", "expired":
+		return true
+	}
+	return false
+}
+
+func isUnrecoverableVideoQueryError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if upstream := (generation.HTTPError{}); errors.As(err, &upstream) && (upstream.StatusCode == http.StatusUnauthorized || upstream.StatusCode == http.StatusForbidden) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "该任务的请求协议不支持安全查询上游状态") || strings.Contains(msg, "上游返回的任务 ID 与原视频任务不一致") ||
+		strings.Contains(msg, "RunningHub 返回的任务 ID 与原请求不一致") || strings.Contains(msg, "超分回执与原任务不一致") || strings.Contains(msg, "任务输入解析失败") || strings.Contains(msg, "该任务没有可恢复的上游任务 ID")
+}
+
+func VideoTaskPastRetentionWindow(task model.Task, now time.Time) bool {
+	if ManagedTaskConnection(task) {
+		return !BeefAPIOwnsVideoConclusion(task, now)
+	}
+	anchor := videoTaskAnchor(task)
+	return !anchor.IsZero() && now.Sub(anchor) >= videoRecoveryRetentionWindow
+}
+
+// 托管视频结论由 BeefAPI 给出；无结算记录的旧任务若回查已被 400/422 拒绝（isUnreportedManagedInvalidQuery）则立即按无结果终结，
+// 若仅遇 404/5xx 等暂态或未知响应则保留 7 天（覆盖跨周末异步对账窗口，参见 TestManagedVideoDoesNotInferSettlementOrExpiry），超期再本地终结。
+func BeefAPIOwnsVideoConclusion(task model.Task, now time.Time) bool {
+	if !ManagedTaskConnection(task) {
+		return false
+	}
+	if task.BeefUsageState != nil || task.BeefBillingState != nil || task.BeefReconcileDeadline != nil {
+		return true
+	}
+	anchor := videoTaskAnchor(task)
+	return anchor.IsZero() || now.Sub(anchor) < managedVideoUnreportedAge
+}
+
+func VideoTaskAnchor(task model.Task) time.Time {
+	return videoTaskAnchor(task)
+}
+
+func videoTaskAnchor(task model.Task) time.Time {
+	if task.StartedAt != nil && !task.StartedAt.IsZero() {
+		return *task.StartedAt
+	}
+	return task.CreatedAt
 }

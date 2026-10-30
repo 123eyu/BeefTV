@@ -1,9 +1,11 @@
+import { onStorageNamespaceChange } from "@/lib/user-scope";
 import { captureVideoPoster } from "@/lib/video-poster";
 import { acquireCanvasVideoSource } from "@/services/canvas-video-source";
 import type { CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
 
 type VideoPreview = NonNullable<CanvasNodeMetadata["videoPreview"]>;
 type VideoPreviewSource = Pick<CanvasNodeData, "metadata">;
+type CachedPoster = { poster: Blob; meta: Omit<VideoPreview, "content"> };
 
 export const CANVAS_VIDEO_PREVIEW_VERSION = 2;
 
@@ -13,7 +15,39 @@ export function canvasDerivedPreviewSourceKey(node: VideoPreviewSource) {
 
 type PreviewEntry = { refs: number; controller: AbortController; url?: string; promise: Promise<VideoPreview | null> };
 const previewRequests = new Map<string, PreviewEntry>();
+const posterBlobCache = new Map<string, CachedPoster>();
 const MAX_ACTIVE_PREVIEWS = 32;
+onStorageNamespaceChange(() => posterBlobCache.clear());
+const MAX_CONCURRENT_PREVIEW_SOURCES = 2;
+let activePreviewSources = 0;
+const previewSourceQueue: Array<() => void> = [];
+
+function acquirePreviewSourceSlot(signal?: AbortSignal) {
+    if (signal?.aborted) return Promise.reject(abortError());
+    if (activePreviewSources < MAX_CONCURRENT_PREVIEW_SOURCES) {
+        activePreviewSources += 1;
+        return Promise.resolve(releasePreviewSourceSlot);
+    }
+    return new Promise<() => void>((resolve, reject) => {
+        const grant = () => {
+            signal?.removeEventListener("abort", onAbort);
+            resolve(releasePreviewSourceSlot);
+        };
+        const onAbort = () => {
+            const idx = previewSourceQueue.indexOf(grant);
+            if (idx >= 0) previewSourceQueue.splice(idx, 1);
+            reject(abortError());
+        };
+        signal?.addEventListener("abort", onAbort, { once: true });
+        previewSourceQueue.push(grant);
+    });
+}
+
+function releasePreviewSourceSlot() {
+    const next = previewSourceQueue.shift();
+    if (next) next();
+    else activePreviewSources = Math.max(0, activePreviewSources - 1);
+}
 
 function disposeEntry(key: string, entry: PreviewEntry) {
     entry.controller.abort();
@@ -33,7 +67,7 @@ export function acquireCanvasVideoPreview(node: VideoPreviewSource) {
             // Existing consumers still own their leases; never remove a newer retry.
             if (previewRequests.get(requestKey) === created) previewRequests.delete(requestKey);
         };
-        created.promise = generateCanvasVideoPreview(node, controller.signal).then((preview) => {
+        created.promise = generateCanvasVideoPreview(node, requestKey, controller.signal).then((preview) => {
             if (!preview) { forgetFailedRequest(); return null; }
             if (controller.signal.aborted) { URL.revokeObjectURL(preview.content); return null; }
             created.url = preview.content;
@@ -59,21 +93,33 @@ export function canvasVideoPreviewNeedsHydration(node: VideoPreviewSource) {
     return !preview?.content || preview.captureVersion !== CANVAS_VIDEO_PREVIEW_VERSION || preview.sourceKey !== sourceKey;
 }
 
-async function generateCanvasVideoPreview(node: VideoPreviewSource, signal?: AbortSignal): Promise<VideoPreview | null> {
+async function generateCanvasVideoPreview(node: VideoPreviewSource, requestKey: string, signal?: AbortSignal): Promise<VideoPreview | null> {
+    const cached = posterBlobCache.get(requestKey);
+    if (cached) {
+        posterBlobCache.delete(requestKey);
+        posterBlobCache.set(requestKey, cached);
+        await Promise.resolve();
+        throwIfAborted(signal);
+        return { ...cached.meta, content: URL.createObjectURL(cached.poster) };
+    }
     await waitForBrowserIdle(signal);
-    throwIfAborted(signal);
-    const source = await acquireCanvasVideoSource(node.metadata?.storageKey, node.metadata?.content || "", signal);
-    if (!source.url) { source.release(); return null; }
+    const releaseSlot = await acquirePreviewSourceSlot(signal);
     let captured: Awaited<ReturnType<typeof captureVideoPoster>>;
     try {
-        captured = await captureVideoPoster(source.url, { signal, maxWidth: 400 });
+        throwIfAborted(signal);
+        const source = await acquireCanvasVideoSource(node.metadata?.storageKey, node.metadata?.content || "", signal);
+        if (!source.url) { source.release(); return null; }
+        try {
+            captured = await captureVideoPoster(source.url, { signal, maxWidth: 400 });
+        } finally {
+            source.release();
+        }
     } finally {
-        source.release();
+        releaseSlot();
     }
     throwIfAborted(signal);
     if (!captured.poster) return null;
-    return {
-        content: URL.createObjectURL(captured.poster),
+    const meta: Omit<VideoPreview, "content"> = {
         width: captured.width,
         height: captured.height,
         bytes: captured.poster.size,
@@ -81,6 +127,16 @@ async function generateCanvasVideoPreview(node: VideoPreviewSource, signal?: Abo
         captureVersion: CANVAS_VIDEO_PREVIEW_VERSION,
         sourceKey: canvasVideoPreviewSourceKey(node),
         capturedAtMs: captured.capturedAtMs,
+    };
+    if (posterBlobCache.has(requestKey)) posterBlobCache.delete(requestKey);
+    else if (posterBlobCache.size >= MAX_ACTIVE_PREVIEWS) {
+        const oldestKey = posterBlobCache.keys().next().value;
+        if (oldestKey !== undefined) posterBlobCache.delete(oldestKey);
+    }
+    posterBlobCache.set(requestKey, { poster: captured.poster, meta });
+    return {
+        ...meta,
+        content: URL.createObjectURL(captured.poster),
     };
 }
 

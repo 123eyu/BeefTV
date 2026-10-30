@@ -145,3 +145,52 @@ func TestManagedAudioUsesAdvertisedOperationAndPersistsOriginal(t *testing.T) {
 		})
 	}
 }
+
+// BeefAPI enables audio on the unified task endpoint separately; until it lists
+// audio, a new speech task keeps using the existing speech endpoint.
+func TestManagedAudioUsesSpeechEndpointUntilAPIListsAudio(t *testing.T) {
+	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
+	audio, err := os.ReadFile("testdata/managed-audio-fixture.mp3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var speech, mediaTasks atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/models":
+			w.Header().Set(beefapi.MediaProtocolHeader, beefapi.MediaProtocolVersion)
+			_ = json.NewEncoder(w).Encode(map[string]any{"media_protocol": beefapi.MediaDiscovery{Version: beefapi.MediaProtocolVersion, SupportedMediaTypes: []string{"image", "video"}, TaskSubmitURL: "/v1/media/tasks", TaskQueryURLTemplate: "/v1/media/tasks/{task_ref}", UploadsURL: "/v1/media/uploads"}, "data": []any{}})
+		case r.URL.Path == "/v1/audio/speech":
+			speech.Add(1)
+			w.Header().Set("Content-Type", "audio/mpeg")
+			_, _ = w.Write(audio)
+		case strings.HasPrefix(r.URL.Path, "/v1/media/"):
+			mediaTasks.Add(1)
+			http.Error(w, "audio is not enabled", http.StatusBadRequest)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	path, dir := filepath.Join(t.TempDir(), "workspace.db"), t.TempDir()
+	svc, db := newManagedImageDirectService(t, path, dir)
+	defer closeDB(t, db)
+	input := generation.Input{Mode: "audio", Prompt: "秋夜鱼灯映古巷", Config: generation.Config{CredentialRef: beefapi.CredentialRef, MediaProtocolVersion: beefapi.MediaProtocolVersion, APIKey: "fixture", BaseURL: server.URL, Model: "minimax-speech-2.8-turbo", AudioVoice: "speaker", AudioFormat: "mp3"}}
+	raw, _ := json.Marshal(input)
+	expires := time.Now().Add(time.Hour)
+	task := model.Task{ID: "audio-speech", UserID: "user-1", Type: "canvas_audio", Status: model.TaskStatusRunning, InputJSON: string(raw), LeaseOwner: "worker", LeaseExpiresAt: &expires}
+	attempt := &model.RouteAttempt{ID: "audio-speech-attempt", TaskID: task.ID, ChannelID: beefapi.ChannelID, Status: "dispatching", DispatchState: "not_sent", StartedAt: time.Now()}
+	for _, row := range []any{&task, attempt} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx := generation.WithEndpoints(context.Background(), generation.Endpoints{BeefAPIVideoBaseURL: server.URL})
+	ctx = svc.bindGenerationRuntime(ctx, generation.CallMeta{UserID: task.UserID, TaskID: task.ID, TaskType: task.Type})
+	ctx = context.WithValue(withProviderSubmissionKey(ctx, attempt), imageTaskContext{}, task)
+	result, err := generation.Execute(ctx, input)
+	if err != nil || result["mode"] != "audio" || speech.Load() != 1 || mediaTasks.Load() != 0 {
+		t.Fatalf("result=%#v err=%v speech=%d mediaTasks=%d", result, err, speech.Load(), mediaTasks.Load())
+	}
+}

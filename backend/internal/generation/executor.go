@@ -87,12 +87,15 @@ func Execute(ctx context.Context, input Input) (map[string]any, error) {
 		return runManagedImageTask(ctx, input)
 	}
 	if input.Mode == "video" {
-		unified, err := useManagedMediaEnvelope(ctx, input.Config)
+		client, unified, err := useManagedMediaEnvelope(ctx, input.Config, "video")
 		if err != nil {
 			return nil, err
 		}
 		if unified {
-			return runManagedVideoTask(ctx, input)
+			return runManagedVideoTask(ctx, client, input)
+		}
+		if client != nil {
+			ctx = context.WithValue(ctx, managedClientContextKey{}, client)
 		}
 	}
 
