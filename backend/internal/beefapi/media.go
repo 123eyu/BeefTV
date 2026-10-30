@@ -82,6 +82,55 @@ type MediaTaskError struct {
 
 func (e *MediaTaskError) Error() string { return e.Message }
 
+// Pending 表示 BeefAPI 还没有给出这次提交的结论（结果未确认或仍在保存），
+// 只能继续按同一个 task_ref 查询。其余任务错误都是 BeefAPI 对这次提交的最终结论。
+// 判断托管媒体错误是否终态只读这里，不在调用方另列错误码。
+func (e *MediaTaskError) Pending() bool {
+	return e.Code == "media_result_unknown" || e.Code == "media_delivery_pending"
+}
+
+// IsTerminalMediaTaskError 表示 BeefAPI 已对这次提交给出最终的失败结论。
+func IsTerminalMediaTaskError(err error) bool {
+	var task *MediaTaskError
+	return errors.As(err, &task) && !task.Pending()
+}
+
+// IsDefiniteMediaRejection 表示 BeefAPI 明确拒绝了这次请求：4xx，
+// 但超时、冲突、过早和限流除外（这几种只代表暂时没处理，原请求仍可能成立）。
+func IsDefiniteMediaRejection(err error) bool {
+	var httpErr *MediaHTTPError
+	if !errors.As(err, &httpErr) {
+		return false
+	}
+	switch httpErr.StatusCode {
+	case http.StatusRequestTimeout, http.StatusConflict, http.StatusTooEarly, http.StatusTooManyRequests:
+		return false
+	}
+	return httpErr.StatusCode >= 400 && httpErr.StatusCode < 500
+}
+
+// MediaTaskMissingError 是查询原编号得到的 404：用这把 Key 查不到这个编号的提交记录。
+// BeefAPI 说明它不能单独证明「没提交过」（记录存在但当前不可见时也会返回 404），
+// 所以它不是 MediaHTTPError，不会被当成「明确被拒」。提交时的 404 仍是 MediaHTTPError。
+type MediaTaskMissingError struct {
+	Code      string
+	RequestID string
+}
+
+func (e *MediaTaskMissingError) Error() string { return "BeefAPI 查不到这个编号的提交记录" }
+
+// IsMediaTaskNotFound 表示查询原编号时 BeefAPI 查不到这次提交。
+func IsMediaTaskNotFound(err error) bool {
+	var missing *MediaTaskMissingError
+	return errors.As(err, &missing)
+}
+
+// IsIdempotencyConflict 表示这个编号已被内容不同的另一次提交占用。
+func IsIdempotencyConflict(err error) bool {
+	var httpErr *MediaHTTPError
+	return errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusConflict && httpErr.TaskError.Code == "idempotency_conflict"
+}
+
 type MediaTask struct {
 	TaskRef           string          `json:"task_ref"`
 	MediaType         string          `json:"media_type"`
@@ -373,25 +422,13 @@ func (c *MediaClient) Execute(ctx context.Context, request MediaRequest, refs []
 			if decodeErr == nil && task.Status == "failed" {
 				return nil, task.failure()
 			}
-		} else if isTerminalMediaSendError(sendErr) {
+		} else if IsDefiniteMediaRejection(sendErr) {
 			return nil, sendErr
 		}
 		// Any dispatched result, including 429 or a lost response, is observed by
 		// GET thereafter. Never automatically create another request/key here.
 	}
 	return c.Wait(ctx, request.TaskRef, request.MediaType, false)
-}
-
-func isTerminalMediaSendError(err error) bool {
-	var httpErr *MediaHTTPError
-	if !errors.As(err, &httpErr) {
-		return false
-	}
-	switch httpErr.StatusCode {
-	case http.StatusRequestTimeout, http.StatusConflict, http.StatusTooEarly, http.StatusTooManyRequests:
-		return false
-	}
-	return httpErr.StatusCode >= 400 && httpErr.StatusCode < 500
 }
 
 func mediaStringMember(values []string, value string) bool {
@@ -410,6 +447,36 @@ func decodeMediaTask(data []byte, ref, kind string) (MediaTask, error) {
 	}
 	return task, nil
 }
+
+// Resubmit 把发出前冻结的原始提交请求原样再发一次：同一地址、同一请求头
+// （原 Key 与 Idempotency-Key）、同一请求体。BeefAPI 按编号去重，收到过就返回
+// 原任务，没收到才第一次执行，所以不会产生第二次付费生成。
+func (c *MediaClient) Resubmit(ctx context.Context, rawURL string, header http.Header, body []byte, ref, kind string) (MediaTask, error) {
+	if ref == "" || strings.TrimSpace(header.Get("Idempotency-Key")) != ref {
+		return MediaTask{}, errors.New("原请求的提交编号与任务不一致，不能补交")
+	}
+	ctx = c.networkContext(ctx)
+	if err := c.validURLContext(ctx, rawURL); err != nil {
+		return MediaTask{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rawURL, bytes.NewReader(body))
+	if err != nil {
+		return MediaTask{}, err
+	}
+	req.Header = header.Clone()
+	req.Header.Del("Content-Length")
+	req.GetBody = nil
+	data, _, err := c.send(req, 4<<20)
+	if err != nil {
+		return MediaTask{}, err
+	}
+	task, err := decodeMediaTask(data, ref, kind)
+	if err == nil && c.Project != nil {
+		c.Project(ctx, task)
+	}
+	return task, err
+}
+
 func (c *MediaClient) Query(ctx context.Context, ref, kind string) (MediaTask, error) {
 	if ref == "" {
 		return MediaTask{}, errors.New("媒体任务编号为空")
@@ -422,6 +489,9 @@ func (c *MediaClient) Query(ctx context.Context, ref, kind string) (MediaTask, e
 	q.Set("media_type", kind)
 	req.URL.RawQuery = q.Encode()
 	data, _, err := c.send(req, 4<<20)
+	if httpErr := (*MediaHTTPError)(nil); errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusNotFound {
+		return MediaTask{}, &MediaTaskMissingError{Code: httpErr.TaskError.Code, RequestID: httpErr.RequestID}
+	}
 	if err != nil {
 		return MediaTask{}, err
 	}
@@ -432,8 +502,22 @@ func (c *MediaClient) Query(ctx context.Context, ref, kind string) (MediaTask, e
 	return task, err
 }
 func (c *MediaClient) Wait(ctx context.Context, ref, kind string, legacy bool) (map[string]any, error) {
+	return c.wait(ctx, ref, kind, legacy, false)
+}
+
+// Collect 与 Wait 相同，但 BeefAPI 查不到这个编号时立即返回 404，交给调用方处理。
+// 只给恢复路径用：那时原请求早已发出。刚发出请求时查不到可能是请求还在路上，
+// 所以生成过程仍用 Wait。
+func (c *MediaClient) Collect(ctx context.Context, ref, kind string, legacy bool) (map[string]any, error) {
+	return c.wait(ctx, ref, kind, legacy, true)
+}
+
+func (c *MediaClient) wait(ctx context.Context, ref, kind string, legacy, stopWhenMissing bool) (map[string]any, error) {
 	for {
 		task, err := c.Query(ctx, ref, kind)
+		if stopWhenMissing && IsMediaTaskNotFound(err) {
+			return nil, err
+		}
 		if err == nil {
 			switch task.Status {
 			case "completed":

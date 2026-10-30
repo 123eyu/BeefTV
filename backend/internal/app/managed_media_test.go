@@ -73,6 +73,13 @@ func TestManagedImageOldLocalConclusionMustBeCheckedWithAPI(t *testing.T) {
 				if err != nil || gets != 1 || latest.RecoveryOutcome == nil || *latest.RecoveryOutcome != localtask.RecoveryNoResult || latest.BeefBillingState == nil || *latest.BeefBillingState != "settled" {
 					t.Fatalf("API failure not retained: err=%v gets=%d task=%+v", err, gets, latest)
 				}
+			} else if state == "404" {
+				// 原请求已过保存期，用原 Key 仍查不到原编号：既不能补交也无法确认，
+				// 结论为「无法取回」（重新生成前确认），并留出间隔继续向 BeefAPI 复查。
+				// 见 docs/architecture/unconfirmed-submission.md 第 5.1 节。
+				if gets == 0 || latest.RecoveryOutcome == nil || *latest.RecoveryOutcome != localtask.RecoveryUnrecoverable || latest.NextPollAt == nil || time.Until(*latest.NextPollAt) < 30*time.Minute {
+					t.Fatalf("missing expired submission not concluded: err=%v gets=%d task=%+v", err, gets, latest)
+				}
 			} else if err == nil || latest.RecoveryOutcome != nil || latest.NextPollAt == nil {
 				t.Fatalf("unknown task retained local terminal conclusion: err=%v task=%+v", err, latest)
 			}

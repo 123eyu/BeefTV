@@ -245,12 +245,31 @@ func (s *Service) ManagedTaskQuery(ctx context.Context, task model.Task, row *mo
 	return Query{Client: client, Key: key, Kind: kind, Legacy: wire.ReplayProtocol != beefapi.MediaProtocolVersion}, true, nil
 }
 
+// CollectManagedImage 在生成过程中（含重启后接着跟进）等待原任务结果。查不到编号也继续等：
+// 原请求可能还在路上，这时下「被拒」的结论会让用户重新生成而原请求之后照样扣费。
 func (s *Service) CollectManagedImage(ctx context.Context, task model.Task, row *model.ImageSubmission) (map[string]any, bool, error) {
 	query, managed, err := s.ManagedTaskQuery(ctx, task, row)
 	if err != nil || !managed {
 		return nil, managed, err
 	}
 	result, err := query.Client.Wait(ctx, query.Key, query.Kind, query.Legacy)
+	if err != nil {
+		return nil, true, imageRecoveryError{err}
+	}
+	return result, true, nil
+}
+
+// RecoverManagedImage 在失败任务的恢复里取原任务结果。查不到原编号时立即返回 404，
+// 交给 ResolveMissingManagedSubmission 决定补交还是下结论；其余错误按暂时失败处理。
+func (s *Service) RecoverManagedImage(ctx context.Context, task model.Task, row *model.ImageSubmission) (map[string]any, bool, error) {
+	query, managed, err := s.ManagedTaskQuery(ctx, task, row)
+	if err != nil || !managed {
+		return nil, managed, err
+	}
+	result, err := query.Client.Collect(ctx, query.Key, query.Kind, query.Legacy)
+	if beefapi.IsMediaTaskNotFound(err) {
+		return nil, true, err
+	}
 	if err != nil {
 		return nil, true, imageRecoveryError{err}
 	}
@@ -287,16 +306,10 @@ func ManagedFailureInfo(err error) (statusCode int, explicitRejection, terminalF
 	var managedHTTP *beefapi.MediaHTTPError
 	if errors.As(err, &managedHTTP) {
 		statusCode = managedHTTP.StatusCode
-		if managedHTTP.StatusCode >= 400 && managedHTTP.StatusCode < 500 &&
-			managedHTTP.StatusCode != http.StatusRequestTimeout &&
-			managedHTTP.StatusCode != http.StatusConflict &&
-			managedHTTP.StatusCode != http.StatusTooEarly &&
-			managedHTTP.StatusCode != http.StatusTooManyRequests {
-			explicitRejection = true
-		}
+		explicitRejection = beefapi.IsDefiniteMediaRejection(err)
 	}
 	var managedTask *beefapi.MediaTaskError
-	if errors.As(err, &managedTask) && managedTask.Code != "media_result_unknown" && managedTask.Code != "media_delivery_pending" {
+	if errors.As(err, &managedTask) && !managedTask.Pending() {
 		if managedTask.Code == "media_submission_rejected" && strings.TrimSpace(managedTask.TaskID) == "" {
 			explicitRejection = true
 		} else {
@@ -366,7 +379,9 @@ func VideoTaskPastRetentionWindow(task model.Task, now time.Time) bool {
 }
 
 // 托管视频结论由 BeefAPI 给出；无结算记录的旧任务若回查已被 400/422 拒绝（isUnreportedManagedInvalidQuery）则立即按无结果终结，
-// 若仅遇 404/5xx 等暂态或未知响应则保留 7 天（覆盖跨周末异步对账窗口，参见 TestManagedVideoDoesNotInferSettlementOrExpiry），超期再本地终结。
+// 若仅遇 5xx 等暂态或未知响应则保留 7 天（覆盖跨周末异步对账窗口，参见 TestManagedVideoDoesNotInferSettlementOrExpiry），超期再本地终结。
+// 例外：原 Key 查不到原编号（404）且冻结原请求已过 23 小时保存期时，由 ResolveMissingManagedSubmission 先判「无法取回」，
+// 不再等满 7 天（BeefAPI 收到的提交 30 分钟内就会结案，查不到说明它没有这条记录）。
 func BeefAPIOwnsVideoConclusion(task model.Task, now time.Time) bool {
 	if !ManagedTaskConnection(task) {
 		return false

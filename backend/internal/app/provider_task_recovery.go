@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"infinite-canvas/backend/internal/beefapi"
 	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/model"
 	"infinite-canvas/backend/internal/protocol"
@@ -151,6 +152,23 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 	if unified {
 		queryCtx = context.WithValue(queryCtx, imageTaskContext{}, *task)
 		projection, queryErr := managedQuery.Client.Query(queryCtx, managedQuery.Key, managedQuery.Kind)
+		if beefapi.IsMediaTaskNotFound(queryErr) {
+			outcome, resubmitted, resolveErr := s.mediaAttempts().ResolveMissingManagedSubmission(queryCtx, *task)
+			switch {
+			case outcome != "":
+				if err := s.repo.FinishFailedVideoRecovery(*task, &outcome, nil); err != nil {
+					return nil, err
+				}
+				task.RecoveryOutcome = &outcome
+				projected := taskForOutput(*task)
+				s.attachTaskDelivery(projected)
+				return &ProviderTaskQueryResult{Task: projected, Recovered: false}, nil
+			case resubmitted:
+				projection, queryErr = managedQuery.Client.Query(queryCtx, managedQuery.Key, managedQuery.Kind)
+			case resolveErr != nil:
+				queryErr = resolveErr
+			}
+		}
 		err, providerStatus = queryErr, projection.Status
 		if err == nil {
 			if projection.BillingState != nil {
@@ -167,10 +185,9 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 				result, err = managedQuery.Client.Result(queryCtx, projection, false)
 			}
 			if projection.Status == "failed" {
+				err = errors.New("原媒体任务未成功，请核对原任务结算")
 				if projection.Error != nil {
 					err = projection.Error
-				} else {
-					err = errors.New("原媒体任务未成功，请核对原任务结算")
 				}
 			}
 		}
@@ -183,10 +200,8 @@ func (s *Service) queryFailedVideoTask(ctx context.Context, task *model.Task, cl
 			task.BeefUsageState = &normalized
 		}
 		if settlement.ReconcileDeadline != nil {
-			trimmed := strings.TrimSpace(*settlement.ReconcileDeadline)
-			if trimmed == "" {
-				task.BeefReconcileDeadline = nil
-			} else {
+			task.BeefReconcileDeadline = nil
+			if trimmed := strings.TrimSpace(*settlement.ReconcileDeadline); trimmed != "" {
 				task.BeefReconcileDeadline = &trimmed
 			}
 		} else if settlement.UsageState != nil && !strings.EqualFold(strings.TrimSpace(*settlement.UsageState), "pending") {

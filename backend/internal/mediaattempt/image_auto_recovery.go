@@ -82,8 +82,9 @@ func ImageRecoveryNeedsPolling(task model.Task) bool {
 	return task.RecoveryOutcome == nil || *task.RecoveryOutcome == "" || imageSettlementNeedsPolling(task)
 }
 
-// Earlier clients could conclude that an API task was unrecoverable from its
-// local request age. Only the API can now confirm that conclusion.
+// 托管任务的「无法取回」会定期向 BeefAPI 复查：早期客户端曾只凭本地请求时长下这个结论；
+// 现在本地只在「原 Key 查不到原编号、冻结原请求也已过期」时下（ResolveMissingManagedSubmission），
+// BeefAPI 之后能查到这次提交时，复查会按它的结论纠正。
 func (s *Service) ManagedImageNeedsRecheck(task model.Task) bool {
 	if task.RecoveryOutcome == nil || *task.RecoveryOutcome != localtask.RecoveryUnrecoverable {
 		return false
@@ -153,13 +154,23 @@ func (s *Service) RecoverFailedImage(ctx context.Context, candidate model.Task) 
 	if outcome == "" || imageSettlementNeedsPolling(*task) || (task.ImageJobID != "" && task.BeefBillingState == nil && settlementErr != nil) {
 		// 暂时失败或对账未完成时继续轮询。发送次数只影响退避，不再把 12 次当成结果丢失。
 		delay := 30 * time.Second
-		if a, loadErr := s.repo.LatestRouteAttempt(task.ID); loadErr == nil {
+		if errors.Is(recoveryErr, ErrManagedResubmitted) {
+			delay = 15 * time.Second
+		} else if a, loadErr := s.repo.LatestRouteAttempt(task.ID); loadErr == nil {
 			if row, loadErr := s.repo.ImageSubmission(a.ID, task.ID, task.UserID); loadErr == nil {
 				delay = min(15*time.Minute, 30*time.Second*time.Duration(1<<min(row.SendCount, 5)))
 			}
 		}
 		at := time.Now().Add(delay)
 		next = &at
+	} else if concluded := *task; outcome == localtask.RecoveryUnrecoverable {
+		// 托管图片的「无法取回」仍会定期向 BeefAPI 复查（ManagedImageNeedsRecheck），
+		// 留出间隔，避免每轮扫描都查一次。
+		concluded.RecoveryOutcome = &outcome
+		if s.ManagedImageNeedsRecheck(concluded) {
+			at := time.Now().Add(time.Hour)
+			next = &at
+		}
 	}
 	if err := s.repo.FinishFailedImageRecovery(*task, conclusion, next); err != nil {
 		return err
@@ -294,10 +305,24 @@ func (s *Service) FailedImageResultWith(ctx context.Context, task model.Task, se
 			return nil, "", loadErr
 		}
 		queryCtx := context.WithValue(s.runtime.ForTask(ctx, task), TaskContext{}, task)
-		if recovered, managed, collectErr := s.CollectManagedImage(queryCtx, task, row); managed {
+		// 原任务仍在生成时会一直等；手动取回的请求不能因此一直挂着，到时照常返回「还在确认中」，后台接着跟进。
+		queryCtx, cancelQuery := context.WithTimeout(queryCtx, managedRecoveryCollectWait)
+		defer cancelQuery()
+		if recovered, managed, collectErr := s.RecoverManagedImage(queryCtx, task, row); managed {
 			if collectErr != nil {
-				var terminal *beefapi.MediaTaskError
-				if errors.As(collectErr, &terminal) && terminal.Code != "media_result_unknown" && terminal.Code != "media_delivery_pending" {
+				if beefapi.IsMediaTaskNotFound(collectErr) {
+					outcome, resubmitted, resolveErr := s.ResolveMissingManagedSubmission(queryCtx, task)
+					switch {
+					case outcome != "":
+						return nil, outcome, nil
+					case resubmitted:
+						return nil, "", imageRecoveryError{ErrManagedResubmitted}
+					case resolveErr != nil:
+						return nil, "", resolveErr
+					}
+					return nil, "", imageRecoveryError{collectErr}
+				}
+				if beefapi.IsTerminalMediaTaskError(collectErr) {
 					return nil, localtask.RecoveryNoResult, nil
 				}
 				return nil, "", collectErr
@@ -349,7 +374,7 @@ func (s *Service) FailedImageResultWith(ctx context.Context, task model.Task, se
 	if err != nil {
 		return nil, "", err
 	}
-	if row.RequestCipher == "" || time.Since(row.CreatedAt) >= RecoveryLifetime {
+	if FrozenRequestExpired(row) {
 		return nil, localtask.RecoveryUnrecoverable, nil
 	}
 	safe, err := s.SafeFrozenImageReplay(task, attempt, row)
