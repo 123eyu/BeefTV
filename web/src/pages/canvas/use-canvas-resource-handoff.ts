@@ -10,8 +10,8 @@ import { canvasAssetHandoffIds, consumeCanvasAssetHandoff } from "@/lib/canvas/c
 import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
 import { createStyleProfileSnapshot, resolveStyleProfile, serializeStyleProfile } from "@/lib/canvas/style-profile";
 import { getProject } from "@/services/api/projects";
-import { canReloadCanvasNodeResource, readTaskOutcome } from "@/lib/task-outcome";
-import { queryGenerationTask, recoverTask, type GenerationTask } from "@/services/api/task-center";
+import { canRecoverTaskOutcome, canReloadCanvasNodeResource, readTaskOutcome, taskOutcomeCopy } from "@/lib/task-outcome";
+import { queryGenerationTask, recoverTask, waitForGenerationTask, type GenerationTask } from "@/services/api/task-center";
 import { loadAssetsForUse } from "@/services/local-workspace-sync";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
@@ -22,7 +22,7 @@ import { CanvasNodeType, type CanvasNodeData, type Position } from "@/types/canv
 
 import { readOwnedCanvasNodes, runOwnedCanvasEnsureQueue, runOwnedCanvasPageCommit, useCanvasOwnerLifetime } from "./canvas-owner-epoch";
 import { applyArchivedCanvasNodeAssets, CANVAS_HANDOFF_PERSIST_FAILED_MESSAGE, commitOwnedCanvasAssetHandoff, rebaseCreatedCanvasNodes } from "./canvas-resource-handoff-commit";
-import { canvasGenerationFailureMetadata } from "./canvas-generation-failure";
+import { canvasGenerationFailureMetadata, canvasGenerationTaskNodes, canvasTaskFailureMetadata } from "./canvas-generation-failure";
 import { linkedFolderPresentation, planCanvasHandoffEffect, resolveCanvasAssetHandoffPlan } from "./canvas-resource-handoff-plan";
 
 const NODE_STATUS_SUCCESS = "success" as const;
@@ -307,19 +307,62 @@ export function useCanvasResourceHandoff({
             setNodes((current) =>
                 current.map((item) => (item.id === targetNodeId ? { ...item, metadata: { ...item.metadata, status: "loading", errorDetails: undefined, generationErrorCode: undefined, taskOutcome: undefined } } : item)),
             );
+            let latest: GenerationTask | undefined;
+            // 原任务已有结论时按后台结论显示；不在前端另编「等待取回」，否则节点会卡在继续取回、无法重新生成。
+            const showOriginalTaskState = (task: GenerationTask) => {
+                const outcome = readTaskOutcome(task);
+                if (task.status === "succeeded" && outcome?.phase === "failed") {
+                    // 原任务成功过，但后台已判定结果取不回：照后台结论显示，按它的规则决定能否重新生成。
+                    setNodes((current) => current.map((item) => (item.id === targetNodeId ? { ...item, metadata: { ...item.metadata, status: "error", ...canvasTaskFailureMetadata(task, item.metadata) } } : item)));
+                    message.info(taskOutcomeCopy(outcome).message);
+                    return;
+                }
+                setNodes((current) => canvasGenerationTaskNodes(current, targetNodeId, task));
+                if (task.status === "failed" || task.status === "cancelled") {
+                    message.info(canRecoverTaskOutcome(readTaskOutcome(task)) ? "原任务结果仍待确认，请稍后再取回" : "原任务没有成功，请按节点提示处理");
+                }
+            };
             try {
                 let task = await queryGenerationTask(taskId, { signal: controller.signal });
                 if (!isCurrent()) return;
-                if (task.status !== "succeeded" || task.stage === "delivery_paused" || task.stage === "delivery_timed_out" || readTaskOutcome(task)?.phase === "retrievable") {
+                latest = task;
+                // 后台不接受对已取消任务执行取回，直接按后台结论显示。
+                if (task.status !== "cancelled" && (task.status !== "succeeded" || task.stage === "delivery_paused" || task.stage === "delivery_timed_out" || readTaskOutcome(task)?.phase === "retrievable")) {
                     task = await recoverTask(taskId, { signal: controller.signal });
                     if (!isCurrent()) return;
+                    latest = task;
                 }
-                if (task.status !== "succeeded") throw new Error("原生成任务尚未成功，暂时无法取回结果");
+                if (task.status === "queued" || task.status === "running") {
+                    // 原任务仍在执行：节点显示原任务进度并等待原结果，不重新提交。
+                    const onTaskUpdate = (update: GenerationTask) => {
+                        latest = update;
+                        if (isCurrent()) setNodes((current) => canvasGenerationTaskNodes(current, targetNodeId, update));
+                    };
+                    onTaskUpdate(task);
+                    task = await waitForGenerationTask(taskId, { signal: controller.signal, initialTask: task, onTaskUpdate });
+                    if (!isCurrent()) return;
+                }
+                if (task.status !== "succeeded" || readTaskOutcome(task)?.phase === "failed") {
+                    showOriginalTaskState(task);
+                    return;
+                }
                 await applyGenerationTaskResult(targetNodeId, task, () => !controller.signal.aborted);
             } catch (error) {
                 if (!isCurrent()) return;
                 if ((error instanceof Error && error.name === "AbortError")) return;
+                if (latest?.status === "failed" || latest?.status === "cancelled" || (latest && readTaskOutcome(latest)?.phase === "failed")) {
+                    showOriginalTaskState(latest);
+                    return;
+                }
                 const failure = canvasGenerationFailureMetadata(error, { prompt: node.metadata?.prompt || "" });
+                if (latest?.status !== "succeeded") {
+                    // 没拿到原任务的新结论（查询失败，或原任务仍在执行但暂时查不到进度）：节点恢复成点击前的样子，稍后可以再点继续取回。
+                    setNodes((current) => current.map((item) => (item.id === targetNodeId ? { ...item, metadata: node.metadata } : item)));
+                    if (latest) message.warning("暂时查不到原任务的进度，请稍后再点继续取回");
+                    else message.error(failure.errorDetails || "继续取回失败，请稍后重试");
+                    return;
+                }
+                // 原任务已成功、本机取回或保存结果失败：结果仍在，保留继续取回。
                 setNodes((current) =>
                     current.map((item) =>
                         item.id === targetNodeId

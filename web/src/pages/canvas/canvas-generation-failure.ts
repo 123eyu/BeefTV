@@ -1,5 +1,5 @@
 import { explainGenerationError, generationFailureMetadata } from "@/lib/generation-error";
-import { readNodeTaskOutcome, readTaskOutcome, type TaskOutcome } from "@/lib/task-outcome";
+import { readNodeTaskOutcome, readTaskOutcome, taskOutcomeCopy, type TaskOutcome } from "@/lib/task-outcome";
 import { CanvasNodeType, type CanvasNodeData, type CanvasNodeMetadata } from "@/types/canvas";
 import type { GenerationTask } from "@/services/api/task-center";
 import { CanvasGenerationTargetSaveError } from "@/services/canvas-generation-errors";
@@ -73,10 +73,14 @@ export function canvasTaskFailureMetadata(task: GenerationTask, metadata?: Canva
     }
     const cause = error instanceof Error && error.cause instanceof Error ? error.cause : error;
     const diagnostics = task.status === "succeeded" ? { ...task.failureDiagnostics, source: "client_result" as const, executionResult: "completed" as const, summary: cause instanceof Error ? cause.message : failure.generationErrorSummary, stage: "画布应用结果", capturedAt: new Date().toISOString() } : task.failureDiagnostics;
-    const taskOutcome = task.status === "succeeded"
+    const backendOutcome = readTaskOutcome(task);
+    // 原任务成功但本机应用失败时结果仍可取回；后台已判定结果取不回（phase=failed）时，结论和提示都以后台为准。
+    const resultLost = task.status === "succeeded" && backendOutcome?.phase === "failed";
+    const taskOutcome = task.status === "succeeded" && !resultLost
         ? ("taskOutcome" in failure && failure.taskOutcome ? failure.taskOutcome : { phase: "retrievable" as const, regenerate: "blocked" as const, reason: "delivery_pending" })
-        : (task.outcome ?? ("taskOutcome" in failure ? failure.taskOutcome : undefined) ?? readTaskOutcome(task));
-    return { ...failure, ...(taskOutcome ? { taskOutcome } : {}), taskFailureDiagnostics: diagnostics, taskProviderRequestId: task.providerRequestId };
+        : (task.outcome ?? ("taskOutcome" in failure ? failure.taskOutcome : undefined) ?? backendOutcome);
+    const lostResultCopy = resultLost ? { errorDetails: taskOutcomeCopy(backendOutcome).message, generationErrorCode: undefined } : {};
+    return { ...failure, ...lostResultCopy, ...(taskOutcome ? { taskOutcome } : {}), taskFailureDiagnostics: diagnostics, taskProviderRequestId: task.providerRequestId };
 }
 
 export function canvasImagePendingResultMessage(node: CanvasNodeData | undefined, nodes: CanvasNodeData[]) {
