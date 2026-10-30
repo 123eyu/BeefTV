@@ -32,7 +32,7 @@ func TestNativeArkPluginPreservesInlineAssetsCountsAndAutomaticDuration(t *testi
 			t.Fatalf("%s requires public URL", name)
 		}
 		input.ReferenceAudios = []providerMedia{{URL: "data:audio/wav;base64,AAAA", DurationMs: 2000}, {URL: "asset://voice", DurationMs: 2000}}
-		body := officialVideoCreateBody(t, input)
+		body := officialPluginCreateBody(t, input)
 		if body["duration"] != float64(-1) {
 			t.Fatalf("duration = %#v", body["duration"])
 		}
@@ -43,7 +43,7 @@ func TestNativeArkPluginPreservesInlineAssetsCountsAndAutomaticDuration(t *testi
 		for i := 0; i < 10; i++ {
 			input.ReferenceImages = append(input.ReferenceImages, providerMedia{URL: "asset://image"})
 		}
-		body = officialVideoCreateBody(t, input)
+		body = officialPluginCreateBody(t, input)
 		if len(body["content"].([]any)) != 13 {
 			t.Fatal("plugin truncated references")
 		}
@@ -52,7 +52,7 @@ func TestNativeArkPluginPreservesInlineAssetsCountsAndAutomaticDuration(t *testi
 
 const testGeminiReferenceImageDataURL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 
-func officialVideoCreateBody(t *testing.T, input canvasGenerationInput) map[string]any {
+func officialPluginCreateBody(t *testing.T, input canvasGenerationInput) map[string]any {
 	t.Helper()
 	adapter, ok := loadOfficialFallbackRegistry().Resolve(strings.TrimSpace(input.Config.InterfaceType))
 	if !ok {
@@ -1202,64 +1202,6 @@ func TestRunVideoTaskRequiresOfficialPluginWhenRegistryEmpty(t *testing.T) {
 	}
 }
 
-func TestVolcengineArkImageBodyUsesJSONReferencesAndDownscalesSize(t *testing.T) {
-	body, err := volcengineArkImageBody(canvasGenerationInput{
-		Prompt: "combine the references",
-		Config: providerConfig{Model: "doubao-seedream-test", Size: "3840x2160", SystemPrompt: "keep the subject"},
-		ReferenceImages: []providerMedia{
-			{URL: "https://example.com/first.png"},
-			{DataURL: testReferenceImageDataURL},
-		},
-	})
-	if err != nil {
-		t.Fatalf("volcengineArkImageBody() error = %v", err)
-	}
-	images, ok := body["image"].([]string)
-	if !ok || len(images) != 2 || images[0] != "https://example.com/first.png" || images[1] != testReferenceImageDataURL {
-		t.Fatalf("image = %#v", body["image"])
-	}
-	if body["prompt"] != "keep the subject\n\ncombine the references" {
-		t.Fatalf("prompt = %q", body["prompt"])
-	}
-	if watermark, ok := body["watermark"].(bool); !ok || watermark {
-		t.Fatalf("watermark = %#v, want false", body["watermark"])
-	}
-	if responseFormat, _ := body["response_format"].(string); responseFormat != "b64_json" {
-		t.Fatalf("response_format = %#v, want b64_json", body["response_format"])
-	}
-	size, _ := body["size"].(string)
-	parts := strings.Split(size, "x")
-	if len(parts) != 2 {
-		t.Fatalf("size = %q", size)
-	}
-	width, _ := strconv.Atoi(parts[0])
-	height, _ := strconv.Atoi(parts[1])
-	if width%2 != 0 || height%2 != 0 || int64(width)*int64(height) < volcengineArkImageMinPixels || int64(width)*int64(height) > volcengineArkImageMaxPixels {
-		t.Fatalf("downscaled size = %q", size)
-	}
-}
-
-func TestVolcengineArkImageBodyUpscalesPresetBelowMinimumPixels(t *testing.T) {
-	body, err := volcengineArkImageBody(canvasGenerationInput{
-		Prompt: "vertical image",
-		Config: providerConfig{Model: "doubao-seedream-test", Size: "9:16"},
-	})
-	if err != nil {
-		t.Fatalf("volcengineArkImageBody() error = %v", err)
-	}
-	size, _ := body["size"].(string)
-	parts := strings.Split(size, "x")
-	if len(parts) != 2 {
-		t.Fatalf("size = %q", size)
-	}
-	width, _ := strconv.Atoi(parts[0])
-	height, _ := strconv.Atoi(parts[1])
-	pixels := int64(width) * int64(height)
-	if width%2 != 0 || height%2 != 0 || pixels < volcengineArkImageMinPixels || pixels > volcengineArkImageMaxPixels {
-		t.Fatalf("normalized size = %q", size)
-	}
-}
-
 func TestVolcengineArkImageDataURLsDownloadsRemoteResult(t *testing.T) {
 	t.Setenv("CANVAS_ALLOW_PRIVATE_UPSTREAMS", "true")
 	imageBytes := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00}
@@ -1346,7 +1288,7 @@ func TestRunGeminiImageTaskUsesInlineDataAndImageConfig(t *testing.T) {
 			t.Errorf("imageConfig = %#v", imageConfig)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"image/png","data":"aGVsbG8="}}]}}]}`))
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="}}]}}]}`))
 	}))
 	defer server.Close()
 
@@ -1358,8 +1300,8 @@ func TestRunGeminiImageTaskUsesInlineDataAndImageConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runImageTask() error = %v", err)
 	}
-	images, _ := result["images"].([]map[string]string)
-	if len(images) != 1 || images[0]["dataUrl"] != testReferenceImageDataURL {
+	images, _ := result["images"].([]interface{})
+	if len(images) != 1 || images[0].(map[string]interface{})["dataUrl"] != testGeminiReferenceImageDataURL {
 		t.Fatalf("images = %#v", result["images"])
 	}
 }
@@ -1377,7 +1319,7 @@ func TestRunGeminiImageTaskRejectsInvalidReferenceBeforeRequest(t *testing.T) {
 		Config:          providerConfig{BaseURL: server.URL, APIKey: "test-key", APIFormat: "gemini", Model: "gemini-test", InterfaceType: "gemini-image"},
 		ReferenceImages: []providerMedia{{DataURL: "data:text/plain;base64,aGVsbG8="}},
 	})
-	if err == nil || !strings.Contains(err.Error(), "读取 Gemini Images 参考图失败") || !strings.Contains(err.Error(), "MIME 类型无效") {
+	if err == nil || !strings.Contains(err.Error(), "MIME 类型无效") {
 		t.Fatalf("runImageTask() error = %v", err)
 	}
 	if called {
@@ -2364,7 +2306,7 @@ func TestRunVideoTaskXAIVideoRejectsUnreachableResultURL(t *testing.T) {
 }
 
 func TestXAIVideoPluginMapsUnmarkedImagesToStartFrame(t *testing.T) {
-	body := officialVideoCreateBody(t, canvasGenerationInput{
+	body := officialPluginCreateBody(t, canvasGenerationInput{
 		Mode:   "video",
 		Prompt: "make it move",
 		Config: providerConfig{
@@ -2390,7 +2332,7 @@ func TestXAIVideoPluginMapsUnmarkedImagesToStartFrame(t *testing.T) {
 }
 
 func TestXAIVideoPluginKeepsStartFrameAsImage(t *testing.T) {
-	body := officialVideoCreateBody(t, canvasGenerationInput{
+	body := officialPluginCreateBody(t, canvasGenerationInput{
 		Mode:   "video",
 		Config: providerConfig{Model: "grok-imagine-video-1.5", InterfaceType: "xai-video"},
 		ReferenceImages: []providerMedia{
@@ -2408,7 +2350,7 @@ func TestXAIVideoPluginKeepsStartFrameAsImage(t *testing.T) {
 }
 
 func TestXAIVideoPluginUsesReferenceImagesForReferenceOperation(t *testing.T) {
-	body := officialVideoCreateBody(t, canvasGenerationInput{
+	body := officialPluginCreateBody(t, canvasGenerationInput{
 		Mode:   "video",
 		Config: providerConfig{Model: "grok-imagine-video-1.5", InterfaceType: "xai-video"},
 		ReferenceImages: []providerMedia{
@@ -2620,7 +2562,7 @@ func TestNewAPIChannel1VideoBodyMapsFramesAndReferences(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer server.Close()
 
-	body := officialVideoCreateBody(t, canvasGenerationInput{
+	body := officialPluginCreateBody(t, canvasGenerationInput{
 		Mode:   "video",
 		Prompt: "make it move",
 		Config: providerConfig{Model: "seedance-2.0", InterfaceType: "newapi-channel-1", Size: "9:16", VQuality: "1080P", VideoSeconds: "15", VideoWatermark: "true"},
@@ -2709,42 +2651,42 @@ func TestProtocolRequestRestoresDeclaredVideoResolutionEnum(t *testing.T) {
 	}
 }
 
-func TestProtocolRequestMapsMiniMaxSpeechControls(t *testing.T) {
-	request := protocolRequestFromInput(canvasGenerationInput{
+func TestOfficialAudioPluginMapsMiniMaxSpeechControls(t *testing.T) {
+	request := officialPluginCreateBody(t, canvasGenerationInput{
 		Mode: "audio",
-		Config: providerConfig{
+		Config: providerConfig{InterfaceType: "openai-audio",
 			Model:       "minimax-speech-2.8-hd",
 			AudioVoice:  "alloy",
 			AudioFormat: "mp3",
 			AudioSpeed:  "1.25",
 		},
 	})
-	if request.Extra["audioVoice"] != "male-qn-qingse" {
-		t.Fatalf("audioVoice = %#v, want MiniMax default instead of OpenAI alloy", request.Extra["audioVoice"])
+	if request["voice"] != "male-qn-qingse" {
+		t.Fatalf("audioVoice = %#v, want MiniMax default instead of OpenAI alloy", request["voice"])
 	}
-	if request.Extra["audioFormat"] != "mp3" {
-		t.Fatalf("audioFormat = %#v", request.Extra["audioFormat"])
+	if request["response_format"] != "mp3" {
+		t.Fatalf("audioFormat = %#v", request["response_format"])
 	}
-	if request.Extra["audioSpeed"] != "1.25" {
-		t.Fatalf("audioSpeed = %#v", request.Extra["audioSpeed"])
+	if request["speed"] != 1.25 {
+		t.Fatalf("audioSpeed = %#v", request["speed"])
 	}
 
-	kept := protocolRequestFromInput(canvasGenerationInput{
+	kept := officialPluginCreateBody(t, canvasGenerationInput{
 		Mode: "audio",
-		Config: providerConfig{
+		Config: providerConfig{InterfaceType: "openai-audio",
 			Model:       "beefapi::minimax-speech-2.8-hd",
 			AudioVoice:  "male-qn-jingying",
 			AudioFormat: "wav",
 			AudioSpeed:  "0.8",
 		},
 	})
-	if kept.Extra["audioVoice"] != "male-qn-jingying" || kept.Extra["audioFormat"] != "wav" {
-		t.Fatalf("custom MiniMax controls = %#v", kept.Extra)
+	if kept["voice"] != "male-qn-jingying" || kept["response_format"] != "wav" {
+		t.Fatalf("custom MiniMax controls = %#v", kept)
 	}
 
-	openai := protocolRequestFromInput(canvasGenerationInput{
+	openai := officialPluginCreateBody(t, canvasGenerationInput{
 		Mode: "audio",
-		Config: providerConfig{
+		Config: providerConfig{InterfaceType: "openai-audio",
 			Model:             "gpt-4o-mini-tts",
 			AudioVoice:        "alloy",
 			AudioFormat:       "mp3",
@@ -2752,8 +2694,8 @@ func TestProtocolRequestMapsMiniMaxSpeechControls(t *testing.T) {
 			AudioInstructions: "warm",
 		},
 	})
-	if openai.Extra["audioVoice"] != "alloy" || openai.Extra["audioInstructions"] != "warm" {
-		t.Fatalf("openai extras = %#v", openai.Extra)
+	if openai["voice"] != "alloy" || openai["instructions"] != "warm" {
+		t.Fatalf("openai extras = %#v", openai)
 	}
 }
 
@@ -2789,7 +2731,7 @@ func TestVolcengineArkDeclarativeRequestUsesResolutionSuffix(t *testing.T) {
 }
 
 func TestNewAPIChannel1VideoPluginKeepsInlineDataURL(t *testing.T) {
-	body := officialVideoCreateBody(t, canvasGenerationInput{
+	body := officialPluginCreateBody(t, canvasGenerationInput{
 		Mode:            "video",
 		Prompt:          "make it move",
 		Config:          providerConfig{Model: "seedance-2.0", InterfaceType: "newapi-channel-1"},
@@ -3061,7 +3003,7 @@ func TestNewAPIChannel2PluginSendsDeclaredResolution(t *testing.T) {
 	profile := DefaultModelCapabilityConfigForModel("newapi-channel-2", "declared-video").Video
 	profile.Resolutions = []string{"1440p"}
 	profile.DefaultResolution = ""
-	body := officialVideoCreateBody(t, canvasGenerationInput{
+	body := officialPluginCreateBody(t, canvasGenerationInput{
 		Mode:            "video",
 		Config:          providerConfig{Model: "declared-video", InterfaceType: "newapi-channel-2", VideoSeconds: "6", Size: "16:9", VQuality: "2K"},
 		VideoCapability: profile,
@@ -3072,7 +3014,7 @@ func TestNewAPIChannel2PluginSendsDeclaredResolution(t *testing.T) {
 }
 
 func TestNewAPIChannel2PluginSendsAllReferenceImages(t *testing.T) {
-	body := officialVideoCreateBody(t, canvasGenerationInput{
+	body := officialPluginCreateBody(t, canvasGenerationInput{
 		Mode:   "video",
 		Config: providerConfig{Model: "Seedance 2 Mini", InterfaceType: "newapi-channel-2", VideoSeconds: "10"},
 		ReferenceImages: []providerMedia{

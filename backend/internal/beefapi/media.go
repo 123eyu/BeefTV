@@ -19,11 +19,25 @@ const MediaProtocolHeader = "X-BeefAPI-Media-Protocol"
 const MediaProtocolVersion = "managed-media-v1"
 
 type MediaDiscovery struct {
-	Version              string   `json:"version"`
-	SupportedMediaTypes  []string `json:"supported_media_types"`
-	TaskSubmitURL        string   `json:"task_submit_url"`
-	TaskQueryURLTemplate string   `json:"task_query_url_template"`
-	UploadsURL           string   `json:"uploads_url"`
+	Version              string                          `json:"version"`
+	SupportedMediaTypes  []string                        `json:"supported_media_types"`
+	TaskSubmitURL        string                          `json:"task_submit_url"`
+	TaskQueryURLTemplate string                          `json:"task_query_url_template"`
+	UploadsURL           string                          `json:"uploads_url"`
+	Models               map[string]MediaModelCapability `json:"-"`
+}
+
+type MediaCapability struct {
+	Operations     []string `json:"operations"`
+	Options        []string `json:"options"`
+	ReferenceKinds []string `json:"reference_kinds"`
+	MaxOutputs     int      `json:"max_outputs"`
+	PromptMaxChars int      `json:"prompt_max_chars,omitempty"`
+}
+
+type MediaModelCapability struct {
+	Version      string                     `json:"media_capabilities_version"`
+	Capabilities map[string]MediaCapability `json:"media_capabilities"`
 }
 type MediaReference struct {
 	Kind string `json:"kind"`
@@ -97,20 +111,22 @@ type MediaProjectionPort interface {
 	Project(context.Context, MediaTask)
 }
 type MediaClient struct {
-	BaseURL           string
-	APIKey            string
-	Headers           http.Header
-	Client            *http.Client
-	AllowHTTPTest     bool
-	State             MediaStatePort
-	Open              func(context.Context, string) (io.ReadCloser, string, int64, error)
-	Progress          func(label string, loaded, total int64, phase string)
-	Observe           func(*http.Request, *http.Response, []byte, error)
-	StorageObserve    func(UploadObservation)
-	InspectReference  func(context.Context, LocalMediaReference, io.ReaderAt, int64, string) error
-	ReferenceUploaded func(LocalMediaReference, UploadedMedia)
-	Poll              func(context.Context) error
-	Project           func(context.Context, MediaTask)
+	BaseURL            string
+	APIKey             string
+	Headers            http.Header
+	Client             *http.Client
+	AllowHTTPTest      bool
+	State              MediaStatePort
+	Open               func(context.Context, string) (io.ReadCloser, string, int64, error)
+	Progress           func(label string, loaded, total int64, phase string)
+	Observe            func(*http.Request, *http.Response, []byte, error)
+	StorageObserve     func(UploadObservation)
+	InspectReference   func(context.Context, LocalMediaReference, io.ReaderAt, int64, string) error
+	ReferenceUploaded  func(LocalMediaReference, UploadedMedia)
+	Poll               func(context.Context) error
+	Project            func(context.Context, MediaTask)
+	ExpectedOutputKind string
+	discovery          *MediaDiscovery
 }
 
 func (c *MediaClient) endpoint(path string) (string, error) {
@@ -245,6 +261,9 @@ type MediaHTTPError struct {
 func (e *MediaHTTPError) Error() string { return e.TaskError.Message }
 
 func (c *MediaClient) Discover(ctx context.Context) (MediaDiscovery, error) {
+	if c.discovery != nil {
+		return *c.discovery, nil
+	}
 	req, err := c.request(ctx, http.MethodGet, "/models", nil)
 	if err != nil {
 		return MediaDiscovery{}, err
@@ -255,14 +274,23 @@ func (c *MediaClient) Discover(ctx context.Context) (MediaDiscovery, error) {
 	}
 	var payload struct {
 		MediaProtocol MediaDiscovery `json:"media_protocol"`
+		Data          []struct {
+			ID string `json:"id"`
+			MediaModelCapability
+		} `json:"data"`
 	}
 	if json.Unmarshal(data, &payload) != nil || header.Get(MediaProtocolHeader) != MediaProtocolVersion || payload.MediaProtocol.Version != MediaProtocolVersion {
-		return MediaDiscovery{}, errors.New("图片服务暂不支持当前媒体协议，本次尚未开始生成")
+		return MediaDiscovery{}, errors.New("模型服务暂不支持当前媒体协议，本次尚未开始生成")
 	}
 	d := payload.MediaProtocol
 	if d.TaskSubmitURL != "/v1/media/tasks" || d.TaskQueryURLTemplate != "/v1/media/tasks/{task_ref}" || d.UploadsURL != "/v1/media/uploads" {
 		return MediaDiscovery{}, errors.New("媒体服务任务接口声明无效，本次尚未开始生成")
 	}
+	d.Models = make(map[string]MediaModelCapability, len(payload.Data))
+	for _, model := range payload.Data {
+		d.Models[model.ID] = model.MediaModelCapability
+	}
+	c.discovery = &d
 	return d, nil
 }
 
@@ -291,6 +319,23 @@ func (c *MediaClient) Execute(ctx context.Context, request MediaRequest, refs []
 	}
 	if !supported {
 		return nil, errors.New("媒体服务尚未支持当前任务类型")
+	}
+	if request.MediaType == "audio" || request.MediaType == "upscale" {
+		model := d.Models[request.Model]
+		capability, ok := model.Capabilities[request.MediaType]
+		if !ok || model.Version == "" || capability.MaxOutputs != 1 || !mediaStringMember(capability.Operations, request.Operation) {
+			return nil, errors.New("当前模型尚未声明所选媒体操作，本次尚未提交")
+		}
+		for key := range request.Options {
+			if !mediaStringMember(capability.Options, key) {
+				return nil, fmt.Errorf("当前模型未声明参数 %s，本次尚未提交", key)
+			}
+		}
+		for _, ref := range refs {
+			if !mediaStringMember(capability.ReferenceKinds, ref.Kind) {
+				return nil, errors.New("当前模型不接受所选参考素材类型，本次尚未提交")
+			}
+		}
 	}
 	for _, ref := range refs {
 		link, err := c.UploadReference(ctx, ref)
@@ -333,6 +378,15 @@ func (c *MediaClient) Execute(ctx context.Context, request MediaRequest, refs []
 		// GET thereafter. Never automatically create another request/key here.
 	}
 	return c.Wait(ctx, request.TaskRef, request.MediaType, false)
+}
+
+func mediaStringMember(values []string, value string) bool {
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
 }
 
 func decodeMediaTask(data []byte, ref, kind string) (MediaTask, error) {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"infinite-canvas/backend/internal/generation"
 	"infinite-canvas/backend/internal/kernel"
 	"infinite-canvas/backend/internal/model"
 )
@@ -62,9 +61,9 @@ func (s *Service) RecoverTask(ctx context.Context, userID, id string) (*model.Ta
 		}
 		var recovered *model.Task
 		switch {
-		case task.Type == "canvas_image" && generation.UpscaleMediaType(task.Model) == "":
+		case task.Type == "canvas_image" && !task.IsUpscale():
 			recovered, err = s.deps.Recovery.RecoverImage(ctx, userID, task.ID)
-		case task.Type == "canvas_video" || strings.HasPrefix(task.Type, "video_") || generation.UpscaleMediaType(task.Model) != "":
+		case task.Type == "canvas_video" || strings.HasPrefix(task.Type, "video_") || task.IsUpscale():
 			recovered, err = s.deps.Recovery.RecoverVideoOrUpscale(ctx, userID, task.ID)
 		default:
 			return nil, kernel.BadAuthRequest(RecoverUnsupportedTypeText)

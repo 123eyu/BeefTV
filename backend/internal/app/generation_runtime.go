@@ -4,14 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"infinite-canvas/backend/internal/generation"
+	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/outbound"
 	"io"
 	"net/http"
 	"strings"
 	"time"
-
-	"infinite-canvas/backend/internal/generation"
-	"infinite-canvas/backend/internal/model"
-	"infinite-canvas/backend/internal/outbound"
 )
 
 type appResourcePort struct{ service *Service }
@@ -376,7 +375,7 @@ func (s *Service) applyGenerationRuntime(ctx context.Context, meta generation.Ca
 		Limits:           appLimitsPort{service: s},
 		Receipts:         appReceiptPort{service: s},
 		Images:           appImagePort{service: s},
-		ManagedMedia:     appManagedMediaPort{service: s},
+		ManagedMedia:     s.mediaAttempts().ManagedPort(),
 		Workflow:         appWorkflowPort{service: s},
 		Prompt:           appPromptPort{service: s},
 		Config:           appConfigPort{service: s},

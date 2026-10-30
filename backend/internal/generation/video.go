@@ -41,6 +41,13 @@ func RunVideoTaskWithPolicy(ctx context.Context, input Input, pollPolicy VideoPo
 	// protocol adapters so stale persisted channel metadata cannot select an
 	// incompatible legacy multipart or flat request shape.
 	if managedConnection(input.Config) || IsBeefAPIVideoConfig(ctx, input.Config) {
+		unified, err := useManagedMediaEnvelope(ctx, input.Config)
+		if err != nil {
+			return nil, err
+		}
+		if unified {
+			return runManagedVideoTask(ctx, input)
+		}
 		return runManagedLegacyVideo(ctx, input, pollPolicy)
 	}
 	// 路由顺序是协议边界，不是“哪个请求先试”：官方声明式接口必须由已注册适配器执行，

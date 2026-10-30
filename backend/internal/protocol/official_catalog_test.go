@@ -38,7 +38,7 @@ func TestOfficialProtocolPackagesAreSelfContainedDeclarativePlugins(t *testing.T
 		if err != nil {
 			t.Fatalf("parse %s: %v", filepath.Base(path), err)
 		}
-		if pkg.Manifest.APIVersion != "beeftv.plugin/v2" {
+		if pkg.Manifest.APIVersion != "beeftv.plugin/v2" && pkg.Manifest.APIVersion != "beeftv.plugin/v3" {
 			t.Fatalf("%s apiVersion = %q", filepath.Base(path), pkg.Manifest.APIVersion)
 		}
 		if strings.HasPrefix(strings.TrimSpace(pkg.Manifest.Runtime.Backend), "host:") {
@@ -599,24 +599,24 @@ func manifestTestBody(t *testing.T, spec RequestSpec) map[string]any {
 	return body
 }
 
-func TestOfficialArkSeedreamMapsAspectRatioToPixelSize(t *testing.T) {
+func TestOfficialArkOlderModelsKeepOriginalSizeMapping(t *testing.T) {
 	adapter := officialPackageAdapter(t, "volcengine-ark-seedream.beeftv-plugin", "volcengine-ark-image")
 	tests := []struct {
 		name, aspectRatio, wantSize string
 	}{
-		{name: "ratio maps to 2K pixels", aspectRatio: "1:1", wantSize: "2048x2048"},
+		{name: "square maps to pixels", aspectRatio: "1:1", wantSize: "2048x2048"},
 		{name: "landscape ratio", aspectRatio: "16:9", wantSize: "2560x1440"},
-		{name: "auto maps to 2k tier", aspectRatio: "auto", wantSize: "2k"},
-		{name: "pixel size passes through", aspectRatio: "1920x1080", wantSize: "1920x1080"},
+		{name: "auto preserves old tier", aspectRatio: "auto", wantSize: "2k"},
+		{name: "pixel size passes through", aspectRatio: "2560x1440", wantSize: "2560x1440"},
 		{name: "tier passes through", aspectRatio: "4k", wantSize: "4k"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			create, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{Model: "doubao-seedream-5-0-260128", Prompt: "circle", AspectRatio: tt.aspectRatio}})
+			create, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{Model: "doubao-seedream-3-0-t2i", Prompt: "circle", AspectRatio: tt.aspectRatio}})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if create.Path != "/api/v3/images/generations" {
+			if create.Path != "/images/generations" || create.DefaultPathPrefix != "/api/v3" {
 				t.Fatalf("Seedream create = %#v", create)
 			}
 			if body := manifestTestBody(t, create); body["size"] != tt.wantSize {
@@ -624,12 +624,12 @@ func TestOfficialArkSeedreamMapsAspectRatioToPixelSize(t *testing.T) {
 			}
 		})
 	}
-	create, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{Model: "doubao-seedream-5-0-260128", Prompt: "circle"}})
+	create, err := adapter.BuildCreate(context.Background(), RequestContext{Request: GenerationRequest{Model: "doubao-seedream-3-0-t2i", Prompt: "circle"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := manifestTestBody(t, create)["size"]; ok {
-		t.Fatalf("Seedream must omit size when no ratio is requested")
+	if _, exists := manifestTestBody(t, create)["size"]; exists {
+		t.Fatalf("Older Ark models must omit an unselected size")
 	}
 }
 
@@ -952,7 +952,8 @@ func TestOfficialArkSeedreamParsesB64JSONAsDataURL(t *testing.T) {
 	} {
 		t.Run(tc.providerID, func(t *testing.T) {
 			adapter := officialPackageAdapter(t, tc.packageName, tc.providerID)
-			result, err := adapter.ParseCreate(context.Background(), []byte(`{"created":1,"data":[{"b64_json":"aW1hZ2U=","output_format":"jpeg","size":"1824x1024"}]}`))
+			const image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jR1sAAAAASUVORK5CYII="
+			result, err := adapter.ParseCreate(context.Background(), []byte(`{"created":1,"data":[{"b64_json":"`+image+`","output_format":"png","size":"1824x1024"}]}`))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -960,8 +961,8 @@ func TestOfficialArkSeedreamParsesB64JSONAsDataURL(t *testing.T) {
 				t.Fatalf("result = %#v", result.Result)
 			}
 			dataURL := result.Result.Images[0].DataURL
-			if dataURL != "data:image/jpeg;base64,aW1hZ2U=" {
-				t.Fatalf("DataURL = %q, want jpeg data URL from b64_json + output_format", dataURL)
+			if dataURL != "data:image/png;base64,"+image {
+				t.Fatalf("DataURL = %q, want png data URL", dataURL)
 			}
 		})
 	}

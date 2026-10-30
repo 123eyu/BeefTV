@@ -55,6 +55,36 @@ func LegacyVideoBody(input LegacyVideoInput) (map[string]any, error) {
 			}
 		}
 	}
+	refs, err := VideoIntentReferences(input)
+	if err != nil {
+		return nil, err
+	}
+	content := make([]map[string]any, 0, len(refs))
+	for _, ref := range refs {
+		if ref.URL == "" {
+			return nil, ErrReferencesNotUploaded
+		}
+		kind := ref.Kind + "_url"
+		content = append(content, map[string]any{"type": kind, kind: map[string]any{"url": ref.URL}, "role": ref.Role})
+	}
+	if len(content) > 0 {
+		body["content"] = content
+	}
+	if len(metadata) > 0 {
+		body["metadata"] = metadata
+	}
+	return body, nil
+}
+
+type VideoIntentReference struct {
+	LegacyVideoReference
+	Role        string
+	SourceIndex int
+}
+
+// Frame selection and user reference order are shared by legacy and managed
+// envelopes. Neither envelope derives roles from a supplier or model name.
+func VideoIntentReferences(input LegacyVideoInput) ([]VideoIntentReference, error) {
 	roles := map[string][]string{}
 	for _, selected := range []struct{ key, role string }{{"videoStartFrameNodeId", "first_frame"}, {"videoEndFrameNodeId", "last_frame"}, {"videoMiddleFrameNodeId", "middle_frame"}} {
 		if id, _ := input.Metadata[selected.key].(string); id != "" {
@@ -71,7 +101,10 @@ func LegacyVideoBody(input LegacyVideoInput) (map[string]any, error) {
 			roles[id] = append(roles[id], selected.role)
 		}
 	}
-	references := input.References
+	references := make([]VideoIntentReference, len(input.References))
+	for index, ref := range input.References {
+		references[index] = VideoIntentReference{LegacyVideoReference: ref, SourceIndex: index}
+	}
 	var order []string
 	switch raw := input.Metadata["videoReferenceOrder"].(type) {
 	case []string:
@@ -84,7 +117,7 @@ func LegacyVideoBody(input LegacyVideoInput) (map[string]any, error) {
 		}
 	}
 	if len(order) > 0 {
-		sorted := make([]LegacyVideoReference, 0, len(references))
+		sorted := make([]VideoIntentReference, 0, len(references))
 		seen := map[string]bool{}
 		for _, id := range order {
 			for _, ref := range references {
@@ -101,27 +134,19 @@ func LegacyVideoBody(input LegacyVideoInput) (map[string]any, error) {
 		}
 		references = sorted
 	}
-	content := make([]map[string]any, 0, len(references))
+	result := make([]VideoIntentReference, 0, len(references))
 	for _, ref := range references {
-		if ref.URL == "" {
-			return nil, errors.New("参考素材尚未上传完成")
-		}
 		selected := roles[ref.ID]
 		if len(selected) == 0 {
 			selected = []string{"reference_" + ref.Kind}
 		}
-		kind := ref.Kind + "_url"
 		for _, role := range selected {
-			content = append(content, map[string]any{"type": kind, kind: map[string]any{"url": ref.URL}, "role": role})
+			item := ref
+			item.Role = role
+			result = append(result, item)
 		}
 	}
-	if len(content) > 0 {
-		body["content"] = content
-	}
-	if len(metadata) > 0 {
-		body["metadata"] = metadata
-	}
-	return body, nil
+	return result, nil
 }
 
 // Dispatch is stricter than historical body inspection: built-in video creates

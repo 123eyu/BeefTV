@@ -1,14 +1,12 @@
 package generation
 
-// 图片生成（OpenAI / Claude / Gemini / Grok 等手写路径）。
+// 图片生成：托管媒体、已安装的协议插件和通用 OpenAI Images。
 
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
-	"math"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -16,25 +14,33 @@ import (
 	"strings"
 
 	"infinite-canvas/backend/internal/model"
+	"infinite-canvas/backend/internal/providerpreset"
 )
 
-// usesSeedreamRequestBody 判断这次出图是否走 Seedream 专用请求体。Seedream 型号自带
-// 请求体，能保留图层拆分、图片格式、水印和提示词优化设置，改走通用插件会静默丢掉它们。
-// 例外是 Agent Plan 图片协议：它走 /api/plan/v3/images/generations，只有声明式插件知道
-// 那个端点，按型号名套用官方 Ark 路径会把请求发错地址。
-func usesSeedreamRequestBody(input Input) bool {
-	if seedreamFamily(input.Config.Model) == "" {
-		return false
-	}
-	return model.ChannelInterfaceType(input.Config.InterfaceType) != model.ChannelInterfaceVolcengineArkAgentPlanImage
-}
-
 func RunImageTask(ctx context.Context, input Input) (map[string]interface{}, error) {
+	if input.Mode == "" {
+		input.Mode = "image"
+	}
 	if managedConnection(input.Config) {
 		return runManagedImageTask(ctx, input)
 	}
-	if usesSeedreamRequestBody(input) {
-		return runSeedreamImageTask(ctx, input)
+	// Older saved BYOK channels selected OpenAI even for Ark requests. Keep
+	// those records readable while moving their execution to the installed plugin.
+	if (input.Config.InterfaceType == "" || input.Config.InterfaceType == string(model.ChannelInterfaceOpenAIImage) || input.Config.InterfaceType == string(model.ChannelInterfaceVolcengineArkImage)) && providerpreset.SeedreamFamily(input.Config.Model) != "" {
+		input.Config.InterfaceType = string(model.ChannelInterfaceVolcengineArkImage)
+		if baseAPIPathPrefix(input.Config.BaseURL) == "" {
+			parsed, _ := url.Parse(input.Config.BaseURL)
+			if parsed != nil && parsed.Hostname() != "ark.ap-southeast.bytepluses.com" && parsed.Hostname() != "ark.cn-beijing.volces.com" {
+				input.Config.BaseURL = strings.TrimRight(input.Config.BaseURL, "/") + "/v1"
+			}
+		}
+	}
+	if input.Config.InterfaceType != "" && input.Config.InterfaceType != string(model.ChannelInterfaceOpenAIImage) && input.Config.InterfaceType != string(model.ChannelInterfaceGrokImage) {
+		ctx = EnsureOfficialProtocolAdapter(ctx, input.Config.InterfaceType)
+		if _, ok := DeclarativeProtocolAdapterForContext(ctx, input.Config.InterfaceType); !ok {
+			return nil, RequestPreparationError{Cause: fmt.Errorf("图片协议插件未安装或已停用：%s", input.Config.InterfaceType)}
+		}
+		return RunDeclarativeProtocolTask(ctx, input)
 	}
 	outputCount := 1
 	if input.ImageCapability != nil && input.ImageCapability.FixedOutputs > 0 {
@@ -45,15 +51,6 @@ func RunImageTask(ctx context.Context, input Input) (map[string]interface{}, err
 	}
 	if input.Config.InterfaceType == string(model.ChannelInterfaceGrokImage) {
 		return RunGrokImageTask(ctx, input)
-	}
-	if input.Config.InterfaceType == string(model.ChannelInterfaceVolcengineJiMengImage) {
-		return RunVolcengineJiMengImageTask(ctx, input)
-	}
-	if model.IsVolcengineArkImageProtocol(model.ChannelInterfaceType(input.Config.InterfaceType)) {
-		return RunVolcengineArkImageTask(ctx, input)
-	}
-	if input.Config.InterfaceType == string(model.ChannelInterfaceGeminiImage) {
-		return RunGeminiImageTask(ctx, input)
 	}
 	var payload ImageResponse
 	if input.Mask != nil {
@@ -136,143 +133,6 @@ func RunImageTask(ctx context.Context, input Input) (map[string]interface{}, err
 		result["usage"] = payload.Usage
 	}
 	return result, nil
-}
-
-func RunGeminiImageTask(ctx context.Context, input Input) (map[string]interface{}, error) {
-	if input.Mask != nil {
-		return nil, errors.New("Gemini Images 不支持蒙版编辑，请移除蒙版后重试")
-	}
-	if len(input.ReferenceVideos) > 0 || len(input.ReferenceAudios) > 0 {
-		return nil, errors.New("Gemini Images 不支持参考视频或音频")
-	}
-
-	parts := make([]GeminiImageContentPart, 0, 1+len(input.ReferenceImages))
-	if prompt := strings.TrimSpace(input.Prompt); prompt != "" {
-		parts = append(parts, GeminiImageContentPart{Text: prompt})
-	}
-	for _, image := range input.ReferenceImages {
-		raw, mimeType, err := GeminiImageBytes(image)
-		if err != nil {
-			return nil, fmt.Errorf("读取 Gemini Images 参考图失败：%w", err)
-		}
-		parts = append(parts, GeminiImageContentPart{InlineData: &GeminiImageInlineData{MIMEType: mimeType, Data: base64.StdEncoding.EncodeToString(raw)}})
-	}
-	if len(parts) == 0 {
-		return nil, errors.New("Gemini Images 请求缺少提示词或参考图")
-	}
-
-	body := GeminiImageRequest{
-		Contents: []GeminiImageContent{{Role: "user", Parts: parts}},
-		GenerationConfig: GeminiImageGenerationConfig{
-			ResponseModalities: []string{"TEXT", "IMAGE"},
-			ImageConfig:        GeminiImageConfigFor(input.Config),
-		},
-	}
-	if systemPrompt := strings.TrimSpace(input.Config.SystemPrompt); systemPrompt != "" {
-		body.SystemInstruction = &GeminiImageContent{Parts: []GeminiImageContentPart{{Text: systemPrompt}}}
-	}
-	var payload map[string]interface{}
-	path := "/models/" + url.PathEscape(input.Config.Model) + ":generateContent"
-	if err := PostGeminiJSON(ctx, input.Config, path, body, &payload); err != nil {
-		return nil, err
-	}
-	images, err := GeminiImageDataURLs(payload)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]interface{}{"mode": "image", "images": images}, nil
-}
-
-func GeminiImageConfigFor(config Config) *GeminiImageConfig {
-	imageConfig := &GeminiImageConfig{}
-	size := strings.TrimSpace(config.Size)
-	if size != "" && size != "auto" && strings.Count(size, ":") == 1 {
-		imageConfig.AspectRatio = size
-	}
-	switch strings.ToLower(strings.TrimSpace(config.Quality)) {
-	case "low", "1k":
-		imageConfig.ImageSize = "1K"
-	case "medium", "2k":
-		imageConfig.ImageSize = "2K"
-	case "high", "4k":
-		imageConfig.ImageSize = "4K"
-	}
-	if imageConfig.AspectRatio == "" && imageConfig.ImageSize == "" {
-		return nil
-	}
-	return imageConfig
-}
-
-func GeminiImageBytes(media Media) ([]byte, string, error) {
-	raw, mimeType, err := MediaBytes(media)
-	if err != nil {
-		return nil, "", err
-	}
-	if len(raw) == 0 {
-		return nil, "", errors.New("参考图片数据为空")
-	}
-	detected := strings.TrimSpace(strings.Split(http.DetectContentType(raw), ";")[0])
-	if !strings.HasPrefix(strings.ToLower(mimeType), "image/") {
-		if !strings.HasPrefix(strings.ToLower(detected), "image/") {
-			return nil, "", fmt.Errorf("参考图片 MIME 类型无效：%s", defaultString(mimeType, detected))
-		}
-		mimeType = detected
-	} else if !strings.HasPrefix(strings.ToLower(detected), "image/") {
-		// 以实际字节签名为准，避免错误的 data URL MIME 把非图片内容伪装成图片。
-		return nil, "", fmt.Errorf("参考图片内容不是有效图片：%s", defaultString(detected, mimeType))
-	}
-	return raw, mimeType, nil
-}
-
-func GeminiImageDataURLs(payload map[string]interface{}) ([]map[string]string, error) {
-	if errorValue, ok := payload["error"].(map[string]interface{}); ok {
-		if message := stringField(errorValue, "message"); message != "" {
-			return nil, errors.New(message)
-		}
-	}
-	candidates, _ := payload["candidates"].([]interface{})
-	images := make([]map[string]string, 0)
-	for _, candidateValue := range candidates {
-		candidate, _ := candidateValue.(map[string]interface{})
-		content, _ := candidate["content"].(map[string]interface{})
-		parts, _ := content["parts"].([]interface{})
-		for _, partValue := range parts {
-			part, _ := partValue.(map[string]interface{})
-			inlineData, _ := part["inlineData"].(map[string]interface{})
-			if inlineData == nil {
-				inlineData, _ = part["inline_data"].(map[string]interface{})
-			}
-			if inlineData != nil {
-				data := strings.TrimSpace(stringField(inlineData, "data"))
-				mimeType := firstNonEmpty(stringField(inlineData, "mimeType"), stringField(inlineData, "mime_type"))
-				if data == "" {
-					continue
-				}
-				if mimeType == "" {
-					mimeType = "image/png"
-				}
-				if !strings.HasPrefix(strings.ToLower(mimeType), "image/") {
-					return nil, fmt.Errorf("Gemini Images 返回了非图片 MIME 类型：%s", mimeType)
-				}
-				decoded, err := base64.StdEncoding.DecodeString(data)
-				if err != nil {
-					return nil, fmt.Errorf("Gemini Images 返回的图片数据无效：%w", err)
-				}
-				images = append(images, map[string]string{"dataUrl": DataURL(mimeType, decoded)})
-				continue
-			}
-			fileData, _ := part["fileData"].(map[string]interface{})
-			if fileData != nil {
-				if fileURL := firstNonEmpty(stringField(fileData, "fileUri"), stringField(fileData, "file_uri")); fileURL != "" {
-					images = append(images, map[string]string{"dataUrl": fileURL})
-				}
-			}
-		}
-	}
-	if len(images) == 0 {
-		return nil, errors.New("Gemini Images 接口没有返回图片")
-	}
-	return images, nil
 }
 
 func RunGrokImageTask(ctx context.Context, input Input) (map[string]interface{}, error) {
@@ -393,35 +253,6 @@ func GrokImageInputURL(media Media) (string, error) {
 	return openAIImageInputURL(media)
 }
 
-const (
-	volcengineArkImageMinPixels = 3686400
-	volcengineArkImageMaxPixels = 4624220
-)
-
-const (
-	VolcengineArkImageMinPixels = volcengineArkImageMinPixels
-	VolcengineArkImageMaxPixels = volcengineArkImageMaxPixels
-)
-
-func RunVolcengineArkImageTask(ctx context.Context, input Input) (map[string]interface{}, error) {
-	if input.Mask != nil {
-		return nil, errors.New("火山方舟图片协议不支持蒙版编辑，请移除蒙版后重试")
-	}
-	body, err := VolcengineArkImageBody(input)
-	if err != nil {
-		return nil, err
-	}
-	var payload ImageResponse
-	if err := PostJSON(ctx, input.Config, "/images/generations", body, &payload); err != nil {
-		return nil, err
-	}
-	images, err := MaterializeImageDataURLs(ctx, input.Config, payload)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]interface{}{"mode": "image", "images": images}, nil
-}
-
 func MaterializeImageDataURLs(ctx context.Context, config Config, payload ImageResponse) ([]map[string]string, error) {
 	images, err := ImageDataURLs(payload)
 	if err != nil {
@@ -450,80 +281,6 @@ func MaterializeImageDataURLs(ctx context.Context, config Config, payload ImageR
 		image["mimeType"] = mimeType
 	}
 	return images, nil
-}
-
-func VolcengineArkImageBody(input Input) (map[string]interface{}, error) {
-	body := map[string]interface{}{
-		"model":           input.Config.Model,
-		"prompt":          WithSystemPrompt(input.Config, input.Prompt),
-		"n":               1,
-		"response_format": "b64_json",
-		"watermark":       false,
-	}
-	if key, value := ImageSizeParameter(input.ImageCapability, input.Config.Size); value != "" {
-		if key == "size" {
-			value = NormalizeVolcengineArkImageSize(value)
-		}
-		body[key] = value
-	}
-	if len(input.ReferenceImages) == 0 {
-		return body, nil
-	}
-	images := make([]string, 0, len(input.ReferenceImages))
-	for _, image := range input.ReferenceImages {
-		url, err := openAIImageInputURL(image)
-		if err != nil {
-			return nil, err
-		}
-		images = append(images, url)
-	}
-	if len(images) == 1 {
-		body["image"] = images[0]
-	} else {
-		body["image"] = images
-	}
-	return body, nil
-}
-
-func NormalizeVolcengineArkImageSize(value string) string {
-	size := NormalizePixelSize(value)
-	parts := strings.Split(strings.ToLower(size), "x")
-	if len(parts) != 2 {
-		return size
-	}
-	width, widthErr := strconv.Atoi(parts[0])
-	height, heightErr := strconv.Atoi(parts[1])
-	if widthErr != nil || heightErr != nil || width <= 0 || height <= 0 {
-		return size
-	}
-	pixels := int64(width) * int64(height)
-	if pixels >= volcengineArkImageMinPixels && pixels <= volcengineArkImageMaxPixels {
-		return size
-	}
-	targetPixels := volcengineArkImageMaxPixels
-	round := math.Floor
-	if pixels < volcengineArkImageMinPixels {
-		targetPixels = volcengineArkImageMinPixels
-		round = math.Ceil
-	}
-	scale := math.Sqrt(float64(targetPixels) / float64(pixels))
-	width = int(round(float64(width)*scale/2)) * 2
-	height = int(round(float64(height)*scale/2)) * 2
-	for width > 2 && height > 2 && int64(width)*int64(height) < volcengineArkImageMinPixels {
-		if width >= height {
-			width += 2
-		} else {
-			height += 2
-		}
-	}
-	for width > 2 && height > 2 && int64(width)*int64(height) > volcengineArkImageMaxPixels {
-		if width >= height {
-			width -= 2
-		} else {
-			height -= 2
-		}
-	}
-	return strconv.Itoa(width) + "x" + strconv.Itoa(height)
 }
 
 func ImageDataURLs(payload ImageResponse) ([]map[string]string, error) {
