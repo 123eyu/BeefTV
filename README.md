@@ -48,8 +48,6 @@
 - **[v2.0.3](https://github.com/glanderness/BeefTV/releases/tag/v2.0.3)** — 优化视频提示词与素材引用校验，修复重试参数恢复，并改善超分请求稳定性。
 - **[v2.0.2](https://github.com/glanderness/BeefTV/releases/tag/v2.0.2)** — 新增 Seedream 图层拆分与关联组图，改进 Agent 多图检查、任务恢复与素材上传。
 - **[v2.0.1](https://github.com/glanderness/BeefTV/releases/tag/v2.0.1)** — 新增可复用工作流与 Topaz 超分，完善技能的固定版本安装、回退和私人改写。
-- **[v2.0.0](https://github.com/glanderness/BeefTV/releases/tag/v2.0.0)** — 创作助手贯通分镜方案、制作与成片导出，加入影音检查和技能市场，保留可编辑工程。
-- **[v1.7.27](https://github.com/glanderness/BeefTV/releases/tag/v1.7.27)** — 统一 Music 3.0 的 MP3 输出，改善音乐生成连接稳定性与桌面更新下载。
 
 [查看全部版本与详细说明](https://github.com/glanderness/BeefTV/releases)
 
