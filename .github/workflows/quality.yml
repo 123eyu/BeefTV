@@ -76,6 +76,17 @@ jobs:
           name: released-windows-upgrade-evidence
           path: upgrade-evidence/
 
+  structure-budget:
+    name: Structure budget
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Structure numbers may only shrink
+        run: |
+          node --test scripts/structure-budget.test.mjs
+          node scripts/structure-budget.mjs
+
   release-publisher:
     name: Release publisher checks
     runs-on: ubuntu-latest
