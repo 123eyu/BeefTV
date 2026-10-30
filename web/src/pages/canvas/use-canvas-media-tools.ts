@@ -77,10 +77,8 @@ import {
     nextLocalExecutorClientOperationId,
     runOwnedDepthCapture,
 } from "@/lib/plugins/builtin/editor/local-executor-session";
-import { assertUserScope, captureUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { useCanvasOwnerLifetime } from "./canvas-owner-epoch";
 import { createCanvasMediaOperation } from "./canvas-media-operation";
-import { getActiveUserScopeEpoch } from "@/lib/user-scope";
 
 function normalizeMaskEditQuality(quality: string | undefined, size: string | undefined) {
     const value = String(quality || "").trim().toLowerCase();
@@ -171,8 +169,7 @@ export function useCanvasMediaTools({
     const projectIdRef = useRef(projectId);
     const depthObserversRef = useRef(new Set<AbortController>());
     projectIdRef.current = projectId;
-    const { lifetime, mountedRef, userScope } = useCanvasOwnerLifetime(projectId);
-    const userEpoch = getActiveUserScopeEpoch();
+    const { lifetime, mountedRef } = useCanvasOwnerLifetime(projectId);
     const beginMediaOperation = useCallback(() => createCanvasMediaOperation(lifetime, projectId, () => projectIdRef.current, () => mountedRef.current), [lifetime, mountedRef, projectId]);
     useEffect(() => {
         extractingVideoFramesNodeIdRef.current = null;
@@ -194,7 +191,7 @@ export function useCanvasMediaTools({
         setFrameDialogNodeId(null);
         setInlineTrimNodeId(null);
         setPanoramaConfigNodeId(null);
-    }, [projectId, userScope, userEpoch]);
+    }, [projectId]);
     useEffect(() => () => {
         for (const observer of depthObserversRef.current) observer.abort();
         depthObserversRef.current.clear();
@@ -216,7 +213,7 @@ export function useCanvasMediaTools({
     const persistMediaNodes = useCallback(async (
         mediaNodes: CanvasNodeData[],
         mediaConnections: CanvasConnection[] = [],
-        options?: { expectedScope?: CapturedUserScope; signal?: AbortSignal },
+        options?: { signal?: AbortSignal },
     ) => {
         try {
             return await persistOwnedCanvasMediaNodes({
@@ -224,7 +221,6 @@ export function useCanvasMediaTools({
                 domainProjectId,
                 mediaNodes,
                 mediaConnections,
-                expectedScope: options?.expectedScope ?? captureUserScope(),
                 signal: options?.signal,
             }, {
                 ensureCanvasNodeAsset,
@@ -233,17 +229,16 @@ export function useCanvasMediaTools({
                     return project ? { nodes: project.nodes, connections: project.connections } : undefined;
                 },
                 hasProject: (canvasId) => useCanvasStore.getState().projects.some((item) => item.id === canvasId),
-                openProject: (id, expectedScope) => openLocalCanvasProjectFromBackend(id, expectedScope),
+                openProject: (id) => openLocalCanvasProjectFromBackend(id),
                 updateProject: (canvasId, patch) => useCanvasStore.getState().updateProject(canvasId, patch),
-                flushPersistence: async (expectedScope) => {
-                    assertUserScope(expectedScope);
+                flushPersistence: async () => {
                     await flushCanvasStorePersistence();
                 },
-                syncSnapshot: (id, patch, expectedScope) => syncLocalCanvasSnapshot(id, patch, expectedScope),
-                readSavedProject: async (canvasId, expectedScope) => {
+                syncSnapshot: (id, patch) => syncLocalCanvasSnapshot(id, patch),
+                readSavedProject: async (canvasId) => {
                     const { project } = await http.get<{ project: { nodes: CanvasNodeData[] } }>(
                         `/canvas-projects/${encodeURIComponent(canvasId)}`,
-                        { expectedScope, signal: options?.signal },
+                        { signal: options?.signal },
                     );
                     return project;
                 },
@@ -278,12 +273,11 @@ export function useCanvasMediaTools({
         return resource.id;
     }, []);
 
-    const observeAIUpscale = useCallback((task: GenerationTask, targetNodeId: string, expectedScope: CapturedUserScope) => {
+    const observeAIUpscale = useCallback((task: GenerationTask, targetNodeId: string) => {
         const observer = new AbortController();
         depthObserversRef.current.add(observer);
         let observedTask = task;
-        void waitForGenerationTask(task.id, { initialTask: task, expectedScope, signal: observer.signal, timeoutMs: UPSCALE_OBSERVATION_TIMEOUT_MS, onTaskUpdate: update => { observedTask = update; if (projectIdRef.current === projectId) bindGenerationTask(targetNodeId, update); } }).then(async completed => {
-            assertUserScope(expectedScope);
+        void waitForGenerationTask(task.id, { initialTask: task, signal: observer.signal, timeoutMs: UPSCALE_OBSERVATION_TIMEOUT_MS, onTaskUpdate: update => { observedTask = update; if (projectIdRef.current === projectId) bindGenerationTask(targetNodeId, update); } }).then(async completed => {
             if (projectIdRef.current !== projectId) return;
             const currentNode = nodesRef.current.find(item => item.id === targetNodeId);
             if (!currentNode) return;
@@ -308,15 +302,13 @@ export function useCanvasMediaTools({
     const recoverAIUpscale = useCallback(async (node: CanvasNodeData) => {
         const taskId = node.metadata?.taskId;
         if (!taskId) throw new Error("找不到原超分任务");
-        const expectedScope = captureUserScope();
-        const original = await queryGenerationTask(taskId, { expectedScope });
+        const original = await queryGenerationTask(taskId, {});
         if (!isAIUpscaleTask(original)) throw new Error("该任务不是超分任务");
-        const task = original.status === "failed" ? await recoverUpscaleTask(taskId, expectedScope) : original;
-        assertUserScope(expectedScope);
+        const task = original.status === "failed" ? await recoverUpscaleTask(taskId) : original;
         if (projectIdRef.current !== projectId) return;
         bindGenerationTask(node.id, task);
         setNodes(current => current.map(item => item.id === node.id ? { ...item, metadata: { ...item.metadata, status: "loading", errorDetails: undefined, processingLabel: "取回原超分任务结果" } } : item));
-        observeAIUpscale(task, node.id, expectedScope);
+        observeAIUpscale(task, node.id);
     }, [bindGenerationTask, observeAIUpscale, projectId, setNodes]);
 
 
@@ -388,7 +380,7 @@ export function useCanvasMediaTools({
             pageUi.getState().setSelectedNodeIds(new Set([childId]));
             pageUi.getState().setDialogNodeId(childId);
             setCropNodeId(null);
-            await operation.wait(persistMediaNodes([child], [connection], { expectedScope: operation.scope }));
+            await operation.wait(persistMediaNodes([child], [connection], {}));
         } catch (error) {
             if (!operation.isCurrent()) return;
             message.error(error instanceof Error ? `裁切失败：${error.message}` : "裁切失败，请重试");
@@ -444,7 +436,7 @@ export function useCanvasMediaTools({
                 }),
             };
             setNodes((current) => current.map((item) => item.id === childId ? completedChild : item));
-            await operation.wait(persistMediaNodes([completedChild], [connection], { expectedScope: operation.scope }));
+            await operation.wait(persistMediaNodes([completedChild], [connection], {}));
         } catch (error) {
             if (!operation.isCurrent()) return;
             const details = error instanceof Error ? error.message : "视频画面裁切失败";
@@ -461,13 +453,10 @@ export function useCanvasMediaTools({
             message.error("请先等待视频保存到本地资源库，再进行深度动作捕捉");
             return;
         }
-        const requestedScope = captureUserScope();
         try {
             if (!await confirmDepthComponents(modal)) return;
-            assertUserScope(requestedScope);
             if (projectIdRef.current !== projectId || !nodesRef.current.some(item => item.id === node.id)) return;
         } catch (error) { message.error(generationErrorMessage(error)); return; }
-        const expectedScope = captureUserScope();
         const originalProjectId = projectId;
         const observer = new AbortController();
         depthObserversRef.current.add(observer);
@@ -505,9 +494,8 @@ export function useCanvasMediaTools({
             const session = beginLocalExecutorSession(originalProjectId, {
                 controller: observer,
                 getLiveProjectId: () => projectIdRef.current,
-                expectedScope,
             });
-            await persistCanvasDocument(originalProjectId, { nodes: nodesRef.current, connections: connectionsRef.current }, expectedScope);
+            await persistCanvasDocument(originalProjectId, { nodes: nodesRef.current, connections: connectionsRef.current });
             assertLocalExecutorSession(session);
             if (!nodesRef.current.some(item => item.id === childId)) return;
             const { task } = await runOwnedDepthCapture({
@@ -521,7 +509,7 @@ export function useCanvasMediaTools({
                     submittedTaskId = created.id;
                     nodesRef.current = nodesRef.current.map(item => item.id === childId && item.metadata?.taskClientOperationId === clientOperationId ? { ...item, metadata: { ...item.metadata, taskId: created.id, taskStatus: created.status, taskClientOperationId: created.clientOperationId || clientOperationId } } : item);
                     setNodes(nodesRef.current);
-                    await persistCanvasDocument(originalProjectId, { nodes: nodesRef.current, connections: connectionsRef.current }, expectedScope);
+                    await persistCanvasDocument(originalProjectId, { nodes: nodesRef.current, connections: connectionsRef.current });
                 },
                 onTaskUpdate: (next) => {
                     latestDepthTask = next;
@@ -568,7 +556,7 @@ export function useCanvasMediaTools({
                 const session = beginLocalExecutorSession(projectId, {
                     controller: observer, getLiveProjectId: () => projectIdRef.current,
                 });
-                const existing = await queryGenerationTask(node.metadata.taskId, { signal: observer.signal, expectedScope: session.expectedScope });
+                const existing = await queryGenerationTask(node.metadata.taskId, { signal: observer.signal});
                 assertLocalExecutorSession(session);
                 if (!nodesRef.current.some(item => item.id === node.id && item.metadata?.taskId === existing.id)) return;
                 if (existing.status !== "failed" && existing.status !== "cancelled") {
@@ -589,13 +577,10 @@ export function useCanvasMediaTools({
             message.error(details);
             return;
         }
-        const requestedScope = captureUserScope();
         try {
             if (!await confirmDepthComponents(modal)) return;
-            assertUserScope(requestedScope);
             if (projectIdRef.current !== projectId || !nodesRef.current.some(item => item.id === node.id)) return;
         } catch (error) { message.error(generationErrorMessage(error)); return; }
-        const expectedScope = captureUserScope();
         const originalProjectId = projectId;
         const observer = new AbortController();
         depthObserversRef.current.add(observer);
@@ -629,9 +614,8 @@ export function useCanvasMediaTools({
             const session = beginLocalExecutorSession(originalProjectId, {
                 controller: observer,
                 getLiveProjectId: () => projectIdRef.current,
-                expectedScope,
             });
-            await persistCanvasDocument(originalProjectId, { nodes: nodesRef.current, connections: connectionsRef.current }, expectedScope);
+            await persistCanvasDocument(originalProjectId, { nodes: nodesRef.current, connections: connectionsRef.current });
             assertLocalExecutorSession(session);
             if (!nodesRef.current.some(item => item.id === node.id && item.metadata?.taskClientOperationId === clientOperationId)) return;
             const { task } = await runOwnedDepthCapture({
@@ -645,7 +629,7 @@ export function useCanvasMediaTools({
                     submittedTaskId = created.id;
                     nodesRef.current = nodesRef.current.map(item => item.id === node.id && item.metadata?.taskClientOperationId === clientOperationId ? { ...item, metadata: { ...item.metadata, taskId: created.id, taskStatus: created.status, taskClientOperationId: created.clientOperationId || clientOperationId } } : item);
                     setNodes(nodesRef.current);
-                    await persistCanvasDocument(originalProjectId, { nodes: nodesRef.current, connections: connectionsRef.current }, expectedScope);
+                    await persistCanvasDocument(originalProjectId, { nodes: nodesRef.current, connections: connectionsRef.current });
                 },
                 onTaskUpdate: (next) => {
                     latestDepthTask = next;
@@ -687,7 +671,6 @@ export function useCanvasMediaTools({
         recoverOwnedDepthCaptureNodes({
             nodesRef,
             signal,
-            expectedScope: captureUserScope(),
             projectId,
             getLiveProjectId: () => projectIdRef.current,
             observers: depthObserversRef.current,
@@ -710,7 +693,7 @@ export function useCanvasMediaTools({
             pageUi.getState().setSelectedConnectionId(null);
             pageUi.getState().setDialogNodeId(null);
             setAnnotationNodeId(null);
-            await operation.wait(persistMediaNodes([child], [connection], { expectedScope: operation.scope }));
+            await operation.wait(persistMediaNodes([child], [connection], {}));
             message.success("标注图片已保存为新节点");
 
         } catch (error) {
@@ -772,7 +755,7 @@ export function useCanvasMediaTools({
             setConnections(nextConnections);
             pageUi.getState().setSelectedNodeIds(selection);
             pageUi.getState().setSelectedConnectionId(null);
-            await operation.wait(persistMediaNodes(frameNodes, links, { expectedScope: operation.scope }));
+            await operation.wait(persistMediaNodes(frameNodes, links, {}));
             const failedCount = captured.failures.length + uploadFailures.length;
             operation.run(() => progress.done(failedCount ? `已截取 ${frameNodes.length} 个关键帧，${failedCount} 个失败` : `已截取 ${frameNodes.length} 个关键帧并创建独立图片节点`));
             if (failedCount) message.warning(`${failedCount} 个时间点提取失败，其余画面已创建`);
@@ -886,7 +869,7 @@ export function useCanvasMediaTools({
             pageUi.getState().setSelectedNodeIds(new Set([child.id]));
             pageUi.getState().setSelectedConnectionId(null);
             pageUi.getState().setDialogNodeId(null);
-            await operation.wait(persistMediaNodes([child], [], { expectedScope: operation.scope }));
+            await operation.wait(persistMediaNodes([child], [], {}));
             setInlineTrimNodeId(null);
             operation.run(() => progress.done(`已生成 ${((range.endMs - range.startMs) / 1000).toFixed(2)} 秒剪辑视频`));
             message.success("已生成新的剪辑视频，原视频已保留");
@@ -943,7 +926,7 @@ export function useCanvasMediaTools({
             setConnections(connectionsRef.current);
             pageUi.getState().setSelectedNodeIds(outputIds);
             pageUi.getState().setSelectedConnectionId(null);
-            const savedAssets = await operation.wait(persistMediaNodes(outputs, links, { expectedScope: operation.scope }));
+            const savedAssets = await operation.wait(persistMediaNodes(outputs, links, {}));
             if (outputs.some((output) => !savedAssets.get(output.id))) throw new Error("分离结果尚未确认保存，请重试；不要将当前节点视为已保存的成品");
             operation.run(() => progress.done("已生成并保存无声视频和独立音轨"));
             message.success("已生成并保存无声视频和独立音轨，原视频已保留");
@@ -1036,7 +1019,7 @@ export function useCanvasMediaTools({
             pageUi.getState().setSelectedConnectionId(null);
             pageUi.getState().setDialogNodeId(null);
             setMergeVideoProgress({ phase: "binding", progress: 98 });
-            await operation.wait(persistMediaNodes([mergedNode], [], { expectedScope: operation.scope }));
+            await operation.wait(persistMediaNodes([mergedNode], [], {}));
             setMergeVideoProgress({ phase: "done", progress: 100 });
             message.success(`已合并 ${videos.length} 段视频，成片节点已添加`);
         } catch (error) {
@@ -1113,7 +1096,7 @@ export function useCanvasMediaTools({
             };
             setNodes((current) => [...current, childNode]);
             setConnections((current) => [...current, { id: nanoid(), fromNodeId: node.id, toNodeId: childNode.id }]);
-            await operation.wait(persistMediaNodes([childNode], [], { expectedScope: operation.scope }));
+            await operation.wait(persistMediaNodes([childNode], [], {}));
             message.success(`已导出「${title}」`);
 
         } catch (error) {
@@ -1150,7 +1133,7 @@ export function useCanvasMediaTools({
             pageUi.getState().setSelectedNodeIds(new Set(childNodes.map((child) => child.id)));
             pageUi.getState().setSelectedConnectionId(null);
             pageUi.getState().setDialogNodeId(null);
-            await operation.wait(persistMediaNodes(childNodes, [], { expectedScope: operation.scope }));
+            await operation.wait(persistMediaNodes(childNodes, [], {}));
             message.success(`已切分为 ${childNodes.length} 个子节点`);
 
         } catch (error) {
@@ -1272,7 +1255,7 @@ export function useCanvasMediaTools({
                             if (item.id !== rootId || requestedCount <= 1 || item.metadata?.primaryImageId) return item;
                             return { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), primaryImageId: targetId, status: NODE_STATUS_SUCCESS } };
                         }));
-                        await operation.wait(persistMediaNodes([finalizedNode], [], { expectedScope: operation.scope }));
+                        await operation.wait(persistMediaNodes([finalizedNode], [], {}));
                         hasSuccess = true;
                     } catch (error) {
                 if (!operation.isCurrent()) return;
@@ -1351,7 +1334,7 @@ export function useCanvasMediaTools({
             setConnections((current) => [...current, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }]);
             pageUi.getState().setSelectedNodeIds(new Set([childId]));
             pageUi.getState().setDialogNodeId(childId);
-            await operation.wait(persistMediaNodes([child], [], { expectedScope: operation.scope }));
+            await operation.wait(persistMediaNodes([child], [], {}));
 
         } catch (error) {
             if (operation.isCurrent()) throw error;
@@ -1394,7 +1377,7 @@ export function useCanvasMediaTools({
             if (!currentNode) throw new Error("视角生成节点已被删除");
             const finalizedNode = { ...currentNode, width: size.width, height: size.height, metadata: { ...currentNode.metadata, ...imageMetadata(uploaded), prompt: effectivePrompt, ...generationMetadata } };
             setNodes((current) => current.map((item) => item.id === childId ? finalizedNode : item));
-            await operation.wait(persistMediaNodes([finalizedNode], [], { expectedScope: operation.scope }));
+            await operation.wait(persistMediaNodes([finalizedNode], [], {}));
         } catch (error) {
             if (!operation.isCurrent()) return;
             if (isGenerationCanceled(error)) return;
@@ -1496,7 +1479,7 @@ export function useCanvasMediaTools({
             if (!currentNode) throw new Error("表情编辑节点已被删除");
             const finalizedNode = { ...currentNode, width: size.width, height: size.height, metadata: { ...currentNode.metadata, ...imageMetadata(uploaded), prompt: providerPrompt, ...generationMetadata, emotionEdit } };
             setNodes((current) => current.map((item) => item.id === childId ? finalizedNode : item));
-            await operation.wait(persistMediaNodes([finalizedNode], [], { expectedScope: operation.scope }));
+            await operation.wait(persistMediaNodes([finalizedNode], [], {}));
         } catch (error) {
             if (!operation.isCurrent()) return;
             if (isGenerationCanceled(error)) return;

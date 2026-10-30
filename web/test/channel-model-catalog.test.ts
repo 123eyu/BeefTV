@@ -13,7 +13,6 @@ import { ChannelModelSettings } from "../src/pages/settings/channel-model-settin
 import { applyFetchedChannelModelCatalog } from "../src/pages/settings/channel-settings-pane";
 import { fetchChannelModels } from "../src/services/api/image";
 import { disconnectBeefAPIConnection } from "../src/services/api/beefapi-connection";
-import { getActiveUserScope, setActiveUserScope } from "../src/lib/user-scope";
 import { apiClient } from "../src/services/api/request";
 import { createModelChannel, defaultConfig, modelDisplayName, normalizeConfigSnapshot, resolveModelRequestConfig, selectableModelsByCapability, type AiConfig } from "../src/stores/use-config-store";
 
@@ -120,24 +119,17 @@ function formEntries(body: unknown) {
 }
 
 describe("public channel model catalog", () => {
-    test("managed catalog drops delayed results after user or enterprise connection changes", async () => {
-        const originalScope = getActiveUserScope();
-        try {
-            for (const change of [() => { setActiveUserScope("catalog-other-user"); }, () => disconnectBeefAPIConnection()]) {
-                let release!: () => void;
-                apiClient.request = (async (request) => {
-                    if (request.url === "/beefapi/connection/models") await new Promise<void>((resolve) => { release = resolve; });
-                    return { status: 200, data: { code: 0, data: { models: [{ id: "seedance-2.0-portrait" }] }, msg: "" } };
-                }) as typeof apiClient.request;
-                const pending = fetchChannelModels(createModelChannel({ id: "beefapi", credentialRef: "beefapi-enterprise" }), true);
-                const outcome = pending.catch((error) => error);
-                await change();
-                release();
-                expect(await outcome).toMatchObject({ name: "UserScopeAbandonedError" });
-            }
-        } finally {
-            setActiveUserScope(originalScope);
-        }
+    test("managed catalog drops delayed results after the enterprise connection changes", async () => {
+        let release!: () => void;
+        apiClient.request = (async (request) => {
+            if (request.url === "/beefapi/connection/models") await new Promise<void>((resolve) => { release = resolve; });
+            return { status: 200, data: { code: 0, data: { models: [{ id: "seedance-2.0-portrait" }] }, msg: "" } };
+        }) as typeof apiClient.request;
+        const pending = fetchChannelModels(createModelChannel({ id: "beefapi", credentialRef: "beefapi-enterprise" }), true);
+        const outcome = pending.catch((error) => error);
+        await disconnectBeefAPIConnection();
+        release();
+        expect(await outcome).toMatchObject({ name: "BeefAPIConnectionChangedError" });
     });
     test("managed catalog refresh persists through the trusted endpoint without accepting client credentials or prices", async () => {
         const requests: Array<{ url?: string; data?: unknown }> = [];

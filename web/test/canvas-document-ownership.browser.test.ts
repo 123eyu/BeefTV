@@ -32,7 +32,7 @@ test("document media queue keeps both patches for its current node", async () =>
         expect(await page.evaluate(() => (window as any).__documentTest.snapshot().nodes[0].metadata)).toMatchObject({ durationMs: 1200, hasAudio: true });
     } finally { await page.close(); }
 });
-for (const mode of ["canvas", "account", "account-return", "canvas-back", "unmount"]) {
+for (const mode of ["canvas", "canvas-back", "unmount"]) {
     test(`document media timer does not patch a colliding node after ${mode}`, async () => {
         const page = await open();
         try {
@@ -65,7 +65,7 @@ for (const saved of [true, false]) {
         } finally { await page.close(); }
     });
 }
-for (const mode of ["canvas", "account-return", "canvas-back"]) {
+for (const mode of ["canvas", "canvas-back"]) {
     test(`failed import never rolls its old graph over ${mode}`, async () => {
         const page = await open();
         try {

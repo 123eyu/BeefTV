@@ -1,7 +1,6 @@
 // 内置创作助手：浏览器只与同源 Go 代理通信，宿主/owner/模型凭据都不进入页面。
 // 三个端点的真实路径都在 /api/assistant/* 下；写错路径会让面板永远拿不到回复。
 import { ApiError, apiBaseURL, http } from "./request";
-import { assertUserScope, captureUserScope, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
 
 /** 后端给出的不可用原因（穷举，见契约 A1）；未知值一律走兜底文案。 */
 export type AssistantUnavailableReason =
@@ -191,8 +190,8 @@ export type AssistantHistory = {
 };
 
 // UI 会话凭据只保存在内存里：刷新页面即重新签发，不写入 localStorage。
-let uiSession: { token: string; expiresAt: number; scope: CapturedUserScope } | null = null;
-let uiSessionPending: { promise: Promise<string>; scope: CapturedUserScope } | null = null;
+let uiSession: { token: string; expiresAt: number } | null = null;
+let uiSessionPending: { promise: Promise<string> } | null = null;
 let uiSessionGeneration = 0;
 
 /**
@@ -341,12 +340,11 @@ export function assistantUndoFailure(error: unknown): AssistantUndoFailure {
 }
 
 export async function ensureAgentUiSession(): Promise<string> {
-    const scope = captureUserScope();
-    if (uiSession && userScopeMatches(uiSession.scope, scope) && Date.now() + 30_000 < uiSession.expiresAt) return uiSession.token;
-    if (uiSessionPending && userScopeMatches(uiSessionPending.scope, scope)) return uiSessionPending.promise;
+    if (uiSession && Date.now() + 30_000 < uiSession.expiresAt) return uiSession.token;
+    if (uiSessionPending) return uiSessionPending.promise;
     const generation = ++uiSessionGeneration;
-    const promise = issueAgentUiSession(scope, generation);
-    uiSessionPending = { promise, scope };
+    const promise = issueAgentUiSession(generation);
+    uiSessionPending = { promise };
     try {
         return await promise;
     } finally {
@@ -354,7 +352,7 @@ export async function ensureAgentUiSession(): Promise<string> {
     }
 }
 
-async function issueAgentUiSession(scope: CapturedUserScope, generation: number): Promise<string> {
+async function issueAgentUiSession(generation: number): Promise<string> {
     let data: { token?: string; expiresAt?: string };
     try {
         data = await http.post<{ token: string; expiresAt: string }>("/assistant/ui-session", {});
@@ -366,11 +364,10 @@ async function issueAgentUiSession(scope: CapturedUserScope, generation: number)
         throw new Error(agentAssistantFailureText(undefined, "创作助手暂时不可用，请稍后再试"));
     }
     if (!data?.token) throw new Error("创作助手暂时不可用，请稍后再试");
-    assertUserScope(scope);
     if (generation !== uiSessionGeneration) throw new Error("当前页面会话已更新，请重新发送");
     // Invalid/missing expiry is never cached; the server remains the authority on validity.
     const expiresAt = Date.parse(data.expiresAt ?? "");
-    uiSession = Number.isFinite(expiresAt) ? { token: data.token, expiresAt, scope } : null;
+    uiSession = Number.isFinite(expiresAt) ? { token: data.token, expiresAt } : null;
     return data.token;
 }
 
@@ -491,11 +488,9 @@ export async function streamAgentChat(
     request: AgentChatRequest = {},
 ): Promise<void> {
     const { signal, selectedNodeIds = [], references = [], sessionId, requestId, attachments = [], skills = [] } = request;
-    const scope = captureUserScope();
     let token: string;
     try {
         token = await ensureAgentUiSession();
-        assertUserScope(scope);
     } catch (error) {
         throw new AgentChatNotAdmittedError(error instanceof Error ? error.message : "消息未发送，请重试");
     }

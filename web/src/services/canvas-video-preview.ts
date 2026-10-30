@@ -1,6 +1,5 @@
 import { captureVideoPoster } from "@/lib/video-poster";
 import { acquireCanvasVideoSource } from "@/services/canvas-video-source";
-import { captureUserScopeEpoch, subscribeUserScope, userScopeEpochMatches } from "@/lib/user-scope";
 import type { CanvasNodeData, CanvasNodeMetadata } from "@/types/canvas";
 
 type VideoPreview = NonNullable<CanvasNodeMetadata["videoPreview"]>;
@@ -22,15 +21,10 @@ function disposeEntry(key: string, entry: PreviewEntry) {
     if (previewRequests.get(key) === entry) previewRequests.delete(key);
 }
 
-subscribeUserScope(() => {
-    for (const [key, entry] of previewRequests) disposeEntry(key, entry);
-});
-
 /** Display-only leases: never upload a poster or mutate the durable canvas. */
 export function acquireCanvasVideoPreview(node: VideoPreviewSource) {
-    const epoch = captureUserScopeEpoch();
     const sourceKey = node.metadata?.storageKey || node.metadata?.content || "";
-    const requestKey = JSON.stringify([epoch.scope, epoch.generation, canvasDerivedPreviewSourceKey(node)]);
+    const requestKey = canvasDerivedPreviewSourceKey(node);
     let entry = previewRequests.get(requestKey);
     if (!entry && sourceKey && previewRequests.size < MAX_ACTIVE_PREVIEWS) {
         const controller = new AbortController();
@@ -41,7 +35,7 @@ export function acquireCanvasVideoPreview(node: VideoPreviewSource) {
         };
         created.promise = generateCanvasVideoPreview(node, controller.signal).then((preview) => {
             if (!preview) { forgetFailedRequest(); return null; }
-            if (controller.signal.aborted || !userScopeEpochMatches(epoch)) { URL.revokeObjectURL(preview.content); return null; }
+            if (controller.signal.aborted) { URL.revokeObjectURL(preview.content); return null; }
             created.url = preview.content;
             return preview;
         }).catch(() => { forgetFailedRequest(); return null; });

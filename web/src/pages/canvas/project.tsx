@@ -10,8 +10,6 @@ import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { queryGenerationTask, type GenerationTask } from "@/services/api/task-center";
 import { generationErrorMessage } from "@/lib/generation-error";
 import { useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
-import { getActiveUserScope } from "@/lib/user-scope";
-import { assertUserScope, captureUserScope, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { isCanvasImageSourceNode } from "@/lib/canvas/canvas-image-source";
 import { canOpenCanvasNodePromptPanel, isCanvasMediaResultNode } from "@/lib/canvas/canvas-node-semantics";
 import { nanoid } from "nanoid";
@@ -135,8 +133,6 @@ function InfiniteCanvasPage() {
     const [searchParams, setSearchParams] = useSearchParams();
     const projectId = params.id || "";
     const readOnly = searchParams.get("readonly") === "1" || searchParams.get("mode") === "readonly";
-    const canvasStorageScope = getActiveUserScope();
-    const canvasCapturedScope = captureUserScope();
     const [projectLoaded, setProjectLoaded] = useState(false);
     const viewportState = useCanvasViewportState(projectId, projectLoaded);
     const { containerRef, viewport, viewportRef, setViewport, virtualizationViewport, setVirtualizationViewport, size } = viewportState;
@@ -185,7 +181,7 @@ function InfiniteCanvasPage() {
     const setActiveMediaNodeId = pageUi((state) => state.setActiveMediaNodeId);
     useEffect(() => {
         pageUi.getState().resetForProject();
-    }, [pageUi, projectId, canvasStorageScope]);
+    }, [pageUi, projectId]);
     // While the overview canvas is active it culls every frame itself, so
     // camera previews need not re-render this page to refresh virtualization.
     const lodActiveRef = useRef(false);
@@ -899,8 +895,7 @@ function InfiniteCanvasPage() {
     } = nodeEditor;
 
     const handleProjectFolderInsert = useCallback(
-        (folderId: string, expectedScope: CapturedUserScope) => {
-            assertUserScope(expectedScope);
+        (folderId: string) => {
             const folder = linkedProjectQuery.data?.assetFolders.find((item) => item.id === folderId);
             if (!folder || !linkedProjectId) throw new Error("素材文件夹已不存在，请刷新后重试");
             const { style, theme } = linkedFolderPresentation(folder);
@@ -1245,10 +1240,8 @@ function InfiniteCanvasPage() {
         async (node: CanvasNodeData) => {
             const taskId = node.metadata?.taskId;
             if (!taskId) return;
-            const scope = captureUserScope();
             try {
                 const task = activeTasksRef.current.find((item) => item.id === taskId) ?? (await queryGenerationTask(taskId));
-                assertUserScope(scope);
                 cancelCanvasTask(task);
             } catch (error) {
                 message.error(error instanceof Error ? error.message : "读取任务失败");
@@ -1348,7 +1341,7 @@ function InfiniteCanvasPage() {
 
     return (
         <>
-            {projectMenu.deletingCanvas ? <CanvasDeleteConfirmation scope={projectMenu.deletingCanvas.scope} title="删除画布？"
+            {projectMenu.deletingCanvas ? <CanvasDeleteConfirmation title="删除画布？"
                 description={`将删除「${projectMenu.deletingCanvasTitle}」，里面的节点和连线也会一起移除。`}
                 onCancel={projectMenu.cancelDeleteCanvas} onConfirm={projectMenu.confirmDeleteCanvas} /> : null}
             <a
@@ -1646,9 +1639,7 @@ function InfiniteCanvasPage() {
                                         wheelBehavior={wheelBehavior}
                                         onWheelBehaviorChange={changeWheelBehavior}
                                         onShowImageInfoChange={setShowImageInfo}
-                                        onOpenMyAssets={() => {
-                                            openCanvasAssetLibrary();
-                                        }}
+                                        onOpenMyAssets={() => openCanvasAssetLibrary()}
                                         onOpenProjectCharacters={() => openProjectAssets("character")}
                                         onOpenGenerationHistory={() => setGenerationHistoryOpen(true)}
                                         shortcutRequestNonce={shortcutRequestNonce}
@@ -1795,27 +1786,15 @@ function InfiniteCanvasPage() {
                             onDownload={downloadNodeImage}
                             onSaveAsset={(node) => void saveNodeAsset(node)}
                             onAnnotate={(node) => setAnnotationNodeId(node.id)}
-                            onMaskEdit={(node) => {
-                                setDialogNodeId(null);
-                                setMaskEditNodeId(node.id);
-                            }}
-                            onEmotion={(node) => {
-                                setDialogNodeId(null);
-                                setEmotionNodeId((current) => (current === node.id ? null : node.id));
-                            }}
+                            onMaskEdit={(node) => { setDialogNodeId(null); setMaskEditNodeId(node.id); }}
+                            onEmotion={(node) => { setDialogNodeId(null); setEmotionNodeId((current) => (current === node.id ? null : node.id)); }}
                             onPortraitTexture={openPortraitTextureEditor}
                             onCrop={(node) => node.type === CanvasNodeType.Video ? openVideoCrop(node) : setCropNodeId(node.id)}
                             onSplit={(node, params) => void splitImageNode(node, params)}
                             onUpscale={(node) => setUpscaleNodeId(node.id)}
                             onSuperResolve={createUpscaleProcessingNode}
-                            onAngle={(node) => {
-                                setDialogNodeId(null);
-                                setAngleNodeId((current) => (current === node.id ? null : node.id));
-                            }}
-                            onLighting={(node) => {
-                                setDialogNodeId(null);
-                                setLightingNodeId((current) => (current === node.id ? null : node.id));
-                            }}
+                            onAngle={(node) => { setDialogNodeId(null); setAngleNodeId((current) => (current === node.id ? null : node.id)); }}
+                            onLighting={(node) => { setDialogNodeId(null); setLightingNodeId((current) => (current === node.id ? null : node.id)); }}
                             onPanorama={openPanoramaConfig}
                             onViewImage={(node) => setPreviewNodeId(node.id)}
                             onExtractVideoFrames={extractVideoFrameAt}
@@ -1851,7 +1830,7 @@ function InfiniteCanvasPage() {
                                     canvasImages={canvasImageNodes}
                                     showLibrary={!currentProject?.projectId}
                                     activeNodeId={selectedNodeIds.size === 1 ? Array.from(selectedNodeIds)[0] : null}
-                                    onInsertAsset={(asset) => void handleAssetsInsert([localAssetToInsertPayload(asset)], canvasCapturedScope)}
+                                    onInsertAsset={(asset) => void handleAssetsInsert([localAssetToInsertPayload(asset)])}
                                     onFocusCanvasImage={focusCanvasImageNode}
                                 />
                                 <CanvasZoomControls
@@ -1911,19 +1890,13 @@ function InfiniteCanvasPage() {
                             onDuplicate={duplicateNode}
                             onDeleteNode={(nodeId) => deleteNodes(new Set([nodeId]))}
                             onDeleteConnection={deleteConnection}
-                            onSaveAsset={(node) => {
-                                void saveNodeAsset(node);
-                            }}
+                            onSaveAsset={(node) => void saveNodeAsset(node)}
                             onViewMedia={(node) => setPreviewNodeId(node.id)}
                             onEditText={openTextNodeEditor}
                             onOpenDrawing={openDrawingNode}
                             onGenerateImage={generateImageFromTextNode}
-                            onCopyContent={(node) => {
-                                void copyNodeContentToClipboard(node);
-                            }}
-                            onCopyMediaUrl={(node) => {
-                                void copyNodeMediaUrlToClipboard(node);
-                            }}
+                            onCopyContent={(node) => void copyNodeContentToClipboard(node)}
+                            onCopyMediaUrl={(node) => void copyNodeMediaUrlToClipboard(node)}
                             onUploadToArkPrivateAsset={confirmUploadNodeImageToArkPrivateAsset}
                             onSetAssetCategory={(nodeId, assetCategory) => handleConfigNodeChange(nodeId, { assetCategory })}
                             onToggleFrame={(node) => handleFrameToggle(node.id)}
@@ -2001,7 +1974,7 @@ function InfiniteCanvasPage() {
                 ) : null}
                 <CanvasVersionHistory history={versions} />
                 <CanvasWorkflowWorkspace
-                    key={`${canvasStorageScope}:${projectId}`}
+                    key={projectId}
                     ref={workflowsRef}
                     nodes={nodes}
                     connections={connections}

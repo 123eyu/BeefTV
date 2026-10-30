@@ -13,7 +13,6 @@ import { mediaResultMetadata } from "@/lib/canvas/canvas-node-semantics";
 import { CONTENT_MODERATION_ERROR_CODE, type GenerationFailureMetadata } from "@/lib/generation-error";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
-import { assertUserScope, captureUserScope, isUserScopeAbandonedError, userScopeMatches } from "@/lib/user-scope-guard";
 import { CanvasGenerationTargetSaveError } from "@/services/canvas-generation-errors";
 import { normalizeImageValue } from "@/lib/model-capabilities";
 import { mergedImageCapabilityConfig } from "@/lib/model-selection";
@@ -61,8 +60,7 @@ export async function executeImageGeneration({
         showError(canvasImagePendingResultMessage(sourceNode, canvasNodes));
         return;
     }
-    const expectedScope = captureUserScope();
-    const isCurrent = () => userScopeMatches(expectedScope) && !controller.signal.aborted;
+    const isCurrent = () => !controller.signal.aborted;
     const referenceLimitError = canvasImageReferenceLimitError(generationConfig, generationContext.referenceImages);
     if (referenceLimitError) {
         showError(referenceLimitError);
@@ -103,7 +101,6 @@ export async function executeImageGeneration({
     if (onSubmissionPlan) {
         if (!clientOperationId) throw new Error("生成提交缺少确认标识");
         await onSubmissionPlan({ sourceNodeId: nodeId, submissions: submissions.map(submission => ({ ...submission, operationId: submission.operationId! })) });
-        assertUserScope(expectedScope);
         controller.signal.throwIfAborted();
         canvasNodes = nodesRef?.current || canvasNodes;
         canvasConnections = useCanvasStore.getState().projects.find(project => project.id === projectId)?.connections || canvasConnections;
@@ -240,7 +237,7 @@ export async function executeImageGeneration({
                         let completed: GenerationTask | undefined;
                         await runCanvasGenerationTaskToConsumer(
                             {
-                                projectId, nodeId: batchTargets[0], expectedScope, ...retryContext,
+                                projectId, nodeId: batchTargets[0], ...retryContext,
                                 ...(operationId ? { clientOperationId: operationId } : {}),
                                 mode: "image", resolveReferenceLinks, prompt: effectivePrompt,
                                 config: { ...generationConfig, count: String(nativeOutputCount) }, referenceImages,
@@ -271,7 +268,6 @@ export async function executeImageGeneration({
                         {
                             projectId,
                             nodeId: targetId,
-                            expectedScope,
                             ...retryContext,
                             ...(operationId ? { clientOperationId: operationId } : {}),
                             mode: "image",
@@ -340,7 +336,7 @@ export async function executeImageGeneration({
                 if (isConfigNode) setNodes((current) => current.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node)));
                 return true;
             } catch (error) {
-                if (isUserScopeAbandonedError(error) || (!controller.signal.aborted && isGenerationCanceled(error))) {
+                if ((!controller.signal.aborted && isGenerationCanceled(error))) {
                     abandoned = true;
                     return false;
                 }
@@ -362,7 +358,7 @@ export async function executeImageGeneration({
         }),
     );
     if (count > 1) finishGenerationRequest(rootId, controller);
-    if (abandoned || !userScopeMatches(expectedScope)) return;
+    if (abandoned) return;
     if (controller.signal.aborted) {
         setNodes((current) => {
             const ids = new Set([rootId, ...childIds]);

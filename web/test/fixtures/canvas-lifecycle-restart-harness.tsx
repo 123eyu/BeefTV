@@ -19,7 +19,6 @@ import { hasUnconfirmedCanvasEdits, pendingExternalCanvasRevision } from "../../
 import { canvasBackendSubmitPaused } from "../../src/services/canvas-revision-conflict";
 import { syncLocalCanvasProjectToBackend } from "../../src/services/local-workspace-repository";
 import { refreshLocalCanvasProjectIfChanged } from "../../src/services/local-workspace-repository";
-import { getActiveUserScope, setActiveUserScope } from "@/lib/user-scope";
 import type { CanvasNodeData, CanvasConnection, CanvasAssistantSession } from "../../src/types/canvas";
 import { createCanvasPageUiStore } from "../../src/stores/canvas/use-canvas-page-ui-store";
 const pageUi = createCanvasPageUiStore();
@@ -60,7 +59,6 @@ function Recovery({ projectId, projectLoaded, nodes, nodesRef, setNodes }: Param
 function Harness() {
     const [projectId, setProjectId] = useState("c1");
     (harness as any).switchCanvas = setProjectId;
-    (harness as any).scopeCycle = () => { const scope = getActiveUserScope(); setActiveUserScope("leave-owner-b"); setActiveUserScope(scope); };
     const [, unrelatedRender] = useState(0);
     (harness as any).pulse = () => new Promise<void>(resolve => {
         let count = 0;

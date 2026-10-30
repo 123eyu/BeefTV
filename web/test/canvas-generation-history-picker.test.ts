@@ -13,7 +13,6 @@ import {
 import { reuseGeneratedMediaStorageKey } from "../src/lib/canvas/canvas-generation-task-sync";
 import { insertCanvasGenerationHistoryTask } from "../src/pages/canvas/canvas-generation-orchestration";
 import { localTaskHistoryFromProjects } from "../src/lib/local-task-history";
-import { captureUserScopeEpoch, setActiveUserScope } from "../src/lib/user-scope";
 import { listGenerationTasks, type GenerationTask } from "../src/services/api/task-center";
 import { CanvasNodeType, type CanvasNodeData } from "../src/types/canvas";
 import type { CanvasProject } from "../src/stores/canvas/use-canvas-store";
@@ -94,7 +93,6 @@ function selectGate(partial: Partial<CanvasGenerationHistorySelectGate> = {}): C
     return {
         open: true,
         projectId: "lelvpvjEnuJ98wD_f2FI7",
-        epoch: captureUserScopeEpoch(),
         mounted: true,
         selectionEpoch: 0,
         ...partial,
@@ -109,7 +107,6 @@ describe("LibTV generation history picker", () => {
         expect(picker).toContain("queryGenerationTask(task.id, { signal: request.signal })");
         expect(picker).toContain("awaitCanvasGenerationHistoryDetailIfValid");
         expect(picker).toContain("canvasGenerationHistorySelectStillValid");
-        expect(picker).toContain("captureUserScopeEpoch");
         expect(picker).not.toContain("resolveCanvasGenerationHistoryTaskForInsert");
         expect(historySource).not.toContain("queryGenerationTask");
         expect(historySource).not.toContain("queryTask");
@@ -122,7 +119,7 @@ describe("LibTV generation history picker", () => {
         expect(picker).not.toContain("isLocalWorkspaceMode");
         expect(picker).not.toContain("loadCanvasGenerationHistory");
         expect(picker).toContain("query.isError ? <>生成历史暂时无法读取");
-        expect(picker).toContain('queryKey: ["canvas-generation-history", scope, projectId]');
+        expect(picker).toContain('queryKey: ["canvas-generation-history", projectId]');
         expect(historySource).toContain("export function insertableCanvasGenerationHistoryTasks");
         expect(historySource).not.toContain("loadCanvasGenerationHistory");
         expect(historySource).not.toContain("listGenerationTasks");
@@ -185,7 +182,7 @@ describe("LibTV generation history picker", () => {
         expect(insertableCanvasGenerationHistoryTasks([succeededImageSummary({ projectId: "" })], { projectId: "   " })).toEqual([]);
     });
 
-    test("delayed detail is not inserted after picker close, canvas switch, user-scope change, or unmount", async () => {
+    test("delayed detail is not inserted after picker close, canvas switch, or unmount", async () => {
         const detail = succeededImageDetail();
         const selected: GenerationTask[] = [];
 
@@ -232,23 +229,6 @@ describe("LibTV generation history picker", () => {
             selectGate({ projectId: "other-canvas" }),
         )).toBe(false);
 
-        const beforeScope = captureUserScopeEpoch();
-        setActiveUserScope("other-user");
-        expect(canvasGenerationHistorySelectStillValid(
-            selectGate({ epoch: beforeScope }),
-            selectGate(),
-        )).toBe(false);
-        const scopePending = deferred<GenerationTask>();
-        const scopeCaptured = selectGate({ epoch: beforeScope });
-        const scopeApplied = awaitCanvasGenerationHistoryDetailIfValid({
-            detail: scopePending.promise,
-            captured: scopeCaptured,
-            live: () => selectGate(),
-            expectedId: detail.id,
-        });
-        scopePending.resolve(detail);
-        expect(await scopeApplied).toBeUndefined();
-
         await applyDelayed((live) => {
             live.mounted = false;
         });
@@ -265,7 +245,6 @@ describe("LibTV generation history picker", () => {
         });
         validPending.resolve(detail);
         expect((await validApplied)?.id).toBe(detail.id);
-        setActiveUserScope("guest");
     });
 
     test("history API failure is not turned into an empty list", async () => {
@@ -347,7 +326,6 @@ describe("LibTV generation history picker", () => {
         expect(insert).toContain("ensureCanvasNodeAsset");
         expect(insert).toContain("insertedNodes.reduce");
         expect(insert).toContain("rebaseInsertedCanvasNode(nodes, inserted)");
-        expect(insert).toContain("expectedScope: captureUserScope()");
         expect(insert.indexOf("runOwnedCanvasHistoryInsert")).toBeLessThan(insert.indexOf("setGenerationHistoryOpen(false)"));
         expect(insert.indexOf("runOwnedCanvasHistoryInsert")).toBeLessThan(insert.indexOf('message.success("已从生成历史插入到画布")'));
         expect(insert.indexOf("flushCanvasStorePersistence")).toBe(-1);

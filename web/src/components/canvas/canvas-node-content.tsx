@@ -30,7 +30,6 @@ import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics
 import { canvasNodeDiagnosticContext, recordCanvasVideoDiagnostic } from "@/services/diagnostics/canvas-media-diagnostics";
 import { acquireCanvasVideoPreview, canvasDerivedPreviewSourceKey, canvasVideoPreviewNeedsHydration } from "@/services/canvas-video-preview";
 import { acquireCanvasVideoSource } from "@/services/canvas-video-source";
-import { getActiveUserScopeEpoch, subscribeUserScope } from "@/lib/user-scope";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { ART_CRITIQUE_NODE_TYPE } from "@/lib/art-critique/contracts";
@@ -517,11 +516,10 @@ function AudioNodeContent({ node, theme }: CanvasNodeContentProps) {
 export function InactiveVideoPreview({ node, theme, onPlay, hoverEnabled = true, showPlayButton = true }: Pick<CanvasNodeContentProps, "node" | "theme"> & { onPlay: () => void; hoverEnabled?: boolean; showPlayButton?: boolean }) {
     const previewRef = useRef<HTMLDivElement>(null);
     const nearViewport = useNearViewport(previewRef);
-    const [scopeEpoch, setScopeEpoch] = useState(getActiveUserScopeEpoch);
     const sourceKey = canvasDerivedPreviewSourceKey(node);
-    const [derivedPreview, setDerivedPreview] = useState<{ sourceKey: string; epoch: number; content: string }>();
+    const [derivedPreview, setDerivedPreview] = useState<{ sourceKey: string; content: string }>();
     const persistedPreviewUrl = canvasNodeVideoPreviewUrl(node);
-    const derivedPreviewUrl = derivedPreview?.sourceKey === sourceKey && derivedPreview.epoch === getActiveUserScopeEpoch() ? derivedPreview.content : "";
+    const derivedPreviewUrl = derivedPreview?.sourceKey === sourceKey ? derivedPreview.content : "";
     const previewNeedsHydration = canvasVideoPreviewNeedsHydration(node);
     const previewUrl = previewNeedsHydration ? derivedPreviewUrl || persistedPreviewUrl : persistedPreviewUrl;
     const [hydrating, setHydrating] = useState(false);
@@ -536,10 +534,6 @@ export function InactiveVideoPreview({ node, theme, onPlay, hoverEnabled = true,
     }, [hoverEnabled, node.metadata?.content, node.metadata?.storageKey, node.metadata?.importSource?.provider]);
 
     useEffect(() => {
-        return subscribeUserScope((epoch) => { setDerivedPreview(undefined); setScopeEpoch(epoch.generation); });
-    }, []);
-
-    useEffect(() => {
         if (!previewNeedsHydration || !nearViewport || (!node.metadata?.storageKey && !node.metadata?.content)) {
             setHydrating(false);
             return;
@@ -550,14 +544,14 @@ export function InactiveVideoPreview({ node, theme, onPlay, hoverEnabled = true,
         setHydrating(true);
         void lease.promise
             .then((videoPreview) => {
-                if (active && scopeEpoch === getActiveUserScopeEpoch() && videoPreview) setDerivedPreview({ sourceKey, epoch: scopeEpoch, content: videoPreview.content });
+                if (active && videoPreview) setDerivedPreview({ sourceKey, content: videoPreview.content });
             })
             .catch(() => undefined)
             .finally(() => {
                 if (active) setHydrating(false);
             });
         return () => { active = false; lease.release(); };
-    }, [nearViewport, sourceKey, previewNeedsHydration, scopeEpoch]);
+    }, [nearViewport, sourceKey, previewNeedsHydration]);
 
     if (previewUrl) {
         return <div ref={previewRef} className="group/video-preview relative size-full overflow-hidden rounded-[var(--node-radius)] bg-black">
@@ -689,9 +683,7 @@ function useNodeResourceUrl(node: CanvasNodeData, eager: boolean, previewSize?: 
     const [error, setError] = useState(false);
     const [attempt, setAttempt] = useState(0);
     const reloadRequested = useRef(false);
-    const [scopeEpoch, setScopeEpoch] = useState(getActiveUserScopeEpoch);
-    const sourceIdentityRef = useRef(`${scopeEpoch}:${storageKey}`);
-    useEffect(() => subscribeUserScope((epoch) => setScopeEpoch(epoch.generation)), []);
+    const sourceIdentityRef = useRef(storageKey);
     const reportImageEvent = useCallback((code: "CANVAS_IMAGE_READ_FAILED" | "CANVAS_IMAGE_DECODE_FAILED" | "CANVAS_IMAGE_RELOAD") => {
         if (node.type !== CanvasNodeType.Image) return;
         const safeNodeId = /^[A-Za-z0-9._:-]{1,96}$/.test(node.id) ? node.id : "unknown";
@@ -708,7 +700,7 @@ function useNodeResourceUrl(node: CanvasNodeData, eager: boolean, previewSize?: 
 
     useEffect(() => {
         let cancelled = false;
-        const sourceIdentity = `${scopeEpoch}:${storageKey}`;
+        const sourceIdentity = storageKey;
         const sourceChanged = sourceIdentityRef.current !== sourceIdentity;
         sourceIdentityRef.current = sourceIdentity;
         if (sourceChanged) setUrl("");
@@ -764,7 +756,7 @@ function useNodeResourceUrl(node: CanvasNodeData, eager: boolean, previewSize?: 
             if (!cancelled) setLoading(false);
         });
         return () => { cancelled = true; };
-    }, [eager, fallback, isLazyVisual, isRemoteResource, storageKey, attempt, scopeEpoch, reportImageEvent, previewSize]);
+    }, [eager, fallback, isLazyVisual, isRemoteResource, storageKey, attempt, reportImageEvent, previewSize]);
 
     return { url, loading, error, retry, fail };
 }

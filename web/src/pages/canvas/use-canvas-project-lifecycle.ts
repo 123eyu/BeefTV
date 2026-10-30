@@ -21,7 +21,6 @@ import { createWorkspaceCanvasProject, deleteWorkspaceCanvasProjects } from "@/s
 import { flushCanvasStorePersistence, useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-store";
 import { hasUnconfirmedCanvasEdits, holdExternalCanvasRevisionForEditor, scheduleLocalCanvasBackendSync, syncLocalCanvasProjectToBackend } from "@/services/local-workspace-repository";
 import { isCanvasSubmitControlError } from "@/services/canvas-revision-conflict";
-import { assertUserScope, captureUserScope, userScopeMatches } from "@/lib/user-scope-guard";
 import { useCanvasHistoryStore } from "@/stores/canvas/use-canvas-history-store";
 import { useCanvasThemeStore } from "@/stores/canvas/use-canvas-theme-store";
 import { projectSyncProgress, useSyncProgressStore } from "@/stores/use-sync-progress-store";
@@ -244,7 +243,6 @@ export function useCanvasProjectLifecycle({
     const editorProjectIdRef = useRef<string | null>(null);
     useEffect(() => {
         if (!projectLoaded || !initialReadComplete || editorProjectIdRef.current !== projectId) return;
-        const scope = captureUserScope();
         const controller = new AbortController();
         // Do not turn cache-open restoration into a pending local write while
         // the first authoritative read is still merging into that cache.
@@ -263,8 +261,8 @@ export function useCanvasProjectLifecycle({
         });
         void backfillCanvasTaskOutcomes({
             nodes: nodesRef.current,
-            active: () => !controller.signal.aborted && editorProjectIdRef.current === projectId && userScopeMatches(scope),
-            query: id => queryGenerationTask(id, { signal: controller.signal, expectedScope: scope }),
+            active: () => !controller.signal.aborted && editorProjectIdRef.current === projectId,
+            query: id => queryGenerationTask(id, { signal: controller.signal}),
             update: adoptDerived,
         });
         return () => controller.abort();
@@ -638,9 +636,7 @@ export function useCanvasProjectLifecycle({
     // page must not depend on the 400 ms store timer or the 500 ms backend timer.
     useEffect(() => {
         if (!projectLoaded) return;
-        const owner = captureUserScope();
         const flushOnLeave = (reason: string) => {
-            if (!userScopeMatches(owner)) return;
             if (editorProjectIdRef.current !== projectId) return;
             if (!useCanvasStore.getState().openProject(projectId)) return;
             const live = leaveFlushStateRef.current;
@@ -663,8 +659,7 @@ export function useCanvasProjectLifecycle({
             updateProject(projectId, { viewport: viewportRef.current });
             void (async () => {
                 await flushCanvasStorePersistence();
-                if (!userScopeMatches(owner)) return;
-                if (localMode) await syncLocalCanvasProjectToBackend(projectId, owner);
+                if (localMode) await syncLocalCanvasProjectToBackend(projectId);
             })().catch((error) => {
                 if (isCanvasSubmitControlError(error)) return;
                 console.error("离开画布时保存失败", { projectId, reason, error });
@@ -700,19 +695,16 @@ export function useCanvasProjectLifecycle({
     }, [currentProject, localMode, message, navigate]);
 
     const deleteCurrentProject = useCallback(async () => {
-        const scope = captureUserScope();
         const siblingCanvases = listCanvasWorkspaceProjectCanvases(useCanvasStore.getState().projects, projectId);
         const nextCanvas = siblingCanvases.find((canvas) => canvas.id !== projectId);
         let drawingIds = nodesRef.current.flatMap((node) => node.type === "drawing" && node.metadata?.drawingId ? [node.metadata.drawingId] : []);
         const drafts = await readCanvasSyncDrafts(projectId);
-        assertUserScope(scope);
         const preserved = new Set(drafts.flatMap((draft) => draft.project.nodes.flatMap((node) => node.metadata?.drawingId ? [node.metadata.drawingId] : [])));
         drawingIds = drawingIds.filter((id) => !preserved.has(id));
         await deleteWorkspaceCanvasProjects([projectId]);
-        assertUserScope(scope);
         if (drawingIds.length) {
             void Promise.all(drawingIds.map((drawingId) => removeCanvasDrawing(projectId, drawingId)))
-                .catch(() => { if (userScopeMatches(scope)) message.warning("画布已删除，但部分本地绘图缓存清理失败"); });
+                .catch(() => { message.warning("画布已删除，但部分本地绘图缓存清理失败"); });
         }
         cleanupAssetImages();
         navigate(nextCanvas ? `/canvas/${nextCanvas.id}` : "/canvas");

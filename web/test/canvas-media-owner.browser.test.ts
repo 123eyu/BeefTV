@@ -61,7 +61,7 @@ for (const tool of tools) {
             expect(result.persisted).toBeGreaterThan(0);
         } finally { await page.close(); }
     });
-    for (const mode of ["canvas", "account", "account-return", "canvas-back"]) {
+    for (const mode of ["canvas", "canvas-back"]) {
         test(`${tool}: ${mode} during the first wait prevents late writes and another upload`, async () => {
             const page = await browser.newPage();
             try {
@@ -94,7 +94,7 @@ for (const tool of tools) {
 }
 
 for (const tool of ["cropImageNode", "cropVideoNode", "splitImageNode", "upscaleImageNode"]) {
-    for (const ending of ["canvas", "account-return", "unmount", "late-error"]) {
+    for (const ending of ["canvas", "unmount", "late-error"]) {
         test(`${tool}: ${ending} after a later wait keeps the new owner untouched`, async () => {
             const page = await browser.newPage();
             try {

@@ -143,19 +143,6 @@ test("recovery actions fit the narrow expanded editor and its confirmation remai
     } finally { await close(); }
 });
 
-test("switching user scope dismisses recovery confirmation without copying or submitting", async () => {
-    const { page, state, close } = await open("five-images", "missing-submission-id&recover&submission-recovery-ui");
-    try {
-        await page.getByRole("region", { name: "生成恢复" }).getByRole("button", { name: "新建节点继续" }).click();
-        const confirmation = page.getByRole("dialog", { name: "新建节点继续生成？" });
-        await confirmation.waitFor();
-        await page.evaluate(() => (window as any).__customer.switchScope());
-        await confirmation.waitFor({ state: "hidden" });
-        expect(state.posts).toHaveLength(0);
-        expect(await page.evaluate(() => (window as any).__customer.nodes.length)).toBe(state.project.nodes.length);
-    } finally { await close(); }
-});
-
 test("reference repair marks and locates invalid bindings, cancels safely, then submits only after explicit reselect", async () => {
     const { page, state, errors, close } = await open("five-images", "reference-repair-ui");
     try {

@@ -9,8 +9,6 @@ import type { AssetLibraryPickerItem } from "@/components/assets/asset-library-p
 import { createReferenceLinkResolver } from "@/components/generation-reference-links";
 import { generationErrorCode, generationErrorMessage } from "@/lib/generation-error";
 import { creationResultAssetIds } from "@/lib/canvas/canvas-asset-handoff";
-import { captureUserScopeEpoch, userScopeEpochMatches } from "@/lib/user-scope";
-import { assertUserScope, captureUserScope, userScopeMatches, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { continueCreationConversationOnCanvas } from "@/services/creation-canvas-conversation";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import { useExternalAssetSources } from "@/hooks/use-external-asset-sources";
@@ -276,28 +274,27 @@ export default function CreatePage() {
             setHydrated(true);
             return () => { cancelled = true; };
         }
-        const loadEpoch = captureUserScopeEpoch();
-        void loadCreationConversations<CreationConversation>(loadEpoch.scope).then(async (stored) => {
-            if (cancelled || !userScopeEpochMatches(loadEpoch)) return;
+        void loadCreationConversations<CreationConversation>().then(async (stored) => {
+            if (cancelled) return;
             skipPersistRef.current = true;
             const next = stored?.length ? stored : [newConversation()];
             conversationsRef.current = next;
             setConversations(next);
             setActiveId(next[0].id);
             setHydrated(true);
-            const parked = next[0]?.id ? await hasParkedCreationConversationDraft(next[0].id, loadEpoch.scope) : false;
-            if (cancelled || !userScopeEpochMatches(loadEpoch)) return;
+            const parked = next[0]?.id ? await hasParkedCreationConversationDraft(next[0].id) : false;
+            if (cancelled) return;
             setParkedDraftId(parked && next[0] ? next[0].id : "");
         }).catch(async (error) => {
-            if (cancelled || !userScopeEpochMatches(loadEpoch)) return;
+            if (cancelled) return;
             toastRef.current.error(error instanceof Error ? error.message : "对话加载失败");
             let local: CreationConversation[] | null = null;
             try {
-                local = await loadLocalCreationConversationDrafts<CreationConversation>(loadEpoch.scope);
+                local = await loadLocalCreationConversationDrafts<CreationConversation>();
             } catch {
                 local = null;
             }
-            if (cancelled || !userScopeEpochMatches(loadEpoch)) return;
+            if (cancelled) return;
             skipPersistRef.current = true;
             const next = local?.length ? local : [newConversation()];
             conversationsRef.current = next;
@@ -324,13 +321,11 @@ export default function CreatePage() {
             skipPersistRef.current = false;
             return;
         }
-        const persistEpoch = captureUserScopeEpoch();
-        void saveCreationConversations(conversations, persistEpoch.scope).catch(async (error) => {
-            if (!userScopeEpochMatches(persistEpoch)) return;
+        void saveCreationConversations(conversations).catch(async (error) => {
             toastRef.current.error(error instanceof Error ? error.message : "对话保存失败");
             try {
-                const local = await loadLocalCreationConversationDrafts<CreationConversation>(persistEpoch.scope);
-                if (!userScopeEpochMatches(persistEpoch) || !local?.length) return;
+                const local = await loadLocalCreationConversationDrafts<CreationConversation>();
+                if (!local?.length) return;
                 const remotes = new Map(local.flatMap((item) => item.conflictRemote ? [[item.id, item.conflictRemote] as const] : []));
                 if (!remotes.size) return;
                 skipPersistRef.current = true;
@@ -443,11 +438,9 @@ export default function CreatePage() {
         }));
         conversationsRef.current = next;
         setConversations(next);
-        const epoch = captureUserScopeEpoch();
         try {
-            await saveCreationConversations(next, epoch.scope);
+            await saveCreationConversations(next);
         } catch (error) {
-            if (!userScopeEpochMatches(epoch)) return;
             toastRef.current.error(error instanceof Error ? error.message : "对话保存失败");
         }
     }, []);
@@ -509,47 +502,39 @@ export default function CreatePage() {
             })),
         ...externalLibraryItems,
     ], [assets, externalLibraryItems, mode]);
-    const uploadCreationAsset = async (file: File, expectedScope: CapturedUserScope) => {
+    const uploadCreationAsset = async (file: File) => {
         const { uploadImage, uploadMediaFile } = await loadCreationRuntime();
-        assertUserScope(expectedScope);
         if (file.type.startsWith("video/")) {
-            const uploaded = await uploadMediaFile(file, "create-upload", undefined, expectedScope);
-            assertUserScope(expectedScope);
+            const uploaded = await uploadMediaFile(file, "create-upload");
             return {
                 asset: creationVideoAsset({ title: file.name, uploaded, metadata: { source: "create-upload", fileName: file.name } }),
                 attachment: creationAttachmentFromVideo(file, uploaded),
             };
         }
         if (file.type.startsWith("audio/")) {
-            const uploaded = await uploadMediaFile(file, "create-upload", undefined, expectedScope);
-            assertUserScope(expectedScope);
+            const uploaded = await uploadMediaFile(file, "create-upload");
             return {
                 asset: creationAudioAsset({ title: file.name, uploaded, metadata: { source: "create-upload", fileName: file.name } }),
                 attachment: creationAttachmentFromAudio(file, uploaded),
             };
         }
         if (!file.type.startsWith("image/")) {
-            const uploaded = await uploadMediaFile(file, "create-upload", undefined, expectedScope);
-            assertUserScope(expectedScope);
+            const uploaded = await uploadMediaFile(file, "create-upload");
             return { attachment: creationAttachmentFromDocument(file, uploaded) };
         }
-        const uploaded = await uploadImage(file, undefined, expectedScope);
-        assertUserScope(expectedScope);
+        const uploaded = await uploadImage(file);
         return {
             asset: creationImageAsset({ title: file.name, uploaded, metadata: { source: "create-upload", fileName: file.name } }),
             attachment: creationAttachmentFromImage(file, uploaded),
         };
     };
-    const uploadLibraryAssets = async (files: FileList | File[], expectedScope: CapturedUserScope) => {
-        assertUserScope(expectedScope);
+    const uploadLibraryAssets = async (files: FileList | File[]) => {
         const next = Array.from(files).filter((file) => creationFileAccepted(mode, file));
         if (!next.length) return [];
         const settled = await Promise.allSettled(next.map(async (file) => {
-            const { asset } = await uploadCreationAsset(file, expectedScope);
-            assertUserScope(expectedScope);
+            const { asset } = await uploadCreationAsset(file);
             return asset ? addAsset(asset) : "";
         }));
-        if (!userScopeMatches(expectedScope)) return [];
         const assetIds = settled.flatMap((entry) => entry.status === "fulfilled" && entry.value ? [entry.value] : []);
         const failed = settled.filter((entry) => entry.status === "rejected");
         if (assetIds.length) toast.success(`${assetIds.length} 个素材已上传到素材库并自动选中`);
@@ -557,8 +542,7 @@ export default function CreatePage() {
         return assetIds;
     };
 
-    const handleLibrarySelect = (selectedIds: string[], expectedScope: CapturedUserScope) => {
-        assertUserScope(expectedScope);
+    const handleLibrarySelect = (selectedIds: string[]) => {
         const next = selectedIds.flatMap((id): CreationAttachment[] => {
             const asset = assets.find((item) => item.id === id);
             if (asset?.kind === "image") return [creationAttachmentFromAsset(asset)];
@@ -639,15 +623,12 @@ export default function CreatePage() {
             return;
         }
         setReferenceReplacementBusy(true);
-        const expectedScope = captureUserScope();
         try {
-            const { asset, attachment } = await uploadCreationAsset(file, expectedScope);
-            if (!userScopeMatches(expectedScope)) return;
+            const { asset, attachment } = await uploadCreationAsset(file);
             if (creationAttachmentKind(attachment) !== "image") throw new Error("上传结果不是可用图片");
             if (asset) addAsset(asset);
             if (replaceAttachmentReference(targetAttachmentId, attachment)) toast.success("参考图已替换，槽位不变，提示词无需修改");
         } catch (error) {
-            if (!userScopeMatches(expectedScope)) return;
             toast.error(error instanceof Error ? error.message : "参考图上传或替换失败");
         } finally {
             setReferenceReplacementBusy(false);
@@ -924,8 +905,6 @@ export default function CreatePage() {
         if (!activeConversation || openingCanvasRef.current) return;
         openingCanvasRef.current = true;
         setOpeningCanvas(true);
-        const epoch = captureUserScopeEpoch();
-        const scope = epoch.scope;
         const source = activeConversation;
         try {
             const assets = useAssetStore.getState().assets;
@@ -939,12 +918,10 @@ export default function CreatePage() {
             const referenceAssetIds = assets.filter((asset) => (asset.kind === "image" || asset.kind === "video") && asset.data.storageKey && referenceKeys.has(asset.data.storageKey)).map((asset) => asset.id);
             const assetIds = [...generatedAssetIds, ...referenceAssetIds];
             const result = await continueCreationConversationOnCanvas(source);
-            if (!userScopeEpochMatches(epoch)) return;
             const next = updateCreationConversationSnapshot(conversationsRef.current, source.id, (item) => ({ ...item, canvasId: result.id }));
             conversationsRef.current = next;
             setConversations(next);
-            await saveCreationConversations(next, scope);
-            if (!userScopeEpochMatches(epoch)) return;
+            await saveCreationConversations(next);
             if (result.syncError && !localMode) toastRef.current.warning("会话已保存在本机，云端同步尚未完成。");
             const params = new URLSearchParams({ conversation: result.sessionId });
             if (assetIds.length) {
@@ -953,7 +930,7 @@ export default function CreatePage() {
             }
             navigate(`/canvas/${result.id}?${params.toString()}`);
         } catch (cause) {
-            if (userScopeEpochMatches(epoch)) toastRef.current.error(cause instanceof Error ? cause.message : "转入画布失败，原会话已保留");
+            toastRef.current.error(cause instanceof Error ? cause.message : "转入画布失败，原会话已保留");
         } finally { openingCanvasRef.current = false; setOpeningCanvas(false); }
     };
 
@@ -966,9 +943,7 @@ export default function CreatePage() {
         setReferenceNotice("");
         setHistoryOpen(false);
         setConflictOpen(false);
-        const epoch = captureUserScopeEpoch();
-        void hasParkedCreationConversationDraft(conversation.id, epoch.scope).then((parked) => {
-            if (!userScopeEpochMatches(epoch)) return;
+        void hasParkedCreationConversationDraft(conversation.id).then((parked) => {
             setParkedDraftId(parked ? conversation.id : "");
         });
     };
@@ -976,10 +951,8 @@ export default function CreatePage() {
     const useSavedConflictVersion = async (conversation: CreationConversation) => {
         const remote = conversation.conflictRemote;
         if (!remote) return;
-        const epoch = captureUserScopeEpoch();
         try {
-            await acceptSavedCreationConversation(conversation.id, conversation, remote, epoch.scope);
-            if (!userScopeEpochMatches(epoch)) return;
+            await acceptSavedCreationConversation(conversation.id, conversation, remote);
             const saved = { ...remote.document, id: conversation.id } as CreationConversation;
             const next = updateCreationConversationSnapshot(conversationsRef.current, conversation.id, () => saved);
             skipPersistRef.current = true;
@@ -988,32 +961,27 @@ export default function CreatePage() {
             setConflictOpen(false);
             setParkedDraftId(conversation.id);
         } catch (error) {
-            if (!userScopeEpochMatches(epoch)) return;
             toastRef.current.error(error instanceof Error ? error.message : "无法换成已保存的版本");
         }
     };
 
     const restoreParkedDraft = async (conversationId: string) => {
-        const epoch = captureUserScopeEpoch();
         try {
-            const parked = await restoreParkedCreationConversation<CreationConversation>(conversationId, epoch.scope);
-            if (!userScopeEpochMatches(epoch) || !parked) return;
+            const parked = await restoreParkedCreationConversation<CreationConversation>(conversationId);
+            if (!parked) return;
             const next = updateCreationConversationSnapshot(conversationsRef.current, conversationId, () => parked);
             skipPersistRef.current = true;
             conversationsRef.current = next;
             setConversations(next);
             setParkedDraftId("");
         } catch (error) {
-            if (!userScopeEpochMatches(epoch)) return;
             toastRef.current.error(error instanceof Error ? error.message : "无法恢复刚才的草稿");
         }
     };
 
     const overwriteSavedWithDraft = async (conversation: CreationConversation) => {
-        const epoch = captureUserScopeEpoch();
         try {
-            await saveCreationConversations([conversation], epoch.scope, { resolveConflictIds: [conversation.id] });
-            if (!userScopeEpochMatches(epoch)) return;
+            await saveCreationConversations([conversation], undefined, { resolveConflictIds: [conversation.id] });
             const { conflictRemote: _conflictRemote, ...resolved } = conversation;
             const next = updateCreationConversationSnapshot(conversationsRef.current, conversation.id, () => resolved as CreationConversation);
             skipPersistRef.current = true;
@@ -1021,7 +989,6 @@ export default function CreatePage() {
             setConversations(next);
             setConflictOpen(false);
         } catch (error) {
-            if (!userScopeEpochMatches(epoch)) return;
             toastRef.current.error(error instanceof Error ? error.message : "这份草稿没有保存成功，原来的版本还在");
         }
     };
@@ -1037,11 +1004,8 @@ export default function CreatePage() {
             okButtonProps: { danger: true },
             cancelText: "保留",
             onOk: async () => {
-                const epoch = captureUserScopeEpoch();
-                const scope = epoch.scope;
                 try {
-                    await deleteCreationConversation(conversation.id, scope);
-                    if (!userScopeEpochMatches(epoch)) return;
+                    await deleteCreationConversation(conversation.id);
                     const remaining = removeCreationConversationSnapshot(conversationsRef.current, conversation.id);
                     const sortedRemaining = [...remaining].sort((left, right) => conversationTimestamp(right.updatedAt) - conversationTimestamp(left.updatedAt));
                     const fallback = sortedRemaining.find((item) => item.messages.length > 0) || sortedRemaining[0] || newConversation();
@@ -1059,7 +1023,6 @@ export default function CreatePage() {
                     }
                     toastRef.current.success("历史对话已删除，素材仍保留");
                 } catch (error) {
-                    if (!userScopeEpochMatches(epoch)) throw error;
                     toastRef.current.error(error instanceof Error ? error.message : "历史对话删除失败");
                     throw error;
                 }
@@ -1073,9 +1036,7 @@ export default function CreatePage() {
         const next = updateCreationConversationSnapshot(conversationsRef.current, conversation.id, (item) => ({ ...item, title: nextTitle }));
         conversationsRef.current = next;
         setConversations(next);
-        const epoch = captureUserScopeEpoch();
-        void saveCreationConversations(next, epoch.scope).catch((error) => {
-            if (!userScopeEpochMatches(epoch)) return;
+        void saveCreationConversations(next).catch((error) => {
             toastRef.current.error(error instanceof Error ? error.message : "对话重命名保存失败");
         });
     };
@@ -1296,7 +1257,7 @@ export default function CreatePage() {
             categoryLabels={{ ...creationAssetCategoryLabels, ...externalAssetSources.categoryLabels }}
             folders={externalAssetSources.folders}
             initialSelectedIds={attachments.flatMap((item) => item.id.startsWith("asset:") ? [item.id.slice(6)] : item.id.startsWith("external:") ? [item.id] : [])}
-            upload={{ accept: creationUploadAccept(mode), description: mode === "text" ? "支持图片、视频、音频和常用文档；媒体会保存到素材库" : `支持图片${mode === "video" ? "、视频和音频" : ""}，上传后保存到素材库`, onUpload: uploadLibraryAssets, external: { accept: "image/*", description: "写入当前 Eagle 文件夹；Eagle 当前支持图片文件", onUpload: (files, folderId, expectedScope) => externalAssetSources.uploadExternalFiles(files, folderId, undefined, expectedScope) } }}
+            upload={{ accept: creationUploadAccept(mode), description: mode === "text" ? "支持图片、视频、音频和常用文档；媒体会保存到素材库" : `支持图片${mode === "video" ? "、视频和音频" : ""}，上传后保存到素材库`, onUpload: uploadLibraryAssets, external: { accept: "image/*", description: "写入当前 Eagle 文件夹；Eagle 当前支持图片文件", onUpload: (files, folderId) => externalAssetSources.uploadExternalFiles(files, folderId) } }}
             onClose={() => setLibraryOpen(false)}
             onConfirm={handleLibrarySelect}
         /></Suspense> : null}

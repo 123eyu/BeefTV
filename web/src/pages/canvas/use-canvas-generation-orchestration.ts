@@ -5,7 +5,6 @@ import { App } from "antd";
 import { nanoid } from "nanoid";
 import { buildGenerationConfig } from "@/lib/canvas/canvas-project-generation";
 import { modelCapabilityConfigFor } from "@/lib/model-capabilities";
-import { captureUserScope, userScopeMatches } from "@/lib/user-scope-guard";
 
 import { promoteLegacyBatchTableSize } from "@/lib/canvas/canvas-batch-table";
 import { persistCanvasDocument } from "@/services/local-workspace-repository";
@@ -217,8 +216,7 @@ export function useCanvasGenerationOrchestration({
         (task: GenerationTask) => {
             const deliveryOnly = task.status === "succeeded";
             const owner = lifetime.capture(projectId);
-            const userScope = captureUserScope();
-            const isCurrent = () => lifetime.matches(owner, projectIdRef.current) && userScopeMatches(userScope);
+            const isCurrent = () => lifetime.matches(owner, projectIdRef.current);
             modal.confirm({
                 ...canvasTaskConfirmation,
                 title: deliveryOnly ? "停止取回结果？" : "取消生成任务？",
@@ -228,7 +226,7 @@ export function useCanvasGenerationOrchestration({
                 onOk: async () => {
                     if (!isCurrent()) return;
                     try {
-                        const next = await cancelGenerationTask(task.id, userScope);
+                        const next = await cancelGenerationTask(task.id);
                         if (!isCurrent()) return;
                         const node = nodesRef.current.find((item) => item.metadata?.taskId === task.id);
                         if (node) bindGenerationTask(node.id, next);
@@ -251,7 +249,7 @@ export function useCanvasGenerationOrchestration({
             if (!insertingHistory.current.tryEnter()) return;
             const owner = lifetime.capture(projectId);
             try {
-                await hydrateBackendGeneratedOutputs(task, undefined, { expectedScope: captureUserScope() });
+                await hydrateBackendGeneratedOutputs(task);
                 await runOwnedCanvasHistoryInsert({
                     owner,
                     getLiveCanvasId: () => projectIdRef.current,

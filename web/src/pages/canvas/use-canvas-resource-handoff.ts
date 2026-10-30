@@ -8,7 +8,6 @@ import { resolveProjectCanvasStyle } from "@/components/canvas/canvas-style-pick
 import { refreshCanvasCharacterReferenceNodes } from "@/lib/canvas/canvas-character-reference";
 import { canvasAssetHandoffIds, consumeCanvasAssetHandoff } from "@/lib/canvas/canvas-asset-handoff";
 import { createCanvasNode } from "@/lib/canvas/canvas-project-domain";
-import { isUserScopeAbandonedError } from "@/lib/user-scope-guard";
 import { createStyleProfileSnapshot, resolveStyleProfile, serializeStyleProfile } from "@/lib/canvas/style-profile";
 import { getProject } from "@/services/api/projects";
 import { canReloadCanvasNodeResource, readTaskOutcome } from "@/lib/task-outcome";
@@ -284,7 +283,7 @@ export function useCanvasResourceHandoff({
                 }
             } catch (error) {
                 resetIfCurrentAttempt();
-                if (!lifetime.userMatches(owner) || isUserScopeAbandonedError(error)) {
+                if (!lifetime.userMatches(owner)) {
                     if (!lifetime.userMatches(owner)) consumeForeignHandoff(consumeCanvasAssetHandoff(searchParams));
                     return;
                 }
@@ -319,7 +318,7 @@ export function useCanvasResourceHandoff({
                 await applyGenerationTaskResult(targetNodeId, task, () => !controller.signal.aborted);
             } catch (error) {
                 if (!isCurrent()) return;
-                if (isUserScopeAbandonedError(error) || (error instanceof Error && error.name === "AbortError")) return;
+                if ((error instanceof Error && error.name === "AbortError")) return;
                 const failure = canvasGenerationFailureMetadata(error, { prompt: node.metadata?.prompt || "" });
                 setNodes((current) =>
                     current.map((item) =>

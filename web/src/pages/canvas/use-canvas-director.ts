@@ -18,7 +18,6 @@ import { nextDirectorNodeIndex } from "@/lib/canvas/director/director-node-namin
 import { uploadImage } from "@/services/image-storage";
 import { uploadMediaFile } from "@/services/file-storage";
 import { ensureCanvasNodeAsset } from "@/services/project-asset-sync";
-import { captureUserScope, userScopeMatches, UserScopeAbandonedError, type CapturedUserScope } from "@/lib/user-scope-guard";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type Position } from "@/types/canvas";
 import type { DirectorScene, DirectorSceneOutput } from "@/types/director";
@@ -75,19 +74,17 @@ export function useCanvasDirector({
         };
     }, [projectId]);
 
-    const canvasCapturedScope = captureUserScope();
     const { lifetime, mountedRef } = useCanvasOwnerLifetime(projectId);
-    const directorReferenceTargetRef = useRef<{ projectId: string; nodeId: string | null; scope: string } | null>(null);
-    directorReferenceTargetRef.current = { projectId, nodeId: directorNodeId, scope: canvasCapturedScope.userScope };
+    const directorReferenceTargetRef = useRef<{ projectId: string; nodeId: string | null } | null>(null);
+    directorReferenceTargetRef.current = { projectId, nodeId: directorNodeId };
     useEffect(() => {
-        directorReferenceTargetRef.current = { projectId, nodeId: directorNodeId, scope: canvasCapturedScope.userScope };
+        directorReferenceTargetRef.current = { projectId, nodeId: directorNodeId };
         return () => { directorReferenceTargetRef.current = null; };
-    }, [projectId, directorNodeId, canvasCapturedScope.userScope]);
-    const addDirectorReferenceToCanvas = useCallback(async (image: Awaited<ReturnType<typeof uploadImage>>, title: string, signal: AbortSignal, expectedScope: CapturedUserScope = canvasCapturedScope) => {
-        const expected = expectedScope;
+    }, [projectId, directorNodeId]);
+    const addDirectorReferenceToCanvas = useCallback(async (image: Awaited<ReturnType<typeof uploadImage>>, title: string, signal: AbortSignal) => {
         const operation = createCanvasMediaOperation(lifetime, projectId, () => projectIdRef.current || "", () => mountedRef.current);
         const current = () => !signal.aborted && operation.isCurrent() && directorReferenceTargetRef.current?.projectId === projectId
-            && directorReferenceTargetRef.current?.nodeId === directorNodeId && userScopeMatches(expected)
+            && directorReferenceTargetRef.current?.nodeId === directorNodeId
             && nodesRef.current.some((item) => item.id === directorNodeId);
         if (!current()) throw new DOMException("导演台会话已结束", "AbortError");
         const node = createCanvasNode(CanvasNodeType.Image, getCanvasCenter(), imageMetadata(image));
@@ -100,7 +97,7 @@ export function useCanvasDirector({
         pageUi.getState().setSelectedNodeIds(new Set([node.id]));
         pageUi.getState().setSelectedConnectionId(null);
         try {
-            const result = await ensureCanvasNodeAsset({ canvasId: projectId, domainProjectId: domainProjectId, node, source: "canvas-upload", expectedScope: expected });
+            const result = await ensureCanvasNodeAsset({ canvasId: projectId, domainProjectId: domainProjectId, node, source: "canvas-upload" });
             if (!current()) throw new DOMException("导演台会话已结束", "AbortError");
             setNodes((currentNodes) => currentNodes.map((item) => item.id === node.id ? { ...item, metadata: { ...item.metadata, assetId: result.assetId } } : item));
             return { assetId: result.assetId, persisted: result.confirmed };
@@ -109,7 +106,7 @@ export function useCanvasDirector({
             message.warning(error instanceof Error ? `图片已加入画布，但素材同步失败：${error.message}` : "图片已加入画布，但素材同步失败");
             return { assetId: findWorkspaceAssetIdByStorageKey(image.storageKey) };
         }
-    }, [canvasCapturedScope.epoch, canvasCapturedScope.userScope, connectionsRef, domainProjectId, directorNodeId, getCanvasCenter, message, nodesRef, projectId, setConnections, setNodes, pageUi, lifetime, mountedRef]);
+    }, [connectionsRef, domainProjectId, directorNodeId, getCanvasCenter, message, nodesRef, projectId, setConnections, setNodes, pageUi, lifetime, mountedRef]);
     /** 新建空导演台；演员、道具和机位由用户进入工作台后自行添加。 */
     const createDirectorShot = useCallback((position?: Position) => {
         const shotIndex = nextDirectorNodeIndex(nodesRef.current);
@@ -168,11 +165,9 @@ export function useCanvasDirector({
     const captureDirectorCover = useCallback(async ({ scene, shotId, beauty }: { scene: DirectorScene; shotId: string; beauty: Blob }) => {
         const sourceNodeId = directorNodeId;
         if (!sourceNodeId || !shouldCaptureCover(scene, shotId)) return;
-        const expectedScope = captureUserScope();
         const requestId = nanoid();
         coverRequestIdRef.current = requestId;
         const stillCurrent = () => {
-            if (!userScopeMatches(expectedScope)) return false;
             const project = useCanvasStore.getState().projects.find((item) => item.id === projectId);
             return shouldCommitDirectorCover({
                 projectId,
@@ -186,7 +181,7 @@ export function useCanvasDirector({
             });
         };
         if (!stillCurrent()) return;
-        const image = await uploadImage(beauty, undefined, expectedScope);
+        const image = await uploadImage(beauty);
         if (!stillCurrent()) return;
         const nextNodes = nodesRef.current.map((item) => item.id === sourceNodeId
             ? { ...item, metadata: { ...item.metadata, ...directorCoverMetadata(image, scene.updatedAt) } }
@@ -201,12 +196,10 @@ export function useCanvasDirector({
         const sourceNodeAtStart = nodesRef.current.find((item) => item.id === directorNodeId);
         if (!sourceNodeAtStart || sourceNodeAtStart.metadata?.directorSceneId !== output.scene.id) throw new Error("镜头节点不存在或场景已切换");
         const sourceNodeId = sourceNodeAtStart.id;
-        const expectedScope = captureUserScope();
         const [image, videoUpload] = await Promise.all([
-            uploadImage(output.beauty, undefined, expectedScope),
-            output.clayVideo ? uploadMediaFile(output.clayVideo, "director-clay", undefined, expectedScope) : Promise.resolve(null),
+            uploadImage(output.beauty),
+            output.clayVideo ? uploadMediaFile(output.clayVideo, "director-clay") : Promise.resolve(null),
         ]);
-        if (!userScopeMatches(expectedScope)) throw new UserScopeAbandonedError();
         // 上传期间项目、节点和镜头都可能变化。以当前权威状态重新核验并合并，
         // 不允许旧输出写入另一项目，也不允许旧 scene 快照覆盖并发编辑。
         const outputProject = useCanvasStore.getState().projects.find((item) => item.id === outputProjectId);
@@ -265,11 +258,10 @@ export function useCanvasDirector({
         const assetIds = new Map<string, string>();
         let confirmed = true;
         for (const mediaNode of mediaNodes) {
-            const result = await ensureCanvasNodeAsset({ canvasId: projectId, domainProjectId, node: mediaNode, source: "canvas-manual", expectedScope });
+            const result = await ensureCanvasNodeAsset({ canvasId: projectId, domainProjectId, node: mediaNode, source: "canvas-manual" });
             assetIds.set(mediaNode.id, result.assetId);
             if (!result.confirmed) confirmed = false;
         }
-        if (!userScopeMatches(expectedScope)) throw new UserScopeAbandonedError();
         // 素材登记同样会等待磁盘/网络。提交前再核验，并以最新画布为基底，
         // 避免在等待期间切换项目或编辑其他节点后写回过期快照。
         const commitProject = useCanvasStore.getState().projects.find((item) => item.id === outputProjectId);

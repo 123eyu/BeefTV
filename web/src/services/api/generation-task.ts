@@ -17,7 +17,6 @@ import { buildBackendToolRequests, type ResponseFunctionTool, type ResponseInput
 import { assertAgentExchangeBudget } from "@/lib/canvas/agent-context-budget";
 import { assertVideoCapability } from "@/services/api/video-validation";
 import { ApiError } from "@/services/api/request";
-import { assertUserScope, captureUserScope } from "@/lib/user-scope-guard";
 import { isReferenceHTTPSLink, uploadReferenceLinks, type ResolveReferenceLinks, type ReferenceLinkRequest } from "./reference-link-replacement";
 
 export { logicalModelIDForConfig };
@@ -55,7 +54,6 @@ type BackendGenerationTaskOptions = {
     retryOf?: string;
     retryContextsByBatchIndex?: Array<{ retryOf: string; attemptGroupId: string; clientOperationId: string }>;
     attemptGroupId?: string;
-    expectedScope?: import("@/lib/user-scope-guard").CapturedUserScope;
 };
 
 export type GenerationTaskDependencies = {
@@ -100,7 +98,6 @@ export async function runBackendGenerationTask(
         clientOperationId,
         retryOf,
         attemptGroupId,
-        expectedScope = captureUserScope(),
         resolveReferenceLinks,
     }: BackendGenerationTaskOptions,
     dependencies: GenerationTaskDependencies = defaultDependencies,
@@ -112,7 +109,7 @@ export async function runBackendGenerationTask(
     throwIfAborted(signal);
     assertPreparedVideoCapability(mode, config, prepared, metadata);
     return createAndWaitGenerationTask(
-        { projectId, mode, prompt, config, referenceImages, referenceVideos, referenceAudios, textHistory, signal, metadata, onTaskUpdate, onTextDelta, streamText, enableThinking, clientOperationId, retryOf, attemptGroupId, expectedScope, resolveReferenceLinks },
+        { projectId, mode, prompt, config, referenceImages, referenceVideos, referenceAudios, textHistory, signal, metadata, onTaskUpdate, onTextDelta, streamText, enableThinking, clientOperationId, retryOf, attemptGroupId, resolveReferenceLinks },
         prepared,
         dependencies,
     );
@@ -282,20 +279,18 @@ function usesArkVideoAssetReference(config: AiConfig) {
 async function createAndWaitGenerationTask(options: BackendGenerationTaskOptions, prepared: PreparedGenerationReferences, dependencies: GenerationTaskDependencies) {
     const task = await createBackendGenerationTask(options, prepared, dependencies);
     const { signal, onTaskUpdate, onTextDelta } = options;
-    const completed = await dependencies.waitTask(task.id, { signal, initialTask: task, onTaskUpdate, onTextDelta, expectedScope: options.expectedScope });
+    const completed = await dependencies.waitTask(task.id, { signal, initialTask: task, onTaskUpdate, onTextDelta });
     return parseBackendGenerationResult(completed);
 }
 
 async function createBackendGenerationTask(options: BackendGenerationTaskOptions, prepared: PreparedGenerationReferences, dependencies: GenerationTaskDependencies) {
-    const expectedScope = options.expectedScope ?? captureUserScope();
     const operationId = options.clientOperationId || dependencies.createId();
     options = { ...options, clientOperationId: operationId };
     const submit = () => {
         throwIfAborted(options.signal);
-        assertUserScope(expectedScope);
         return submitGenerationCommand(backendGenerationTaskInput(options, prepared), operationId,
-            (input) => { assertUserScope(expectedScope); return dependencies.createTask(input, { expectedScope }); },
-            dependencies.findTask && options.projectId ? () => { assertUserScope(expectedScope); return dependencies.findTask!(operationId, options.projectId!); } : undefined,
+            (input) => dependencies.createTask(input),
+            dependencies.findTask && options.projectId ? () => dependencies.findTask!(operationId, options.projectId!) : undefined,
             () => !options.signal?.aborted);
     };
     let task: GenerationTask;
@@ -322,7 +317,6 @@ async function createBackendGenerationTask(options: BackendGenerationTaskOptions
             ? await options.resolveReferenceLinks(references, options.signal, target)
             : await uploadReferenceLinks(references, options.signal, target);
         throwIfAborted(options.signal);
-        assertUserScope(expectedScope);
         if (!links || references.some((reference) => !links[reference.key])) throw error;
         for (const reference of references) {
             if (!isReferenceHTTPSLink(links[reference.key] || "")) throw new Error(`${reference.label}需要有效的 HTTPS 链接`);

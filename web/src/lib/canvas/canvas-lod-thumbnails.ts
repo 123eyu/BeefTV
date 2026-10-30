@@ -1,6 +1,5 @@
 import { canvasNodeVideoPreviewUrl } from "@/lib/canvas/canvas-media-preview";
 import { buildLibTVImagePreviewUrl } from "@/lib/canvas/libtv-import";
-import { getActiveUserScopeEpoch, subscribeUserScope } from "@/lib/user-scope";
 import { resourceIdFromStorageKey } from "@/services/api/resources";
 import { acquireCanvasVideoPreview, canvasVideoPreviewNeedsHydration } from "@/services/canvas-video-preview";
 import { resolveImageUrl } from "@/services/image-storage";
@@ -29,23 +28,18 @@ const FAILED_RETRY_DELAY_MS = 1000;
 const IMAGE_PREVIEW_TIER = 512;
 
 const entries = new Map<string, Entry>();
-const queue: Array<{ key: string; node: CanvasNodeData; epoch: number }> = [];
+const queue: Array<{ key: string; node: CanvasNodeData }> = [];
 let activeLoads = 0;
-
-subscribeUserScope(() => {
-    entries.clear();
-    queue.length = 0;
-});
 
 export function canvasLodThumbnailKey(node: CanvasNodeData) {
     const metadata = node.metadata;
     if (node.type === CanvasNodeType.Image) {
         const identity = metadata?.storageKey || metadata?.previewContent || metadata?.content || "";
-        return identity ? `image:${getActiveUserScopeEpoch()}:${identity}` : "";
+        return identity ? `image:${identity}` : "";
     }
     if (node.type === CanvasNodeType.Video) {
         const identity = metadata?.videoPreview?.storageKey || canvasNodeVideoPreviewUrl(node) || metadata?.storageKey || metadata?.content || "";
-        return identity ? `video:${getActiveUserScopeEpoch()}:${identity}` : "";
+        return identity ? `video:${identity}` : "";
     }
     return "";
 }
@@ -78,7 +72,7 @@ export function getCanvasLodThumbnail(node: CanvasNodeData, onReady: () => void)
     }
     const entry: Entry = { state: "pending", listeners: new Set([onReady]) };
     entries.set(key, entry);
-    queue.push({ key, node, epoch: getActiveUserScopeEpoch() });
+    queue.push({ key, node });
     pumpQueue();
     evictOverflow();
     return null;
@@ -98,11 +92,10 @@ function pumpQueue() {
         // Most recent requests are what the user is looking at now.
         const job = queue.pop()!;
         const entry = entries.get(job.key);
-        if (!entry || entry.state !== "pending" || job.epoch !== getActiveUserScopeEpoch()) continue;
+        if (!entry || entry.state !== "pending") continue;
         activeLoads += 1;
         void loadThumbnail(job.node)
             .then((thumbnail) => {
-                if (job.epoch !== getActiveUserScopeEpoch()) return;
                 entry.state = thumbnail ? "ready" : "failed";
                 entry.thumbnail = thumbnail || undefined;
                 if (!thumbnail) entry.failedAt = Date.now();
