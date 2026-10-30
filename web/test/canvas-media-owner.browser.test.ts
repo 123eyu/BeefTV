@@ -1,9 +1,10 @@
+import { resolve } from "node:path";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chromium, type Browser } from "playwright";
 
 let browser: Browser;
 let server: ReturnType<typeof Bun.serve>;
-const root = import.meta.dir + "/../src/";
+const root = resolve(import.meta.dir, "../src") + "/";
 const image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 const step = "const step=(name,value)=>window.__mediaTest.step(name,value);";
 const uploaded = JSON.stringify({ dataUrl: image, url: image, storageKey: "fixture-result", width: 320, height: 180, durationMs: 1000 });
@@ -27,7 +28,7 @@ beforeAll(async () => {
     const build = await Bun.build({ entrypoints: [import.meta.dir + "/fixtures/canvas-media-owner-harness.tsx"], target: "browser", define: { "import.meta.env.DEV": "false", "import.meta.env.PROD": "true", "import.meta.env.MODE": '"production"', "import.meta.env.VITE_CANVAS_LOCAL_MODE": '"true"', "import.meta.env.VITE_CANVAS_BACKEND_URL": '"/api"', "process.env.NODE_ENV": '"production"' }, plugins: [{ name: "media-boundaries", setup(builder) {
         builder.onResolve({ filter: /^@\// }, args => {
             if (args.importer.endsWith("/use-canvas-media-tools.ts") && mocks[args.path]) return { path: args.path, namespace: "media-boundary" };
-            return { path: Bun.resolveSync(root + args.path.slice(2), import.meta.dir) };
+            return { path: Bun.resolveSync("../src/" + args.path.slice(2), import.meta.dir) };
         });
         builder.onLoad({ filter: /.*/, namespace: "media-boundary" }, args => ({ contents: mocks[args.path], loader: "js" }));
         builder.onLoad({ filter: /\.(css|svg|png|jpe?g|gif|webp|woff2?)$/ }, () => ({ contents: "export default ''", loader: "js" }));
