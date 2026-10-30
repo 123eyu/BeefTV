@@ -14,7 +14,6 @@ import type { useCanvasStyleWorkflow } from "./use-canvas-style-workflow";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { AiArtCritiqueModal } from "@/components/canvas/art-critique/ai-art-critique-modal";
 import { CanvasCharacterReferenceModal } from "@/components/canvas/canvas-character-reference-modal";
-import type { CapturedUserScope } from "@/lib/user-scope-guard";
 import type { uploadImage } from "@/services/image-storage";
 import { CanvasGenerationHistoryPicker } from "@/components/canvas/canvas-generation-history-picker";
 import { CanvasNodeInfoModal } from "@/components/canvas/canvas-node-toolbar";
@@ -81,22 +80,22 @@ export type CanvasProjectEditorDialogsProps = {
     };
     directorOnboardingScope: string;
     onDeleteNodes: (nodeIds: Set<string>) => void;
-    onAddDirectorImage: (image: Awaited<ReturnType<typeof uploadImage>>, title: string, signal: AbortSignal, expectedScope: CapturedUserScope) => Promise<{ assetId?: string; persisted?: boolean } | void>;
+    onAddDirectorImage: (image: Awaited<ReturnType<typeof uploadImage>>, title: string, signal: AbortSignal) => Promise<{ assetId?: string; persisted?: boolean } | void>;
     onFlush: () => void | Promise<void>;
     onClearCanvas: () => void;
     onSetPrimaryVersion: (nodeId: string) => void;
     assets: {
         pickerOpen: boolean;
         multiple: boolean;
-        onInsertLibrary: (payloads: InsertAssetPayload[], expectedScope: CapturedUserScope) => void | Promise<void>;
+        onInsertLibrary: (payloads: InsertAssetPayload[]) => void | Promise<void>;
         onClosePicker: () => void;
         projectOpen: boolean;
         detail?: ProjectDetail;
         initialCategory?: string;
         initialFolderId?: string;
         onCloseProject: () => void;
-        onInsertProject: (payloads: InsertAssetPayload[], expectedScope: CapturedUserScope) => void | Promise<void>;
-        onInsertFolder?: (folderId: string, expectedScope: CapturedUserScope) => Promise<void> | void;
+        onInsertProject: (payloads: InsertAssetPayload[]) => void | Promise<void>;
+        onInsertFolder?: (folderId: string) => Promise<void> | void;
     };
 };
 

@@ -3,7 +3,6 @@ import { useMemo } from "react";
 import { AlertCircle, LoaderCircle } from "lucide-react";
 import { buildAssetMentionReferences, referencedAssetIdsInPrompt, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { canvasReferenceIssues, type CanvasReferenceIssue } from "@/lib/canvas/canvas-reference-issues";
-import { captureUserScope } from "@/lib/user-scope-guard";
 import { loadWorkspaceAssetsForUse, WorkspaceAssetUnavailableError } from "@/services/workspace-asset-read";
 import { useAssetStore } from "@/stores/use-asset-store";
 import type { CanvasConnection, CanvasNodeData } from "@/types/canvas";
@@ -11,12 +10,11 @@ import { inspectNodeGenerationMentions } from "./canvas-node-generation";
 import "./canvas-reference-feedback.css";
 
 export function useCanvasReferenceCheck(nodeId: string, prompt: string, references: CanvasResourceReference[], nodes: CanvasNodeData[], connections: CanvasConnection[]) {
-    const scope = captureUserScope();
     const assets = useAssetStore((state) => state.assets);
     const selectedIds = useMemo(() => referencedAssetIdsInPrompt(prompt), [prompt]);
     const missingIds = selectedIds.filter((id) => !assets.some((asset) => asset.id === id));
     const lookup = useQuery({
-        queryKey: ["canvas-explicit-reference-check", scope.userScope, missingIds],
+        queryKey: ["canvas-explicit-reference-check", missingIds],
         enabled: missingIds.length > 0,
         retry: false,
         staleTime: 5000,
@@ -24,7 +22,7 @@ export function useCanvasReferenceCheck(nodeId: string, prompt: string, referenc
             const unavailable: string[] = [];
             let remaining = missingIds;
             while (remaining.length) {
-                try { await loadWorkspaceAssetsForUse(remaining, scope); break; }
+                try { await loadWorkspaceAssetsForUse(remaining); break; }
                 catch (error) {
                     if (!(error instanceof WorkspaceAssetUnavailableError)) throw error;
                     unavailable.push(...error.assetIds);

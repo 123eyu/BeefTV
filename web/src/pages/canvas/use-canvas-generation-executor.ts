@@ -24,7 +24,6 @@ import { skillRuntime } from "@/services/skill-runtime";
 import { loadWorkspaceAssetsForUse } from "@/services/workspace-asset-read";
 import { recordDiagnosticEvent } from "@/services/diagnostics/client-diagnostics";
 import { findGenerationTaskByOperation, queryGenerationTask, waitForGenerationTask, type GenerationTask } from "@/services/api/task-center";
-import { assertUserScope, captureUserScope } from "@/lib/user-scope-guard";
 import { useConfigStore, useEffectiveConfig, resolveModelRequestConfig } from "@/stores/use-config-store";
 import { seedanceReferenceRatioWarning } from "@/lib/seedance-channel-warning";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
@@ -155,23 +154,20 @@ export function useCanvasGenerationExecutor({
                         const sourceNode = inputNodes.find((node) => node.id === nodeId);
                         const pendingSubmissions = nodesRef.current.filter((node) => (node.id === nodeId || node.metadata?.generatedFromNodeId === nodeId) && ["submitting", "unknown"].includes(node.metadata?.generationSubmissionState || ""));
                         if (pendingSubmissions.length) {
-                            const scope = captureUserScope();
                             startGenerationRequest(nodeId, nodeId, nodeId, controller);
                             for (const target of pendingSubmissions) {
                                 const taskId = target.metadata?.taskId;
                                 const operationId = target.metadata?.taskClientOperationId;
                                 if (!taskId && !operationId?.trim()) throw new Error(MISSING_GENERATION_TASK_IDENTITY_DETAILS);
                                 const task = taskId
-                                    ? await queryGenerationTask(taskId, { signal: controller.signal, expectedScope: scope })
+                                    ? await queryGenerationTask(taskId, { signal: controller.signal })
                                     : await findGenerationTaskByOperation(operationId!, projectId, controller.signal);
                                 controller.signal.throwIfAborted();
-                                assertUserScope(scope);
                                 if (!task) { message.warning("尚未查到上次提交的任务，请稍后再查询，暂勿重新生成"); continue; }
                                 if (task.projectId && task.projectId !== projectId) throw new Error("生成任务不属于当前画布");
                                 bindGenerationTask(target.id, task);
-                                const completed = await waitForGenerationTask(task.id, { signal: controller.signal, expectedScope: scope, initialTask: task, onTaskUpdate: (update) => bindGenerationTask(target.id, update) });
+                                const completed = await waitForGenerationTask(task.id, { signal: controller.signal, initialTask: task, onTaskUpdate: (update) => bindGenerationTask(target.id, update) });
                                 controller.signal.throwIfAborted();
-                                assertUserScope(scope);
                                 await applyGenerationTaskResult(target.id, completed);
                             }
                             return;
@@ -253,9 +249,7 @@ export function useCanvasGenerationExecutor({
                             // 素材库列表按需加载，显式引用不能仅凭是否出现在列表中判断失效。
                             const missingAssetIds = referencedAssetIdsInPrompt(generationPrompt).filter((id) => !inputAssets.some((asset) => asset.id === id));
                             if (missingAssetIds.length) {
-                                const scope = captureUserScope();
-                                await waitForCanvasPreparation(() => loadWorkspaceAssetsForUse(missingAssetIds, scope), controller.signal);
-                                assertUserScope(scope);
+                                await waitForCanvasPreparation(() => loadWorkspaceAssetsForUse(missingAssetIds), controller.signal);
                                 const loaded = useAssetStore.getState().assets.filter((asset) => missingAssetIds.includes(asset.id));
                                 inputAssets = [...inputAssets, ...structuredClone(loaded)];
                             }

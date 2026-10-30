@@ -198,7 +198,6 @@ export function useCanvasNodeEditor({
         });
         const result = await persistOwnedCanvasUploadNode({
             owner: guard.owner,
-            expectedScope: guard.expectedScope,
             getLiveCanvasId: () => canvasIdRef.current,
             getLiveLifetime: () => lifetime.current(),
             mounted: () => mountedRef.current,

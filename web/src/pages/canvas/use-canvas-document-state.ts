@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { stampCanvasNodeChanges } from "@/lib/canvas/canvas-node-timestamps";
 import { bringCanvasNodeToFront, type CanvasNodeStackOrder } from "@/lib/canvas/canvas-node-stack-order";
-import { captureUserScope, userScopeMatches } from "@/lib/user-scope-guard";
 import { refreshLocalCanvasProjectIfChanged } from "@/services/local-workspace-repository";
 import { isLocalWorkspaceMode } from "@/services/workspace-mode";
 import type { CanvasAssistantSession, CanvasConnection, CanvasNodeData } from "@/types/canvas";
@@ -84,12 +83,11 @@ export function useCanvasDocumentState(projectId: string) {
     }, [nodes]);
     useEffect(() => {
         if (!projectId || !isLocalWorkspaceMode()) return;
-        const scope = captureUserScope();
         let disposed = false;
         // Both event and timer refresh the repository. The lifecycle's single
         // revision-aware subscription merges it into the editor document.
         const sync = () => {
-            if (!disposed && userScopeMatches(scope)) void refreshLocalCanvasProjectIfChanged(projectId, scope);
+            if (!disposed) void refreshLocalCanvasProjectIfChanged(projectId);
         };
         const timer = window.setInterval(sync, 4000);
         const source = window.location.protocol === "http:" ? new EventSource(`/api/canvas-projects/${encodeURIComponent(projectId)}/events`) : undefined;
