@@ -190,3 +190,18 @@ func TestHistoricalMediaReceiptPreservesMIMEOrderLayersUsageAndNoCredentials(t *
 		t.Fatal("new task fetched historical receipt")
 	}
 }
+
+func TestDetectMediaContentTypeSupportsTIFFAndISOImages(t *testing.T) {
+	if got := detectMediaContentType([]byte{'I', 'I', '*', 0, 8, 0, 0, 0}); got != "image/tiff" {
+		t.Fatalf("little-endian TIFF = %q, want image/tiff", got)
+	}
+	if got := detectMediaContentType([]byte{'M', 'M', 0, '*', 0, 0, 0, 8}); got != "image/tiff" {
+		t.Fatalf("big-endian TIFF = %q, want image/tiff", got)
+	}
+	if got := detectMediaContentType([]byte{0, 0, 0, 28, 'f', 't', 'y', 'p', 'a', 'v', 'i', 'f'}); got != "image/avif" {
+		t.Fatalf("AVIF = %q, want image/avif", got)
+	}
+	if got := detectMediaContentType([]byte{0, 0, 0, 24, 'f', 't', 'y', 'p', 'h', 'e', 'i', 'c'}); got != "image/heic" {
+		t.Fatalf("HEIC = %q, want image/heic", got)
+	}
+}
