@@ -479,6 +479,17 @@ func ClassifyError(err error) Failure {
 		if referenceUpload.Meta.Stage != "put" && (referenceUpload.HTTPStatus == 400 || referenceUpload.HTTPStatus == 401 || referenceUpload.HTTPStatus == 402 || referenceUpload.HTTPStatus == 403) {
 			failure := ClassifyError(referenceUpload.Cause)
 			failure.RequestID = firstNonEmpty(referenceUpload.RequestID, failure.RequestID)
+			if referenceUpload.HTTPStatus == 400 && referenceUpload.Meta.Index > 0 {
+				itemLabel := referenceMediaLabel(referenceUpload.Meta.Kind, referenceUpload.Meta.Index-1)
+				if itemLabel != "" {
+					if failure.Reason != "" && !strings.Contains(failure.Reason, itemLabel) && !strings.Contains(failure.Reason, "个参考") {
+						failure.Reason = itemLabel + "：" + failure.Reason
+					}
+					if failure.ProviderMessage != "" && !strings.Contains(failure.ProviderMessage, itemLabel) && !strings.Contains(failure.ProviderMessage, "个参考") {
+						failure.ProviderMessage = itemLabel + "：" + failure.ProviderMessage
+					}
+				}
+			}
 			return failure
 		}
 		copy := referencePreparationCopies["reference_preupload_failed"]

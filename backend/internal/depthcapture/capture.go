@@ -4,10 +4,12 @@ import (
 	"context"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"infinite-canvas/backend/internal/mediatools"
 	"infinite-canvas/backend/internal/model"
 )
 
@@ -170,6 +172,21 @@ func (s *Service) Process(ctx context.Context, task *model.Task) error {
 	if err != nil || !facts.HasVideo || facts.Width <= 0 || facts.Height <= 0 || facts.DurationMs <= 0 {
 		return s.failUnlessCanceled(ctx, task, stageOutput, "无法读取深度结果视频的实际尺寸和时长")
 	}
+	if facts.FPS > 0 && facts.FPS < 29.95 {
+		if conformErr := ensureMinimumPreviewFPS(ctx, matches[0], s.configure); conformErr == nil {
+			_ = file.Close()
+			if conformedFile, openErr := os.Open(matches[0]); openErr == nil {
+				file = conformedFile
+				defer file.Close()
+				if conformedInfo, statErr := file.Stat(); statErr == nil && conformedInfo.Size() > 0 {
+					info = conformedInfo
+				}
+				if conformedFacts, probeErr := s.probeOutput(ctx, matches[0]); probeErr == nil && conformedFacts.HasVideo && conformedFacts.Width > 0 && conformedFacts.Height > 0 && conformedFacts.DurationMs > 0 {
+					facts = conformedFacts
+				}
+			}
+		}
+	}
 	stored, err := s.media.SaveVideo(task.UserID, OutputName, info.Size(), facts.Width, facts.Height, facts.DurationMs, file, "depth:"+task.ID)
 	if err != nil {
 		return s.failUnlessCanceled(ctx, task, stageSave, err.Error())
@@ -181,6 +198,7 @@ func (s *Service) Process(ctx context.Context, task *model.Task) error {
 		DurationMs:     stored.DurationMs,
 		Width:          stored.Width,
 		Height:         stored.Height,
+		FPS:            facts.FPS,
 		Device:         choice.Device,
 		FallbackReason: choice.FallbackReason,
 		RuntimeVersion: "v1",
@@ -193,4 +211,30 @@ func (s *Service) Process(ctx context.Context, task *model.Task) error {
 		return nil
 	}
 	return s.tasks.Complete(task, result)
+}
+
+func ensureMinimumPreviewFPS(ctx context.Context, previewPath string, configure func(*exec.Cmd)) error {
+	ffmpeg, err := mediatools.ResolveFFmpeg()
+	if err != nil {
+		return err
+	}
+	conformedPath := previewPath + ".30fps.mp4"
+	cmd := exec.CommandContext(ctx, ffmpeg,
+		"-y", "-hide_banner", "-loglevel", "error",
+		"-i", previewPath,
+		"-r", "30",
+		"-an", "-c:v", "libx264", "-crf", "18",
+		"-pix_fmt", "yuv420p", "-movflags", "+faststart",
+		conformedPath,
+	)
+	if configure != nil {
+		configure(cmd)
+	} else {
+		configureDepthCommand(cmd)
+	}
+	if err := cmd.Run(); err != nil {
+		_ = os.Remove(conformedPath)
+		return err
+	}
+	return os.Rename(conformedPath, previewPath)
 }

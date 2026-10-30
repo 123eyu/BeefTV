@@ -12,12 +12,14 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"infinite-canvas/backend/internal/mediatools"
 	"infinite-canvas/backend/internal/outbound"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 )
@@ -567,9 +569,28 @@ func (c *MediaClient) UploadReference(ctx context.Context, ref LocalMediaReferen
 	if _, err := source.ReadAt(header, 0); err != nil && err != io.EOF {
 		return "", err
 	}
-	detected := http.DetectContentType(header)
+	detected := detectMediaContentType(header)
 	if strings.HasPrefix(detected, ref.Kind+"/") {
 		mime = detected
+	}
+	mime = normalizeReferenceMime(ref.Kind, mime)
+	if ref.Kind == "image" && isTranscodableImageMime(mime) {
+		pngData, transcodeErr := transcodeImageReferenceToPNG(ctx, source, size)
+		if transcodeErr != nil || len(pngData) == 0 {
+			label := strings.TrimSpace(ref.Role)
+			if label == "" {
+				label = "参考图片"
+			}
+			return "", fmt.Errorf("%s为 AVIF/HEIC 等暂不支持的格式，请转换为 PNG、JPEG 或 WebP 后重试", label)
+		}
+		source = bytes.NewReader(pngData)
+		size = int64(len(pngData))
+		if ref.MaxBytes > 0 && size > ref.MaxBytes {
+			return "", errors.New("参考素材超过当前模型文件大小限制")
+		}
+		digest.Reset()
+		_, _ = digest.Write(pngData)
+		mime = "image/png"
 	}
 	if !strings.HasPrefix(mime, ref.Kind+"/") {
 		return "", errors.New("参考素材格式与类型不一致")
@@ -642,4 +663,78 @@ func (c *MediaClient) openRemoteReference(ctx context.Context, raw string, maxBy
 		return mediaReferenceFile{}, "", 0, err
 	}
 	return result, response.Header.Get("Content-Type"), size, nil
+}
+
+func detectMediaContentType(header []byte) string {
+	if len(header) >= 4 && ((header[0] == 'I' && header[1] == 'I' && header[2] == '*' && header[3] == 0) || (header[0] == 'M' && header[1] == 'M' && header[2] == 0 && header[3] == '*')) {
+		return "image/tiff"
+	}
+	if len(header) >= 12 && string(header[4:8]) == "ftyp" {
+		switch string(header[8:12]) {
+		case "avif", "avis":
+			return "image/avif"
+		case "heic", "heix", "mif1", "msf1":
+			return "image/heic"
+		case "qt  ":
+			return "video/quicktime"
+		}
+	}
+	return strings.ToLower(strings.TrimSpace(strings.Split(http.DetectContentType(header), ";")[0]))
+}
+
+func normalizeReferenceMime(kind, raw string) string {
+	mime := strings.ToLower(strings.TrimSpace(raw))
+	if semi := strings.IndexByte(mime, ';'); semi >= 0 {
+		mime = strings.TrimSpace(mime[:semi])
+	}
+	if kind == "image" {
+		switch mime {
+		case "image/jpg", "image/pjpeg":
+			return "image/jpeg"
+		case "image/x-png":
+			return "image/png"
+		case "image/x-bmp":
+			return "image/bmp"
+		}
+	}
+	return mime
+}
+
+func isTranscodableImageMime(mime string) bool {
+	switch mime {
+	case "image/avif", "image/heic", "image/heif", "image/x-icon", "image/vnd.microsoft.icon":
+		return true
+	default:
+		return false
+	}
+}
+
+func transcodeImageReferenceToPNG(ctx context.Context, source io.ReaderAt, size int64) ([]byte, error) {
+	ffmpeg, err := mediatools.ResolveFFmpeg()
+	if err != nil {
+		return nil, err
+	}
+	tmp, err := os.CreateTemp("", "beeftv-ref-img-*")
+	if err != nil {
+		return nil, err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := io.Copy(tmp, io.NewSectionReader(source, 0, size)); err != nil {
+		_ = tmp.Close()
+		return nil, err
+	}
+	if err := tmp.Close(); err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(ctx, ffmpeg,
+		"-v", "error",
+		"-i", tmpPath,
+		"-frames:v", "1",
+		"-f", "image2pipe",
+		"-vcodec", "png",
+		"-",
+	)
+	mediatools.HideConsole(cmd)
+	return cmd.Output()
 }
