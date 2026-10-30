@@ -64,7 +64,7 @@ func TestSeedreamDomesticProUsesInstalledArkPlugin(t *testing.T) {
 		InterfaceType: "volcengine-ark-image", Size: "16:9", SeedreamMode: "layers",
 		SeedreamOutputFormat: "jpeg", SeedreamOptimize: "fast", SeedreamWatermark: "true",
 	}, ReferenceImages: []Media{{URL: "https://example.test/source.png"}}}
-	ctx := WithProtocolRegistry(WithRuntime(context.Background(), Runtime{Images: port}), registry)
+	ctx := WithProtocolRegistry(offlineImageRuntime(port), registry)
 	if _, err := RunImageTask(ctx, input); err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestSeedreamDomesticProUsesInstalledArkPlugin(t *testing.T) {
 func TestSeedreamManagedReferencesUseOneJSONGeneration(t *testing.T) {
 	port := &captureImagePort{}
 	input := Input{Mode: "image", Prompt: "replace object <bbox>10 10 100 100</bbox>", Config: Config{Model: "dola-seedream-5-0-pro-260628", BaseURL: "https://beeftv.app", APIKey: "synthetic", InterfaceType: "openai-image", Size: "1.5K", SeedreamOutputFormat: "png", SeedreamOptimize: "fast"}, ReferenceImages: []Media{{DataURL: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jR1sAAAAASUVORK5CYII="}}}
-	result, err := RunImageTask(WithRuntime(context.Background(), Runtime{Images: port}), input)
+	result, err := RunImageTask(offlineImageRuntime(port), input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestSeedreamDomesticProKeepsConfiguredOptionsOnArkChannel(t *testing.T) {
 		InterfaceType: "volcengine-ark-image", Size: "16:9", SeedreamMode: "layers",
 		SeedreamOutputFormat: "jpeg", SeedreamOptimize: "fast", SeedreamWatermark: "true",
 	}, ReferenceImages: []Media{{URL: "https://example.test/source.png"}}}
-	if _, err := RunImageTask(WithRuntime(context.Background(), Runtime{Images: port}), input); err != nil {
+	if _, err := RunImageTask(offlineImageRuntime(port), input); err != nil {
 		t.Fatal(err)
 	}
 	if port.calls != 1 {
@@ -278,7 +278,7 @@ func TestSeedreamSizeFollowsGenerationSceneBeforeSending(t *testing.T) {
 		for i := 0; i < item.refs; i++ {
 			input.ReferenceImages = append(input.ReferenceImages, Media{URL: "https://example.test/source.png"})
 		}
-		if _, err := RunImageTask(WithRuntime(context.Background(), Runtime{Images: port}), input); err != nil {
+		if _, err := RunImageTask(offlineImageRuntime(port), input); err != nil {
 			if !item.reject {
 				t.Fatalf("%s: %v", item.name, err)
 			}
@@ -317,7 +317,7 @@ func TestSeedreamAgentPlanChannelSendsToPluginEndpoint(t *testing.T) {
 		Model: "doubao-seedream-5-0-pro-260628", BaseURL: "https://ark.cn-beijing.volces.com",
 		APIKey: "synthetic", InterfaceType: "volcengine-ark-agent-plan-image", Size: "2K",
 	}}
-	ctx := WithProtocolRegistry(WithRuntime(context.Background(), Runtime{Images: port}), registry)
+	ctx := WithProtocolRegistry(offlineImageRuntime(port), registry)
 	if _, err := RunImageTask(ctx, input); err != nil {
 		t.Fatal(err)
 	}
@@ -357,4 +357,9 @@ func seedreamPluginBody(t *testing.T, input Input) (map[string]any, error) {
 		return nil, err
 	}
 	return ProtocolBodyObject(spec.Body), nil
+}
+
+// offlineImageRuntime 让测试不连外网：标记为已完成提交前的元数据探测，请求仍交给 port 检查。
+func offlineImageRuntime(port *captureImagePort) context.Context {
+	return WithImageReplayProtocol(WithRuntime(context.Background(), Runtime{Images: port}), ImageReplayProtocol)
 }
