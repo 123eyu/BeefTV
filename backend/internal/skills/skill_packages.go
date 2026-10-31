@@ -89,13 +89,6 @@ type SkillFileSearchResult struct {
 	Snippet string `json:"snippet"`
 }
 
-type skillPackageMetadata struct {
-	Name          string
-	Description   string
-	Version       string
-	MarketRelease *skillhub.Release
-}
-
 type skillPackageArchive struct {
 	Files       map[string][]byte
 	Metadata    skillPackageMetadata
@@ -111,6 +104,9 @@ type githubSkillSpec struct {
 }
 
 func (s *Service) EnsureSkillPackages() error {
+	if err := s.ensureSkillDisplayNames(); err != nil {
+		return err
+	}
 	skills, err := s.repo.SkillsForPackageEnsure(skillSourceUser)
 	if err != nil {
 		return err

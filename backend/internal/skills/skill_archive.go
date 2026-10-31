@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"infinite-canvas/backend/internal/kernel"
+	"infinite-canvas/backend/internal/skillhub"
 	"io"
 	"os"
 	"path"
@@ -14,6 +15,14 @@ import (
 	"time"
 	"unicode/utf8"
 )
+
+type skillPackageMetadata struct {
+	Name          string
+	TechnicalName string
+	Description   string
+	Version       string
+	MarketRelease *skillhub.Release
+}
 
 func archiveFromMarkdown(data []byte, fallbackName string, fallbackDescription string) (skillPackageArchive, error) {
 	if len(data) == 0 || len(data) > maxSkillFileBytes || !utf8.Valid(data) {
@@ -248,6 +257,7 @@ func parseSkillPackageMetadata(data []byte) skillPackageMetadata {
 		}
 	}
 	body := lines[bodyStart:]
+	metadata.TechnicalName, metadata.Name = metadata.Name, displaySkillName(metadata.Name, body)
 	if metadata.Name == "" {
 		for _, line := range body {
 			if strings.HasPrefix(strings.TrimSpace(line), "# ") {
