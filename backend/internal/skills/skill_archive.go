@@ -183,7 +183,7 @@ func finalizeSkillArchive(files map[string][]byte, metadata skillPackageMetadata
 	if metadata.Description == "" {
 		return skillPackageArchive{}, kernel.BadAuthRequest("SKILL.md 缺少 description，且无法从正文推断")
 	}
-	if utf8.RuneCountInString(metadata.Name) > maxSkillNameRunes || utf8.RuneCountInString(metadata.Description) > 500 {
+	if utf8.RuneCountInString(metadata.Name) > maxSkillNameRunes || utf8.RuneCountInString(metadata.Description) > maxSkillDescriptionRunes {
 		return skillPackageArchive{}, kernel.BadAuthRequest("技能名称或简介超过长度限制")
 	}
 	hash := sha256.New()
@@ -259,12 +259,7 @@ func parseSkillPackageMetadata(data []byte) skillPackageMetadata {
 	body := lines[bodyStart:]
 	metadata.TechnicalName, metadata.Name = metadata.Name, displaySkillName(metadata.Name, body)
 	if metadata.Name == "" {
-		for _, line := range body {
-			if strings.HasPrefix(strings.TrimSpace(line), "# ") {
-				metadata.Name = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "# "))
-				break
-			}
-		}
+		metadata.Name = firstMarkdownTitle(body)
 	}
 	if metadata.Description == "" {
 		paragraph := make([]string, 0, 4)
@@ -281,12 +276,21 @@ func parseSkillPackageMetadata(data []byte) skillPackageMetadata {
 			}
 			paragraph = append(paragraph, trimmed)
 		}
-		metadata.Description = kernel.TruncateRunes(strings.Join(paragraph, " "), 500)
+		metadata.Description = strings.Join(paragraph, " ")
 	}
-	metadata.Name = kernel.TruncateRunes(strings.TrimSpace(metadata.Name), 80)
-	metadata.Description = kernel.TruncateRunes(strings.TrimSpace(metadata.Description), 500)
+	metadata.Name = fitRunes(strings.TrimSpace(metadata.Name), maxSkillNameRunes)
+	metadata.Description = fitRunes(strings.TrimSpace(metadata.Description), maxSkillDescriptionRunes)
 	metadata.Version = kernel.TruncateRunes(strings.TrimSpace(metadata.Version), 64)
 	return metadata
+}
+
+// fitRunes 把超长文本截到上限以内（省略号也算在内），截完不会再被打包校验判为超长。
+func fitRunes(value string, limit int) string {
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit-1]) + "…"
 }
 
 func yamlScalar(value string) string {

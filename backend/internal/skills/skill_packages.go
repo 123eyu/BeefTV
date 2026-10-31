@@ -313,10 +313,10 @@ func (s *Service) createSkillFromArchive(userID string, archive skillPackageArch
 	if description == "" {
 		description = archive.Metadata.Description
 	}
-	if utf8.RuneCountInString(name) == 0 || utf8.RuneCountInString(name) > 80 {
+	if utf8.RuneCountInString(name) == 0 || utf8.RuneCountInString(name) > maxSkillNameRunes {
 		return nil, kernel.BadAuthRequest("技能名称必须为 1-80 个字符")
 	}
-	if utf8.RuneCountInString(description) == 0 || utf8.RuneCountInString(description) > 500 {
+	if utf8.RuneCountInString(description) == 0 || utf8.RuneCountInString(description) > maxSkillDescriptionRunes {
 		return nil, kernel.BadAuthRequest("技能简介必须为 1-500 个字符")
 	}
 	tag := strings.TrimSpace(req.Tag)

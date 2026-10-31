@@ -12,8 +12,11 @@ import (
 	"gorm.io/gorm"
 )
 
-// maxSkillNameRunes 是技能名称的长度上限，打包校验和显示名推断共用。
-const maxSkillNameRunes = 80
+// 技能名称和简介的长度上限；解析截断、打包校验、显示名推断和手动改名共用。
+const (
+	maxSkillNameRunes        = 80
+	maxSkillDescriptionRunes = 500
+)
 
 // skillDisplayNamesRepairedKey 标记早先导入的技能已按中文标题修复过显示名；只修一次。
 const skillDisplayNamesRepairedKey = "skills.display_names_repaired.v1"
@@ -31,42 +34,56 @@ func isTechnicalSkillName(name string) bool {
 	return true
 }
 
-// displaySkillName 用技能正文第一个一级标题作显示名，前提是包名是英文技术名、标题含中文且不超长；
-// 代码块里的「#」行不算标题。其余情况保持原名。
+// displaySkillName 在包名是英文技术名时，改用正文第一个一级标题作显示名；标题须含中文且不超长，否则保持原名。
 func displaySkillName(name string, body []string) string {
 	if !isTechnicalSkillName(name) {
 		return name
 	}
-	fence := ""
-	for _, line := range body {
-		trimmed := strings.TrimSpace(line)
-		if marker := codeFenceMarker(trimmed); marker != "" {
-			if fence == "" {
-				fence = marker
-			} else if strings.HasPrefix(trimmed, fence) {
-				fence = ""
-			}
-			continue
-		}
-		if fence != "" || strings.HasPrefix(line, "    ") || strings.HasPrefix(line, "\t") || !strings.HasPrefix(trimmed, "# ") {
-			continue
-		}
-		title := strings.TrimSpace(strings.TrimRight(strings.TrimSpace(strings.TrimPrefix(trimmed, "# ")), "#"))
-		if strings.ContainsFunc(title, func(r rune) bool { return unicode.Is(unicode.Han, r) }) && utf8.RuneCountInString(title) <= maxSkillNameRunes {
-			return title
-		}
-		return name
+	title := firstMarkdownTitle(body)
+	if strings.ContainsFunc(title, func(r rune) bool { return unicode.Is(unicode.Han, r) }) && utf8.RuneCountInString(title) <= maxSkillNameRunes {
+		return title
 	}
 	return name
 }
 
-func codeFenceMarker(line string) string {
-	for _, marker := range []string{"```", "~~~"} {
-		if strings.HasPrefix(line, marker) {
-			return marker
+// firstMarkdownTitle 返回正文第一个一级标题。代码块（围栏或缩进 4 格）里的「#」行不算标题；
+// 只去掉前面有空格的结尾「#」，「C#」这类名字保留。
+func firstMarkdownTitle(body []string) string {
+	fenceChar, fenceLen := byte(0), 0
+	for _, line := range body {
+		content := strings.TrimLeft(line, " ")
+		indented := len(line)-len(content) >= 4 || strings.HasPrefix(content, "\t")
+		trimmed := strings.TrimSpace(line)
+		if char, n := codeFence(trimmed); n > 0 && !indented {
+			if fenceLen == 0 {
+				fenceChar, fenceLen = char, n
+			} else if char == fenceChar && n >= fenceLen && strings.Trim(trimmed, string(char)) == "" {
+				fenceLen = 0
+			}
+			continue
 		}
+		if fenceLen > 0 || indented || !strings.HasPrefix(trimmed, "# ") {
+			continue
+		}
+		title := strings.TrimSpace(strings.TrimPrefix(trimmed, "# "))
+		if closed := strings.TrimRight(title, "#"); closed == "" || strings.HasSuffix(closed, " ") {
+			title = strings.TrimSpace(closed)
+		}
+		return title
 	}
 	return ""
+}
+
+// codeFence 识别以 3 个以上「`」或「~」开头的围栏行，返回围栏字符和长度。
+func codeFence(line string) (byte, int) {
+	if len(line) < 3 || line[0] != '`' && line[0] != '~' {
+		return 0, 0
+	}
+	n := len(line) - len(strings.TrimLeft(line, string(line[0])))
+	if n < 3 {
+		return 0, 0
+	}
+	return line[0], n
 }
 
 // ensureSkillDisplayNames 修复早先导入、仍显示英文技术名的技能，只执行一次；用户自己改过的名字、
@@ -77,7 +94,7 @@ func (s *Service) ensureSkillDisplayNames() error {
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
 	}
-	rows, err := s.repo.SkillsForDisplayNameEnsure()
+	rows, err := s.repo.SkillsForDisplayNameEnsure(skillSourceUser)
 	if err != nil {
 		return err
 	}

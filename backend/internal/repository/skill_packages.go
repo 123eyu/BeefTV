@@ -57,9 +57,9 @@ func (r *Repository) SkillsForPackageEnsure(userSource int) ([]model.Skill, erro
 	return skills, err
 }
 
-func (r *Repository) SkillsForDisplayNameEnsure() ([]model.Skill, error) {
+func (r *Repository) SkillsForDisplayNameEnsure(userSource int) ([]model.Skill, error) {
 	var skills []model.Skill
-	err := r.db.Where("source_type IS NULL OR source_type IN ?", []string{"markdown", "zip", "github", ""}).Find(&skills).Error
+	err := r.db.Where("source = ? AND (source_type IS NULL OR source_type IN ?)", userSource, []string{"markdown", "zip", "github", ""}).Find(&skills).Error
 	return skills, err
 }
 
