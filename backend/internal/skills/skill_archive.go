@@ -183,7 +183,7 @@ func finalizeSkillArchive(files map[string][]byte, metadata skillPackageMetadata
 	if metadata.Description == "" {
 		return skillPackageArchive{}, kernel.BadAuthRequest("SKILL.md 缺少 description，且无法从正文推断")
 	}
-	if utf8.RuneCountInString(metadata.Name) > 80 || utf8.RuneCountInString(metadata.Description) > 500 {
+	if utf8.RuneCountInString(metadata.Name) > maxSkillNameRunes || utf8.RuneCountInString(metadata.Description) > 500 {
 		return skillPackageArchive{}, kernel.BadAuthRequest("技能名称或简介超过长度限制")
 	}
 	hash := sha256.New()

@@ -104,9 +104,6 @@ type githubSkillSpec struct {
 }
 
 func (s *Service) EnsureSkillPackages() error {
-	if err := s.ensureSkillDisplayNames(); err != nil {
-		return err
-	}
 	skills, err := s.repo.SkillsForPackageEnsure(skillSourceUser)
 	if err != nil {
 		return err
@@ -128,7 +125,7 @@ func (s *Service) EnsureSkillPackages() error {
 			return fmt.Errorf("保存技能 %s 文件包失败: %w", skill.ID, err)
 		}
 	}
-	return nil
+	return s.ensureSkillDisplayNames()
 }
 
 func (s *Service) InstallSkillUpload(userID string, sourceType string, header *multipart.FileHeader, req SkillInstallRequest) (*SkillItem, error) {
