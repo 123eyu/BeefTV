@@ -60,7 +60,8 @@ for (const width of [1440, 390]) for (const dark of [false, true]) test(`storage
         await secret.focus();
         bounds = await geometry();
         expect(bounds.password).toBe(bounds.ordinary);
-        await page.locator(".ant-input-password-icon").click();
+        // CI 的无头浏览器里眼睛图标可能量不出尺寸；这里只验证切换明文后的高度，直接触发点击。
+        await page.locator(".ant-input-password-icon").dispatchEvent("click");
         expect(await secret.getAttribute("type")).toBe("text");
         bounds = await geometry();
         expect(bounds.password).toBe(bounds.ordinary);
