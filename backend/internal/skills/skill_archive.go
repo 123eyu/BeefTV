@@ -290,7 +290,7 @@ func fitRunes(value string, limit int) string {
 	if len(runes) <= limit {
 		return value
 	}
-	return string(runes[:limit-1]) + "…"
+	return strings.TrimSpace(string(runes[:limit-1])) + "…"
 }
 
 func yamlScalar(value string) string {

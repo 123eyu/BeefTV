@@ -66,7 +66,7 @@ func firstMarkdownTitle(body []string) string {
 			continue
 		}
 		title := strings.TrimSpace(strings.TrimPrefix(trimmed, "# "))
-		if closed := strings.TrimRight(title, "#"); closed == "" || strings.HasSuffix(closed, " ") {
+		if closed := strings.TrimRight(title, "#"); closed == "" || strings.TrimRight(closed, " \t") != closed {
 			title = strings.TrimSpace(closed)
 		}
 		return title

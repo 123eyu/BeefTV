@@ -57,6 +57,7 @@ func TestSkillDisplayNameFallbacks(t *testing.T) {
 		{"---\nname: setup-guide\ndescription: 简介\n---\n```bash\n# 安装依赖\n```\n# 环境准备指南", "环境准备指南"},
 		{"---\nname: tilde-fence\ndescription: 简介\n---\n~~~\n# 注释\n~~~\n# 波浪线代码块之后的标题", "波浪线代码块之后的标题"},
 		{"---\nname: closing-hash\ndescription: 简介\n---\n# 分镜整理 ##", "分镜整理"},
+		{"---\nname: tab-closing-hash\ndescription: 简介\n---\n# 分镜整理\t##", "分镜整理"},
 		{"---\nname: long-title\ndescription: 简介\n---\n# " + strings.Repeat("长", maxSkillNameRunes+1), "long-title"},
 		{"---\nname: csharp-tips\ndescription: 简介\n---\n# C# 编程技巧", "C# 编程技巧"},
 		{"---\nname: long-fence\ndescription: 简介\n---\n````md\n```\n# 示例\n```\n````\n# 四个反引号之后的标题", "四个反引号之后的标题"},
